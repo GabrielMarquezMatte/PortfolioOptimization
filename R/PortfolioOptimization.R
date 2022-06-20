@@ -592,8 +592,8 @@ port_vol_target <- function(ret,cov,vol_target = min(sqrt(diag(cov))),
         const <- optiSolve::lincon(rbind(rep(1,nrow(cov))),dir = "==",val = 1,
                         name = "Restricao",id = colnames(cov))
         optimization <- optiSolve::cop(f = fun,max = T,qc = risco,lc = const,
-                            lb = lbcon(min_w,id = colnames(cov)),
-                            ub = ubcon(max_w,id = colnames(cov)))
+                            lb = optiSolve::lbcon(min_w,id = colnames(cov)),
+                            ub = optiSolve::ubcon(max_w,id = colnames(cov)))
         res <- optiSolve::solvecop(optimization,solver = "alabama",quiet = T,make.definite = T)
         w <- round(res$x,6)
       }
