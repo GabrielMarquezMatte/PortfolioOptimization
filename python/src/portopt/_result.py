@@ -17,6 +17,7 @@ from ._spec import Spec, doubles_pointer
 
 PO_CONSTRAINT_BUDGET = 0
 PO_CONSTRAINT_TARGET_RETURN = 1
+PO_CONSTRAINT_VOLATILITY = 2
 
 
 class SolveStatus(enum.IntEnum):
@@ -33,6 +34,7 @@ class Result:
     iterations: int
     budget_multiplier: float
     target_return_multiplier: float
+    volatility_multiplier: float
     bound_multipliers: NDArray[np.float64]
 
 
@@ -55,6 +57,7 @@ def read_result(pointer: int) -> Result:
         iterations=_native.read_scalar(ctypes.c_int32, lib.po_result_iterations, pointer),
         budget_multiplier=read_multiplier(pointer, PO_CONSTRAINT_BUDGET),
         target_return_multiplier=read_multiplier(pointer, PO_CONSTRAINT_TARGET_RETURN),
+        volatility_multiplier=read_multiplier(pointer, PO_CONSTRAINT_VOLATILITY),
         bound_multipliers=read_vector(lib.po_result_bound_multipliers, pointer, count),
     )
 

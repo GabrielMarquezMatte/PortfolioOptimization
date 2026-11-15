@@ -10,19 +10,35 @@ instead check each result against conditions that hold if and only if it is corr
 
 1. **KKT conditions.** For the QP the solver returns, `tests/unit/kkt.hpp` computes the four residuals:
    stationarity `G x + g - E'y - C'z`, primal feasibility, dual feasibility (`z >= 0`) and complementarity
-   `z_i (C_i x - c_i)`. For a solved MIN_VARIANCE the same conditions are then checked in the user's variables
-   (`expect_user_kkt` in `tests/unit/problems/min_variance_test.cpp`): the equalities and bounds hold, the sign of
-   each bound multiplier matches the active side, and the stationarity equation of the
-   [multiplier convention](math.md#multiplier-convention) holds. A solution that satisfies the KKT conditions of a
+   `z_i (C_i x - c_i)`. For every solved objective the same conditions are then checked in the user's variables
+   (`expect_user_kkt` in `tests/unit/user_kkt.hpp`, used by the suite of each objective): the equalities and bounds
+   hold, the sign of each bound multiplier matches the active side, and the stationarity equation of the
+   [multiplier convention](math.md#multiplier-convention) holds, with the gradient of that objective's `f` and, for
+   MAX_RETURN, the volatility term. A solution that satisfies the KKT conditions of a
    convex QP is its global optimum.
 2. **Closed forms.** Where a closed form exists, the result must match it: the unconstrained minimum and its
    multiplier `2 / A`, the parabola of the efficient frontier, the capital market line with cash, all cash without a
-   target return, and a target return equal to the common mean of equal-mean assets.
+   target return, and a target return equal to the common mean of equal-mean assets. The same for the other
+   objectives: the unconstrained `UTILITY` weights and its cash form, the exact replication of a benchmark that is
+   a portfolio of the assets (`TRACKING_ERROR`, with zero error), `MAX_RETURN` on the upper branch of the frontier
+   and, with cash, on the capital market line with `lambda_vol` equal to minus its slope.
 3. **Consistency.** The same problem is checked at two levels: the QP solution returned by `qp::solve` must satisfy
    KKT in its own variables, and the user-level `Result` built from it must satisfy them in the user's. The C API
    tests solve the same problems through `po_solve` and read the result through the accessors, and the Python tests
    compare the package with closed forms and `numpy`.
-4. **Invariants.** Weights sum to one (cash included); the target return is met; a bound multiplier is 0 for a
+4. **Consistency between objectives.** The objectives built on one builder must agree with each other, which
+   checks the scales `(a, b)` of the builder and not only each objective against its own KKT conditions:
+   `IMPORTANCE` with `lambda = 0` is `MIN_VARIANCE` and with `lambda` in (0, 1) is `UTILITY` with
+   `delta = 2 (1 - lambda) / lambda`; `KELLY` is `UTILITY` with `delta = 1 / (1 + rf)` (delta = 1 without cash);
+   `UTILITY` with a large `delta` approaches `MIN_VARIANCE`; `MAX_RETURN` with the cap at the volatility of the
+   unconstrained minimum is `MIN_VARIANCE`, and with equal means too. A `MAX_RETURN` cap below the minimum
+   volatility is infeasible.
+5. **Derivatives.** A multiplier is the derivative of the optimal `f` with respect to its right-hand side, so the
+   test solves again with the right-hand side moved and compares: the volatility multiplier of `MAX_RETURN` against
+   a central difference of the optimal `-mu~'w` in the cap `s` (relative tolerance 1e-5, step `1e-6 s`), and, at
+   `s = sigma_min` on a vertex of the box, against a one-sided difference of order two, since the optimum is not
+   differentiable there from the left.
+6. **Invariants.** Weights sum to one (cash included); the target return is met; a bound multiplier is 0 for a
    weight without a finite bound and its sign matches the active side; an infeasible problem has NaN weights and
    multipliers; a result outlives the spec and data it was solved from; a rejected setter argument leaves the spec
    unchanged; parallel solves over the same read-only handles agree.
@@ -35,6 +51,8 @@ instead check each result against conditions that hold if and only if it is corr
 | KKT residuals of a covariance with condition number 1e10 | 1e-8 |
 | Closed forms (unconstrained weights and multiplier, equal-mean target) | 1e-12 |
 | Frontier variance and capital market line volatility, relative | 1e-10 |
+| Volatility multiplier of `MAX_RETURN` against a finite difference, relative | 1e-5 |
+| `vol(w) = s` of a solved `MAX_RETURN`, relative | 1e-12 |
 | Bound feasibility (`w >= lower`, a capped weight at its cap) | 1e-14 |
 
 The KKT residuals (`tests/unit/kkt.hpp`) are relative, and the stationarity and dual scales have no floor of 1,
@@ -68,9 +86,11 @@ floor carries no information: in a singular matrix (a duplicated asset, a sample
 assets) its sign is decided by rounding, and a test against 0 accepted such matrices at random. On sample
 covariances of rank T - 1 the largest noise pivot measured was 1.3 `n eps a_jj`; on the test covariances of
 condition number 1e10 the smallest pivot is above 4e5 `n eps a_jj`, so `c = 16` separates them with wide margins.
-`Data` keeps the factor L, and MIN_VARIANCE hands `sqrt(2) L` to the QP as the factor of `G = 2 Sigma`
-(`qp::Problem::hessian_factor`); the solver does not factor G again and does not decide definiteness a second
-time. Later objectives with `G = k Sigma` pass `sqrt(k) L`.
+`Data` keeps the factor L, and every objective with `G = a Sigma` (the four built by
+`src/problems/mean_variance.cpp`, and the path `Q(t)` of `MAX_RETURN`) hands `sqrt(a) L` to the QP as the factor of
+`G` (`qp::Problem::hessian_factor`); the solver does not factor G again and does not decide definiteness a second
+time. `TRACKING_ERROR` has no covariance: it factors `R~'R~` once, and that single Cholesky decides the column rank
+of the return series.
 
 ## Numerical decisions of the QP solver
 
@@ -101,7 +121,11 @@ equality at the objective scale 1e-4, and G and g scaled by 1e-4 and 1e8.
 | `tests/unit/qp/goldfarb_idnani_test.cpp` | Unconstrained, equality-only and bounded problems; infeasible and inconsistent ones; the scale tests above; a provided factor of G gives the same solution |
 | `tests/unit/core/data_test.cpp` | Rejection of non-finite, asymmetric, indefinite, singular (a duplicated asset, a sample covariance of fewer periods than assets) and mismatched input; symmetrization within tolerance; the stored factor |
 | `tests/unit/problems/min_variance_test.cpp` | KKT in the user's variables, the closed forms, the frontier and the capital market line, per-asset bounds, cash bounds, an ill-conditioned covariance |
+| `tests/unit/problems/utility_test.cpp` | `UTILITY`, `IMPORTANCE` and `KELLY`: closed forms, defaults, KKT, and the identities between them and `MIN_VARIANCE` |
+| `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, no covariance needed |
+| `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems |
+| `tests/unit/problems/requirements_test.cpp` | The objective x setter matrix, its messages and the order of the checks |
 | `tests/unit/problems/solve_test.cpp` | Argument checks of `po::solve` and their messages |
-| `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, with and without cash |
-| `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |
-| `python/tests/test_min_variance.py` | The Python package against closed forms, `numpy` and the status contract |
+| `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
+| `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, the new setters and `po_data_set_returns`, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |
+| `python/tests/test_min_variance.py`, `test_qp_objectives.py` | The Python package against closed forms, `numpy` and the status contract; the frozen `Spec`, the objective identities, `MAX_RETURN` on the capital market line, the input checks of `Data` |

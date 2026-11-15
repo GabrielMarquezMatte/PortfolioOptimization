@@ -26,3 +26,21 @@ library whose ABI version differs).
 - Tests: KKT conditions of random and ill-conditioned problems, closed forms (unconstrained minimum, frontier,
   capital market line) and the C boundary; see [docs/guide/validation.md](docs/guide/validation.md).
 - CI on Windows (MSVC), Linux (GCC 15) and macOS (Clang), with `clang-tidy` over `src/` on Linux.
+- `PO_OBJECTIVE_UTILITY`, `PO_OBJECTIVE_IMPORTANCE` and `PO_OBJECTIVE_KELLY`, built with `PO_OBJECTIVE_MIN_VARIANCE` by
+  one mean-variance builder, and `PO_OBJECTIVE_TRACKING_ERROR`, from a return series and a benchmark. New functions:
+  `po_spec_set_risk_aversion`, `po_spec_set_importance`, `po_spec_set_max_volatility`, `po_data_set_returns`,
+  `po_utility` and `po_tracking_error`.
+- `PO_OBJECTIVE_MAX_RETURN`: maximum return under a volatility cap, solved along a parametric family of QPs, with the
+  volatility multiplier `PO_CONSTRAINT_VOLATILITY` (`-s / t*`; `-inf` at a vertical frontier, documented in the
+  header).
+- A check of the objective x setter matrix in `po_solve`: a setter outside the objective's row or a missing input
+  is `PO_INVALID_ARGUMENT` with `"<setter> does not apply to <OBJECTIVE>"` or `"<OBJECTIVE> requires <item>"`.
+- Python: `Spec` is a frozen dataclass with the new keyword fields (use `dataclasses.replace` to vary one),
+  `Data(..., returns=, benchmark=)`, `Data.utility`, `Data.tracking_error` and `Result.volatility_multiplier`.
+- Tests: consistency between objectives (`IMPORTANCE` and `KELLY` against `UTILITY`), `MAX_RETURN` against the
+  frontier and the capital market line, and its volatility multiplier against finite differences; see
+  [docs/guide/validation.md](docs/guide/validation.md).
+
+### Changed
+
+- Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.

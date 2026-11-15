@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import enum
+from dataclasses import KW_ONLY, dataclass, field
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -12,6 +13,12 @@ from . import _native
 from ._native import lib
 
 _DOUBLES = ctypes.POINTER(ctypes.c_double)
+SCALAR_SETTERS = (
+    ("target_return", "po_spec_set_target_return"),
+    ("risk_aversion", "po_spec_set_risk_aversion"),
+    ("importance", "po_spec_set_importance"),
+    ("max_volatility", "po_spec_set_max_volatility"),
+)
 
 
 class Objective(enum.IntEnum):
@@ -34,19 +41,26 @@ def doubles_pointer(array: NDArray[np.float64]) -> "ctypes._Pointer[ctypes.c_dou
     return array.ctypes.data_as(_DOUBLES)
 
 
+@dataclass(frozen=True)
 class Spec:
-    def __init__(
-        self,
-        objective: Objective,
-        *,
-        bounds: tuple[float | ArrayLike, float | ArrayLike] | None = None,
-        target_return: float | None = None,
-    ) -> None:
-        self._handle = _native.create_handle(lib.po_spec_create, lib.po_spec_free, int(objective))
-        if bounds is not None:
-            self._set_bounds(*bounds)
-        if target_return is not None:
-            _native.check(lib.po_spec_set_target_return(self.pointer, float(target_return)))
+    objective: Objective
+    _: KW_ONLY
+    bounds: tuple[float | ArrayLike, float | ArrayLike] | None = None
+    target_return: float | None = None
+    risk_aversion: float | None = None
+    importance: float | None = None
+    max_volatility: float | None = None
+    _handle: _native.Handle = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        handle = _native.create_handle(lib.po_spec_create, lib.po_spec_free, int(self.objective))
+        object.__setattr__(self, "_handle", handle)
+        if self.bounds is not None:
+            self._set_bounds(*self.bounds)
+        for name, setter in SCALAR_SETTERS:
+            value = getattr(self, name)
+            if value is not None:
+                _native.check(getattr(lib, setter)(self.pointer, float(value)))
 
     @property
     def pointer(self) -> int:

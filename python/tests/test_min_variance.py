@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -42,9 +44,14 @@ def test_asset_bounds_vector_and_mixed_scalar() -> None:
 
 def test_frontier_with_list_comprehension() -> None:
     data = po.Data(MU, COV)
-    minimum = data.volatility(min_variance(data).weights) ** 2
-    right = [data.volatility(min_variance(data, target_return=t).weights) ** 2 for t in (0.07, 0.08, 0.09, 0.10, 0.11)]
-    left = [data.volatility(min_variance(data, target_return=t).weights) ** 2 for t in (0.06, 0.05, 0.04, 0.03, 0.02)]
+    spec = po.Spec(po.Objective.MIN_VARIANCE)
+
+    def variance(target: float) -> float:
+        return data.volatility(po.solve(replace(spec, target_return=target), data).weights) ** 2
+
+    minimum = data.volatility(po.solve(spec, data).weights) ** 2
+    right = [variance(target) for target in (0.07, 0.08, 0.09, 0.10, 0.11)]
+    left = [variance(target) for target in (0.06, 0.05, 0.04, 0.03, 0.02)]
     assert minimum < min(right + left)
     assert right == sorted(right)
     assert left == sorted(left)
