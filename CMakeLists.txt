@@ -37,22 +37,34 @@ endif()
 include(FetchContent)
 
 add_library(portopt_core STATIC
-    src/capi/error.cpp
     src/linalg/cholesky.cpp
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/problems/constraints.cpp
     src/problems/min_variance.cpp
-    src/problems/solve.cpp)
+    src/problems/solve.cpp
+    src/metrics/portfolio.cpp)
 set_target_properties(portopt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(portopt_core PUBLIC src include)
 target_compile_options(portopt_core PRIVATE ${PO_WARNING_FLAGS})
 
-add_library(portopt SHARED
-    src/capi/version_api.cpp)
+# The C entry points are compiled once and shared by the shared library and the tests, so that po_last_error() and
+# po::capi::guard() in the tests see the same thread-local error as the entry points they call.
+add_library(portopt_capi OBJECT
+    src/capi/error.cpp
+    src/capi/version_api.cpp
+    src/capi/spec_api.cpp
+    src/capi/data_api.cpp
+    src/capi/solve_api.cpp
+    src/capi/result_api.cpp
+    src/capi/metrics_api.cpp)
+set_target_properties(portopt_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(portopt_capi PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
+target_compile_options(portopt_capi PRIVATE ${PO_WARNING_FLAGS})
+target_link_libraries(portopt_capi PUBLIC portopt_core)
+
+add_library(portopt SHARED $<TARGET_OBJECTS:portopt_capi>)
 target_include_directories(portopt PUBLIC include)
-target_compile_definitions(portopt PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
-target_compile_options(portopt PRIVATE ${PO_WARNING_FLAGS})
 target_link_libraries(portopt PRIVATE portopt_core)
 if(MINGW)
     target_link_options(portopt PRIVATE
@@ -76,20 +88,26 @@ if(PO_BUILD_TESTS)
     target_link_libraries(portopt_c_header_check PRIVATE portopt)
     target_compile_options(portopt_c_header_check PRIVATE ${PO_WARNING_FLAGS})
 
-    # The C entry points are compiled into the test binary next to portopt_core so that po_last_error() and
-    # po::capi::guard() share one thread-local error; a separately loaded portopt would hold its own copy.
     add_executable(portopt_tests
-        src/capi/version_api.cpp
         tests/unit/capi/abi_test.cpp
+        tests/unit/capi/spec_test.cpp
+        tests/unit/capi/data_test.cpp
+        tests/unit/capi/solve_test.cpp
+        tests/unit/capi/metrics_test.cpp
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
         tests/unit/problems/min_variance_test.cpp
-        tests/unit/problems/solve_test.cpp)
+        tests/unit/problems/solve_test.cpp
+        tests/unit/metrics/portfolio_test.cpp)
     target_include_directories(portopt_tests PRIVATE tests/unit)
-    target_compile_definitions(portopt_tests PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
-    target_link_libraries(portopt_tests PRIVATE portopt_core GTest::gtest_main)
+    target_compile_definitions(portopt_tests PRIVATE PO_BUILDING)
+    target_link_libraries(portopt_tests PRIVATE portopt_capi GTest::gtest_main)
     target_compile_options(portopt_tests PRIVATE ${PO_WARNING_FLAGS})
+    if(MINGW)
+        # An older libstdc++-6.dll earlier on PATH crashes std::format in the test executable.
+        target_link_options(portopt_tests PRIVATE -static-libgcc -static-libstdc++)
+    endif()
     include(GoogleTest)
     gtest_discover_tests(portopt_tests)
 
