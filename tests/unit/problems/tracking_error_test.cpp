@@ -29,7 +29,8 @@ using po::Spec;
 using po::testing::dot;
 
 constexpr double kRiskFree = 0.001;
-constexpr const char* kRankMessage = "returns minus the risk-free rate do not have full column rank";
+constexpr const char* kRankMessage =
+    "returns minus the risk-free rate do not have full column rank numerically";
 
 struct Series
 {
@@ -95,8 +96,8 @@ Data data_with(const Series& series, std::size_t n, bool cash)
     return data;
 }
 
-// grad f = 2 R~'(R~ w + rf 1 - b), with R~ = R - rf 1 1' and rf = 0 without cash, as its two terms 2 R~'R~ w and
-// -2 R~'(b - rf 1).
+// grad f = 2 R~'(R~ w + rf 1 - b), with R~ = R - rf 1 1' and rf = 0 without cash, as its two terms 2 R~'R~ w
+// and -2 R~'(b - rf 1).
 po::testing::ObjectiveGradient objective_gradient(const Data& data, std::span<const double> weights)
 {
     std::size_t n = data.asset_count();
@@ -338,6 +339,93 @@ TEST(TrackingError, RankDeficientIsInvalid)
     expect_rank_failure(tracking_error(), data_with(Series{constant, benchmark, periods}, assets, true));
     Data unrelated_to_cash = data_with(Series{constant, benchmark, periods}, assets, false);
     EXPECT_TRUE(po::solve(tracking_error(), unrelated_to_cash).has_value());
+}
+
+// Returns R = U diag(sigma) V' with sigma from 0.01 down to 0.01 / condition: U from the first n columns of a
+// random orthogonal factor of size periods.
+std::vector<double> conditioned_returns(std::size_t periods, std::size_t n, double condition)
+{
+    std::vector<double> left = po::testing::orthogonal_factor(periods, 41);
+    std::vector<double> right = po::testing::orthogonal_factor(n, 42);
+    std::vector<double> returns(periods * n, 0.0);
+    for (std::size_t k = 0; k < n; ++k)
+    {
+        double fraction = static_cast<double>(k) / static_cast<double>(n - 1);
+        double singular = 0.01 * std::exp(-fraction * std::log(condition));
+        for (std::size_t t = 0; t < periods; ++t)
+        {
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                returns[t * n + i] += left[t * periods + k] * singular * right[i * n + k];
+            }
+        }
+    }
+    return returns;
+}
+
+// min |R w - b|^2 subject to 1'w = 1, by an independent route: w_n = 1 - sum_{i<n} w_i turns it into the
+// unconstrained least squares of A = R_i - R_n (i < n) against b - R_n, solved by modified Gram-Schmidt
+// with one reorthogonalization. Returns the optimal value.
+double budget_least_squares(const std::vector<double>& returns, std::size_t periods, std::size_t n,
+                            const std::vector<double>& benchmark)
+{
+    std::size_t m = n - 1;
+    std::vector<std::vector<double>> columns(m, std::vector<double>(periods));
+    std::vector<double> residual(periods);
+    for (std::size_t t = 0; t < periods; ++t)
+    {
+        residual[t] = benchmark[t] - returns[t * n + m];
+        for (std::size_t i = 0; i < m; ++i)
+        {
+            columns[i][t] = returns[t * n + i] - returns[t * n + m];
+        }
+    }
+    for (std::size_t k = 0; k < m; ++k)
+    {
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            for (std::size_t j = 0; j < k; ++j)
+            {
+                double projection = dot(columns[j], columns[k]);
+                for (std::size_t t = 0; t < periods; ++t)
+                {
+                    columns[k][t] -= projection * columns[j][t];
+                }
+            }
+        }
+        double norm = std::sqrt(dot(columns[k], columns[k]));
+        for (double& entry : columns[k])
+        {
+            entry /= norm;
+        }
+        double projection = dot(columns[k], residual);
+        for (std::size_t t = 0; t < periods; ++t)
+        {
+            residual[t] -= projection * columns[k][t];
+        }
+    }
+    return dot(residual, residual);
+}
+
+// cond(R) = 1e8: R'R has condition 1e16 and no Cholesky of it resolves the smallest direction, but R has full
+// column rank to working precision, and the objective matches the least squares of R itself.
+TEST(TrackingError, IllConditionedReturnsAccepted)
+{
+    constexpr std::size_t periods = 120;
+    constexpr std::size_t n = 10;
+    std::vector<double> returns = conditioned_returns(periods, n, 1e8);
+    std::vector<double> benchmark = product(returns, periods, weights_summing_to_one(n, 43));
+    std::vector<double> noise = po::testing::random_vector(periods, 44, -1e-3, 1e-3);
+    for (std::size_t t = 0; t < periods; ++t)
+    {
+        benchmark[t] += noise[t];
+    }
+    Data data = data_with(Series{returns, benchmark, periods}, n, false);
+    std::expected<Result, Failure> result = po::solve(tracking_error(), data);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_EQ(result->status, SolveStatus::Optimal);
+    double expected = budget_least_squares(returns, periods, n, benchmark);
+    EXPECT_NEAR(tracking_error_value(data, result->weights), expected, 1e-10 * expected);
 }
 
 TEST(TrackingError, WithoutCovariance)

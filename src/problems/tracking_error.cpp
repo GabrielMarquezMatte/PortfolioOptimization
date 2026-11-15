@@ -2,11 +2,10 @@
 
 #include <cmath>
 #include <cstddef>
-#include <optional>
 #include <utility>
 #include <vector>
 
-#include "linalg/cholesky.hpp"
+#include "linalg/qr.hpp"
 #include "qp/goldfarb_idnani.hpp"
 
 namespace po::problems
@@ -65,6 +64,13 @@ std::vector<double> linear_term(const Data& data, const std::vector<double>& exc
     return linear;
 }
 
+Failure rank_failure()
+{
+    return Failure{FailureKind::InvalidArgument,
+                   "returns minus the risk-free rate do not have full column rank numerically"};
+}
+
+// G = 2 R~'R~ with the factor sqrt(2) R_qr', since R~'R~ = R_qr'R_qr.
 Translation assemble(const Spec& spec, const Data& data, std::vector<double> normal,
                      std::vector<double> factor, const std::vector<double>& excess)
 {
@@ -91,15 +97,19 @@ Translation assemble(const Spec& spec, const Data& data, std::vector<double> nor
 
 std::expected<Translation, Failure> tracking_error_problem(const Spec& spec, const Data& data)
 {
+    std::size_t periods = data.observation_count();
+    std::size_t n = data.asset_count();
     std::vector<double> excess = excess_returns(data);
-    std::vector<double> normal = normal_matrix(excess, data.observation_count(), data.asset_count());
-    std::optional<std::vector<double>> factor = linalg::cholesky(normal, data.asset_count());
-    if (!factor.has_value())
+    if (periods < n)
     {
-        return std::unexpected(Failure{FailureKind::InvalidArgument,
-                                       "returns minus the risk-free rate do not have full column rank"});
+        return std::unexpected(rank_failure());
     }
-    return assemble(spec, data, std::move(normal), std::move(*factor), excess);
+    linalg::Qr qr = linalg::householder_qr(excess, periods, n);
+    if (!linalg::has_full_column_rank(qr))
+    {
+        return std::unexpected(rank_failure());
+    }
+    return assemble(spec, data, normal_matrix(excess, periods, n), linalg::lower_factor(qr), excess);
 }
 
 std::expected<Result, Failure> solve_tracking_error(const Spec& spec, const Data& data)
