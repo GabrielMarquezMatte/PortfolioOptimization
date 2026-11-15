@@ -39,6 +39,7 @@ class Result:
 def read_vector(function: Callable[..., int], pointer: int, count: int) -> NDArray[np.float64]:
     out = np.empty(count, dtype=np.float64)
     _native.check(function(pointer, doubles_pointer(out), count))
+    out.flags.writeable = False
     return out
 
 

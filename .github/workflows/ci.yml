@@ -100,7 +100,7 @@ jobs:
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
-        run: uv run --project python --python 3.14 mypy python/src python/tests
+        run: uv run --project python --python 3.14 mypy --config-file python/pyproject.toml python/src python/tests
 
   clang-tidy:
     name: clang-tidy

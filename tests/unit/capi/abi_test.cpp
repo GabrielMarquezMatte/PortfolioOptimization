@@ -2,6 +2,8 @@
 #include <new>
 #include <portopt/portopt.h>
 #include <stdexcept>
+#include <string>
+#include <thread>
 
 #include "capi/error.hpp"
 
@@ -15,9 +17,13 @@ TEST(Abi, VersionStringIsProjectVersion)
     EXPECT_STREQ(po_version(), "0.1.0");
 }
 
+// A fresh thread, because earlier tests in the same process may have left an error on this one.
 TEST(Abi, LastErrorStartsEmpty)
 {
-    EXPECT_STREQ(po_last_error(), "");
+    std::string message = "not read";
+    std::thread reader([&message] { message = po_last_error(); });
+    reader.join();
+    EXPECT_EQ(message, "");
 }
 
 TEST(Guard, BadAllocBecomesOutOfMemory)

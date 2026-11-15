@@ -96,7 +96,8 @@ inline double stationarity_residual(const po::qp::Problem& problem, const po::qp
     {
         curvature[i] = row_dot(problem.hessian, i, solution.x);
     }
-    std::vector<double> equality = transposed_product(problem.equality_rows, solution.equality_multipliers, n);
+    std::vector<double> equality =
+        transposed_product(problem.equality_rows, solution.equality_multipliers, n);
     std::vector<double> inequality =
         transposed_product(problem.inequality_rows, solution.inequality_multipliers, n);
     std::vector<double> residual(n);

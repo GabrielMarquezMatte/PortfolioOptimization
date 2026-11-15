@@ -138,6 +138,6 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    multipliers need no rescaling.
 6. **Publishing.** The `Result` is moved into a freshly allocated `po_result` and its pointer written to `*out` only
    once everything has succeeded, so a failure leaves `*out` NULL. The Python layer reads the result into a frozen
-   dataclass and frees the handle.
+   dataclass, with read-only weight and multiplier arrays, and frees the handle.
 
 Every `extern "C"` function runs inside `guard`, the single place that turns exceptions into statuses.

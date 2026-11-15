@@ -85,7 +85,7 @@ def load_library(environ: Mapping[str, str], directory: Path) -> ctypes.CDLL:
     except OSError as error:
         raise ImportError(f"cannot load the PortOpt native library {path}: {error}") from error
     check_abi(library, path)
-    declare_prototypes(library)
+    declare_prototypes(library, path)
     return library
 
 
@@ -106,9 +106,12 @@ def declare_function(library: ctypes.CDLL, name: str) -> None:
     function.argtypes = argtypes
 
 
-def declare_prototypes(library: ctypes.CDLL) -> None:
+def declare_prototypes(library: ctypes.CDLL, path: Path) -> None:
     for name in PROTOTYPES:
-        declare_function(library, name)
+        try:
+            declare_function(library, name)
+        except AttributeError as error:
+            raise ImportError(f"{path} does not export {name}: it is probably an older PortOpt library") from error
 
 
 lib = load_library(os.environ, LIBRARY_DIRECTORY)

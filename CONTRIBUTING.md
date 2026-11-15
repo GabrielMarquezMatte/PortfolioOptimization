@@ -41,8 +41,11 @@ Point the package at the library you built with `PORTOPT_LIB`, then run pytest a
 
 ```
 PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll uv run --project python pytest python/tests -q
-PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll uv run --project python mypy python/src python/tests
+PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll uv run --project python mypy --config-file python/pyproject.toml python/src python/tests
 ```
+
+mypy runs in strict mode (`[tool.mypy]` in `python/pyproject.toml`); from the repository root it finds that file only
+through `--config-file`.
 
 The library is `libportopt.dll` (MinGW), `Release/portopt.dll` (MSVC), `libportopt.so` or `libportopt.dylib`.
 Without `PORTOPT_LIB` the package looks in `python/src/portopt/_lib`. When it finds no library the tests are

@@ -17,6 +17,8 @@ def test_unconstrained_matches_closed_form() -> None:
     result = min_variance(po.Data(MU, COV))
     assert result.status == po.SolveStatus.OPTIMAL
     np.testing.assert_allclose(result.weights, expected, rtol=0, atol=1e-12)
+    assert not result.weights.flags.writeable
+    assert not result.bound_multipliers.flags.writeable
 
 
 def test_long_only_weights_nonnegative_and_sum_to_one() -> None:
@@ -24,6 +26,18 @@ def test_long_only_weights_nonnegative_and_sum_to_one() -> None:
     assert result.status == po.SolveStatus.OPTIMAL
     assert (result.weights >= -1e-12).all()
     assert result.weights.sum() == pytest.approx(1.0, abs=1e-12)
+
+
+def test_asset_bounds_vector_and_mixed_scalar() -> None:
+    data = po.Data(MU, COV)
+    upper = np.array([0.5, 1.0, 1.0])
+    vectors = min_variance(data, bounds=(np.zeros(3), upper))
+    mixed = min_variance(data, bounds=(0.0, upper))
+    assert vectors.status == po.SolveStatus.OPTIMAL
+    assert vectors.weights[0] == pytest.approx(0.5, abs=1e-12)
+    np.testing.assert_array_equal(mixed.weights, vectors.weights)
+    with pytest.raises(ValueError, match="entries"):
+        min_variance(data, bounds=(np.zeros(2), np.ones(2)))
 
 
 def test_frontier_with_list_comprehension() -> None:
