@@ -11,13 +11,15 @@ namespace
 {
 
 // One row of the objective x setter matrix. An objective requires returns when requires_returns is set and a
-// covariance otherwise, and mu whenever target_return is set.
+// covariance otherwise, and mu whenever target_return is set. max_volatility is accepted exactly where it is
+// required.
 struct Requirements
 {
     const char* name;
     bool accepts_target_return;
     bool accepts_risk_aversion;
     bool accepts_importance;
+    bool requires_max_volatility;
     bool requires_mu;
     bool requires_returns;
 };
@@ -39,15 +41,17 @@ std::optional<Requirements> requirements_of(Objective objective)
     switch (objective)
     {
     case Objective::MinVariance:
-        return Requirements{"MIN_VARIANCE", true, false, false, false, false};
+        return Requirements{"MIN_VARIANCE", true, false, false, false, false, false};
+    case Objective::MaxReturn:
+        return Requirements{"MAX_RETURN", false, false, false, true, true, false};
     case Objective::Utility:
-        return Requirements{"UTILITY", false, true, false, true, false};
+        return Requirements{"UTILITY", false, true, false, false, true, false};
     case Objective::Importance:
-        return Requirements{"IMPORTANCE", false, false, true, true, false};
+        return Requirements{"IMPORTANCE", false, false, true, false, true, false};
     case Objective::Kelly:
-        return Requirements{"KELLY", false, false, false, true, false};
+        return Requirements{"KELLY", false, false, false, false, true, false};
     case Objective::TrackingError:
-        return Requirements{"TRACKING_ERROR", true, false, false, false, true};
+        return Requirements{"TRACKING_ERROR", true, false, false, false, false, true};
     default:
         return std::nullopt;
     }
@@ -59,7 +63,7 @@ std::optional<Failure> check_setters(const Spec& spec, const Requirements& requi
         Setter{"target_return", spec.target_return.has_value(), requirements.accepts_target_return},
         Setter{"risk_aversion", spec.risk_aversion.has_value(), requirements.accepts_risk_aversion},
         Setter{"importance", spec.importance.has_value(), requirements.accepts_importance},
-        Setter{"max_volatility", spec.max_volatility.has_value(), false},
+        Setter{"max_volatility", spec.max_volatility.has_value(), requirements.requires_max_volatility},
     };
     for (const Setter& setter : setters)
     {
@@ -94,6 +98,10 @@ std::optional<Failure> check_mu_and_rate(const Spec& spec, const Data& data, con
     if (spec.objective == Objective::Kelly && !(data.risk_free().value_or(0.0) > -1.0))
     {
         return invalid("KELLY requires risk_free > -1");
+    }
+    if (requirements.requires_max_volatility && !spec.max_volatility.has_value())
+    {
+        return invalid(std::string(requirements.name) + " requires max_volatility");
     }
     return std::nullopt;
 }

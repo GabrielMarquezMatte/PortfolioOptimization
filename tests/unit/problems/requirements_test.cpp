@@ -126,6 +126,34 @@ TEST(Requirements, UnimplementedObjectivesStayUnsupported)
     }
 }
 
+TEST(Requirements, MaxReturnRequiresMaxVolatility)
+{
+    Spec spec = spec_of(Objective::MaxReturn);
+    expect_invalid(spec, full_data(), "MAX_RETURN requires max_volatility");
+    spec.max_volatility = 0.2;
+    expect_accepted(spec, full_data());
+    expect_invalid(spec, without_mu(), "MAX_RETURN requires mu");
+    expect_invalid(spec, without_covariance(), "MAX_RETURN requires covariance");
+}
+
+TEST(Requirements, MaxVolatilityOnlyForMaxReturn)
+{
+    constexpr std::array kOthers = {Objective::MinVariance, Objective::Utility, Objective::Importance,
+                                    Objective::Kelly, Objective::TrackingError};
+    constexpr std::array kNames = {"MIN_VARIANCE", "UTILITY", "IMPORTANCE", "KELLY", "TRACKING_ERROR"};
+    for (std::size_t k = 0; k < kOthers.size(); ++k)
+    {
+        Spec spec = spec_of(kOthers[k]);
+        spec.max_volatility = 0.2;
+        expect_invalid(spec, full_data(), std::string("max_volatility does not apply to ") + kNames[k]);
+    }
+    Spec spec = spec_of(Objective::MaxReturn);
+    spec.max_volatility = 0.2;
+    expect_accepted(spec, full_data());
+    spec.target_return = 0.08;
+    expect_invalid(spec, full_data(), "target_return does not apply to MAX_RETURN");
+}
+
 TEST(Requirements, MinVarianceRequiresCovariance)
 {
     expect_invalid(Spec{}, without_covariance(), "MIN_VARIANCE requires covariance");
@@ -172,6 +200,7 @@ struct Cell
     bool target_return;
     bool risk_aversion;
     bool importance;
+    bool max_volatility;
 };
 
 Spec with_setter(Objective objective, int setter)
@@ -197,15 +226,17 @@ Spec with_setter(Objective objective, int setter)
 
 TEST(Requirements, EverySetterFollowsTheMatrix)
 {
-    constexpr std::array kCells = {Cell{Objective::MinVariance, "MIN_VARIANCE", true, false, false},
-                                   Cell{Objective::Utility, "UTILITY", false, true, false},
-                                   Cell{Objective::Importance, "IMPORTANCE", false, false, true},
-                                   Cell{Objective::Kelly, "KELLY", false, false, false},
-                                   Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false}};
+    constexpr std::array kCells = {
+        Cell{Objective::MinVariance, "MIN_VARIANCE", true, false, false, false},
+        Cell{Objective::MaxReturn, "MAX_RETURN", false, false, false, true},
+        Cell{Objective::Utility, "UTILITY", false, true, false, false},
+        Cell{Objective::Importance, "IMPORTANCE", false, false, true, false},
+        Cell{Objective::Kelly, "KELLY", false, false, false, false},
+        Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false, false}};
     constexpr std::array kSetters = {"target_return", "risk_aversion", "importance", "max_volatility"};
     for (const Cell& cell : kCells)
     {
-        std::array accepted = {cell.target_return, cell.risk_aversion, cell.importance, false};
+        std::array accepted = {cell.target_return, cell.risk_aversion, cell.importance, cell.max_volatility};
         for (int setter = 0; setter < 4; ++setter)
         {
             SCOPED_TRACE(std::string(cell.objective_name) + " " + kSetters[setter]);
@@ -223,7 +254,7 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
 
 TEST(Requirements, ImplementedCheckComesFirst)
 {
-    Spec spec = spec_of(Objective::MaxReturn);
+    Spec spec = spec_of(Objective::MaxSharpe);
     spec.target_return = 0.08;
     std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
     ASSERT_TRUE(failure.has_value());

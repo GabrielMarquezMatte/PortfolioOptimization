@@ -171,6 +171,28 @@ TEST(GoldfarbIdnani, ActiveBounds)
     EXPECT_GT(solution.inequality_multipliers[3], 0.0);
 }
 
+TEST(GoldfarbIdnani, ReportsActiveInequalities)
+{
+    constexpr std::size_t n = 5;
+    Problem problem = unconstrained_problem(n, 3, 1.0);
+    const std::vector<double> optimum = {0.3, 0.0, 0.4, 0.0, 0.3};
+    const std::vector<double> bound_multipliers = {0.0, 0.05, 0.0, 0.05, 0.0};
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        problem.linear[i] = bound_multipliers[i] - po::testing::row_dot(problem.hessian, i, optimum);
+        add_inequality(problem, unit_row(n, i, -1.0), -1.0);
+        add_inequality(problem, unit_row(n, i, 1.0), 0.0);
+    }
+    Solution solution = po::qp::solve(problem);
+    ASSERT_EQ(solution.status, Status::Optimal);
+    EXPECT_EQ(solution.active_inequalities, (std::vector<std::size_t>{3, 7}));
+
+    add_equality(problem, std::vector<double>(n, 1.0), 6.0);
+    Solution infeasible = po::qp::solve(problem);
+    ASSERT_EQ(infeasible.status, Status::Infeasible);
+    EXPECT_TRUE(infeasible.active_inequalities.empty());
+}
+
 TEST(GoldfarbIdnani, InfeasibleBounds)
 {
     constexpr std::size_t n = 3;

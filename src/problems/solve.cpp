@@ -3,6 +3,7 @@
 #include <optional>
 #include <utility>
 
+#include "problems/max_return.hpp"
 #include "problems/mean_variance.hpp"
 #include "problems/requirements.hpp"
 #include "problems/tracking_error.hpp"
@@ -21,6 +22,8 @@ std::expected<Result, Failure> solve_request(const Spec& spec, const Data& data)
     case Objective::Importance:
     case Objective::Kelly:
         return problems::solve_mean_variance(spec, data);
+    case Objective::MaxReturn:
+        return problems::solve_max_return(spec, data);
     case Objective::TrackingError:
         return problems::solve_tracking_error(spec, data);
     default:

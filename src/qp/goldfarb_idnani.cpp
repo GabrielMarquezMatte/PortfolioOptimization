@@ -278,7 +278,9 @@ Solution optimal_solution(const Constraints& constraints, State& state)
             continue;
         }
         solution.inequality_multipliers[constraint.index - constraints.equality_count] = multiplier;
+        solution.active_inequalities.push_back(constraint.index - constraints.equality_count);
     }
+    std::ranges::sort(solution.active_inequalities);
     solution.iterations = state.iterations;
     return solution;
 }

@@ -35,7 +35,9 @@ struct Translation
 
 ConstraintRows add_constraint_rows(const Spec& spec, const Data& data, qp::Problem& problem);
 
-// The QP objective must equal the minimization-form objective of Result, so that its multipliers are the user's.
-Result to_result(const Data& data, const ConstraintRows& rows, const qp::Solution& solution);
+// The QP objective must equal multiplier_scale times the minimization-form objective of Result, up to a
+// constant, so that the QP multipliers divided by multiplier_scale are the user's.
+Result to_result(const Data& data, const ConstraintRows& rows, const qp::Solution& solution,
+                 double multiplier_scale = 1.0);
 
 } // namespace po::problems

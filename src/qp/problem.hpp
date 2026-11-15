@@ -35,6 +35,8 @@ struct Solution
     std::vector<double> x;
     std::vector<double> equality_multipliers;
     std::vector<double> inequality_multipliers;
+    // Inequality rows active at the solution, ascending; empty unless Optimal.
+    std::vector<std::size_t> active_inequalities;
     int iterations = 0;
 };
 

@@ -41,6 +41,7 @@ add_library(portopt_core STATIC
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/problems/constraints.cpp
+    src/problems/max_return.cpp
     src/problems/mean_variance.cpp
     src/problems/requirements.cpp
     src/problems/solve.cpp
@@ -99,6 +100,7 @@ if(PO_BUILD_TESTS)
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
+        tests/unit/problems/max_return_test.cpp
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/solve_test.cpp
         tests/unit/problems/utility_test.cpp

@@ -116,13 +116,13 @@ SolveStatus status_of(qp::Status status)
     std::unreachable();
 }
 
-double multiplier_at(std::optional<std::size_t> row, std::span<const double> multipliers)
+double multiplier_at(std::optional<std::size_t> row, std::span<const double> multipliers, double scale)
 {
     if (!row.has_value())
     {
         return kNaN;
     }
-    return multipliers[*row];
+    return multipliers[*row] / scale;
 }
 
 std::vector<double> user_weights(const Data& data, std::span<const double> x)
@@ -141,17 +141,18 @@ std::vector<double> user_weights(const Data& data, std::span<const double> x)
     return weights;
 }
 
-std::vector<double> bound_multipliers(const Data& data, const ConstraintRows& rows, std::span<const double> z)
+std::vector<double> bound_multipliers(const Data& data, const ConstraintRows& rows, std::span<const double> z,
+                                      double scale)
 {
     std::vector<double> multipliers(data.weight_count(), 0.0);
     for (const BoundRow& bound : rows.bounds)
     {
         if (bound.lower)
         {
-            multipliers[bound.weight] += z[bound.row];
+            multipliers[bound.weight] += z[bound.row] / scale;
             continue;
         }
-        multipliers[bound.weight] -= z[bound.row];
+        multipliers[bound.weight] -= z[bound.row] / scale;
     }
     return multipliers;
 }
@@ -167,14 +168,14 @@ Result without_point(const Data& data, const qp::Solution& solution)
     return result;
 }
 
-Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution& solution)
+Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution& solution, double scale)
 {
     Result result;
     result.status = SolveStatus::Optimal;
     result.weights = user_weights(data, solution.x);
-    result.budget_multiplier = multiplier_at(rows.budget, solution.equality_multipliers);
-    result.target_return_multiplier = multiplier_at(rows.target_return, solution.equality_multipliers);
-    result.bound_multipliers = bound_multipliers(data, rows, solution.inequality_multipliers);
+    result.budget_multiplier = multiplier_at(rows.budget, solution.equality_multipliers, scale);
+    result.target_return_multiplier = multiplier_at(rows.target_return, solution.equality_multipliers, scale);
+    result.bound_multipliers = bound_multipliers(data, rows, solution.inequality_multipliers, scale);
     result.iterations = solution.iterations;
     return result;
 }
@@ -193,13 +194,14 @@ ConstraintRows add_constraint_rows(const Spec& spec, const Data& data, qp::Probl
     return rows;
 }
 
-Result to_result(const Data& data, const ConstraintRows& rows, const qp::Solution& solution)
+Result to_result(const Data& data, const ConstraintRows& rows, const qp::Solution& solution,
+                 double multiplier_scale)
 {
     if (solution.status != qp::Status::Optimal)
     {
         return without_point(data, solution);
     }
-    return at_point(data, rows, solution);
+    return at_point(data, rows, solution, multiplier_scale);
 }
 
 } // namespace po::problems
