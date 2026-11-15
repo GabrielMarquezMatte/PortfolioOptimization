@@ -1,0 +1,23 @@
+Checks: >
+  -*,
+  readability-function-size,
+  readability-braces-around-statements,
+  readability-else-after-return
+WarningsAsErrors: '*'
+CheckOptions:
+  - key: readability-function-size.LineThreshold
+    value: 60
+  - key: readability-function-size.ParameterThreshold
+    value: 5
+  # clang-tidy counts the function body as level 1; 4 allows the 3 nested blocks STYLEGUIDE permits.
+  - key: readability-function-size.NestingThreshold
+    value: 4
+  - key: readability-function-size.StatementThreshold
+    value: '-1'
+  - key: readability-function-size.BranchThreshold
+    value: '-1'
+  - key: readability-function-size.VariableThreshold
+    value: '-1'
+  - key: readability-braces-around-statements.ShortStatementLines
+    value: 0
+HeaderFilterRegex: '.*/src/.*'
