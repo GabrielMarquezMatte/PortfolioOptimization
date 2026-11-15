@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build & Test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-msvc
+            os: windows-latest
+            preset: native-release
+            library: build/native-release/Release/portopt.dll
+          - name: linux-gcc
+            os: ubuntu-24.04
+            preset: native-release
+            library: build/native-release/libportopt.so
+          - name: macos-clang
+            os: macos-latest
+            preset: native-release
+            library: build/native-release/libportopt.dylib
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The runner's Python is what CMake finds for the `style` test; 3.14 is the version the project develops on.
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # The project targets GCC 15 or newer; ubuntu-24.04 ships an older default, so Linux installs it
+      # from the toolchain PPA and passes it to CMake through CC and CXX. Launchpad serves the PPA's signing key
+      # with a transient HTTP 500 (GPGKeyTemporarilyNotFoundError) at times, so adding the PPA is retried.
+      - name: Install GCC 15 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3 4 5; do
+            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 15))
+          done
+          sudo apt-get update
+          sudo apt-get install -y gcc-15 g++-15
+          echo "CC=gcc-15" >> "$GITHUB_ENV"
+          echo "CXX=g++-15" >> "$GITHUB_ENV"
+
+      - name: Print CMake version
+        run: cmake --version
+
+      - name: Print GCC version (Linux)
+        if: runner.os == 'Linux'
+        run: g++-15 --version
+
+      # The sources use std::expected and std::span, which libc++ ships from Xcode 15 (Apple Clang 15).
+      - name: Check Apple Clang version (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          clang++ --version
+          major=$(clang++ --version | sed -n 's/.*clang version \([0-9]*\)\..*/\1/p' | head -n 1)
+          if [ -z "$major" ] || [ "$major" -lt 15 ]; then
+            echo "::error::Apple Clang 15 or newer is required; found '$major'"
+            exit 1
+          fi
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test (C++ and style)
+        run: ctest --preset ${{ matrix.preset }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Python tests
+        shell: bash
+        env:
+          PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
+        run: uv run --project python --python 3.14 pytest python/tests -q
+
+      - name: mypy
+        shell: bash
+        env:
+          PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
+        run: uv run --project python --python 3.14 mypy python/src python/tests
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Ubuntu 24.04's clang 18 reports __cpp_concepts below 202002L, so libstdc++ hides std::expected from it;
+      # clang 19 or newer sees it. LLVM 20 comes from apt.llvm.org.
+      - name: Install clang-tidy
+        run: |
+          wget -qO llvm.sh https://apt.llvm.org/llvm.sh
+          sudo bash llvm.sh 20
+          sudo apt-get install -y clang-tidy-20 ninja-build
+
+      - name: Configure
+        run: |
+          clang-tidy-20 --version
+          cmake -S . -B build/tidy -G Ninja -DCMAKE_CXX_COMPILER=clang++-20 -DCMAKE_C_COMPILER=clang-20 -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DPO_BUILD_TESTS=OFF
+
+      - name: Run clang-tidy over src/
+        run: git ls-files 'src/*.cpp' | xargs clang-tidy-20 -p build/tidy
