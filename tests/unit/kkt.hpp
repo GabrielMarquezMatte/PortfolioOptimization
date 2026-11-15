@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -50,31 +51,71 @@ inline double row_dot(std::span<const double> rows, std::size_t row, std::span<c
     return sum;
 }
 
-inline void subtract_transposed(std::span<const double> rows, std::span<const double> weights,
-                                std::vector<double>& residual)
+// The magnitude of the computed C_i x: sum_j |C_ij x_j|.
+inline double row_magnitude(std::span<const double> rows, std::size_t row, std::span<const double> x)
 {
-    std::size_t n = residual.size();
+    double sum = 0.0;
+    for (std::size_t j = 0; j < x.size(); ++j)
+    {
+        sum += std::fabs(rows[row * x.size() + j] * x[j]);
+    }
+    return sum;
+}
+
+inline std::vector<double> transposed_product(std::span<const double> rows, std::span<const double> weights,
+                                              std::size_t n)
+{
+    std::vector<double> product(n, 0.0);
     for (std::size_t k = 0; k < weights.size(); ++k)
     {
         for (std::size_t j = 0; j < n; ++j)
         {
-            residual[j] -= rows[k * n + j] * weights[k];
+            product[j] += rows[k * n + j] * weights[k];
         }
     }
+    return product;
 }
 
+// A scale of 0 only comes from all-zero terms, whose residual is 0 too.
+inline double relative_to(double value, double scale)
+{
+    if (scale == 0.0)
+    {
+        return value;
+    }
+    return value / scale;
+}
+
+// Stationarity G x + g - E'y - C'z, relative to the largest of its four terms, with no floor: a problem at a
+// small scale is held to the same relative accuracy as one at scale 1.
 inline double stationarity_residual(const po::qp::Problem& problem, const po::qp::Solution& solution)
 {
-    std::vector<double> residual(problem.n);
-    for (std::size_t i = 0; i < problem.n; ++i)
+    std::size_t n = problem.n;
+    std::vector<double> curvature(n);
+    for (std::size_t i = 0; i < n; ++i)
     {
-        residual[i] = row_dot(problem.hessian, i, solution.x) + problem.linear[i];
+        curvature[i] = row_dot(problem.hessian, i, solution.x);
     }
-    subtract_transposed(problem.equality_rows, solution.equality_multipliers, residual);
-    subtract_transposed(problem.inequality_rows, solution.inequality_multipliers, residual);
-    double hessian_scale = largest_magnitude(problem.hessian) * largest_magnitude(solution.x);
-    double scale = std::fmax(1.0, std::fmax(hessian_scale, largest_magnitude(problem.linear)));
-    return largest_magnitude(residual) / scale;
+    std::vector<double> equality = transposed_product(problem.equality_rows, solution.equality_multipliers, n);
+    std::vector<double> inequality =
+        transposed_product(problem.inequality_rows, solution.inequality_multipliers, n);
+    std::vector<double> residual(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        residual[i] = curvature[i] + problem.linear[i] - equality[i] - inequality[i];
+    }
+    double scale = std::fmax(largest_magnitude(curvature), largest_magnitude(problem.linear));
+    scale = std::fmax(scale, std::fmax(largest_magnitude(equality), largest_magnitude(inequality)));
+    return relative_to(largest_magnitude(residual), scale);
+}
+
+// Complementarity of one row, |z s| / (max(|z|, tiny) row_scale): the slack of a row whose multiplier is not
+// zero, relative to the magnitude of the row (row_scale = max(1, |c_i|, sum_j |C_ij x_j|)), and 0 for a row
+// whose multiplier is exactly zero. NaN stays NaN.
+inline double complementarity_of_row(double multiplier, double slack, double row_scale)
+{
+    double weight = std::fmax(std::fabs(multiplier), std::numeric_limits<double>::min());
+    return std::fabs(multiplier * slack) / (weight * row_scale);
 }
 
 inline KktResiduals kkt_residuals(const po::qp::Problem& problem, const po::qp::Solution& solution)
@@ -91,15 +132,17 @@ inline KktResiduals kkt_residuals(const po::qp::Problem& problem, const po::qp::
     {
         double slack = row_dot(problem.inequality_rows, k, solution.x) - problem.inequality_rhs[k];
         double multiplier = solution.inequality_multipliers[k];
+        double row_scale = std::fmax(1.0, std::fmax(std::fabs(problem.inequality_rhs[k]),
+                                                    row_magnitude(problem.inequality_rows, k, solution.x)));
         primal = worst_of(primal, -slack);
         dual = worst_of(dual, -multiplier);
-        complementarity = worst_of(complementarity, std::fabs(multiplier * slack));
+        complementarity = worst_of(complementarity, complementarity_of_row(multiplier, slack, row_scale));
     }
     double rhs_scale = std::fmax(1.0, std::fmax(largest_magnitude(problem.equality_rhs),
                                                 largest_magnitude(problem.inequality_rhs)));
-    double multiplier_scale = std::fmax(1.0, largest_magnitude(solution.inequality_multipliers));
-    return KktResiduals{stationarity_residual(problem, solution), primal / rhs_scale, dual / rhs_scale,
-                        complementarity / (multiplier_scale * rhs_scale)};
+    double multiplier_scale = largest_magnitude(solution.inequality_multipliers);
+    return KktResiduals{stationarity_residual(problem, solution), primal / rhs_scale,
+                        relative_to(dual, multiplier_scale), complementarity};
 }
 
 inline void expect_kkt(const po::qp::Problem& problem, const po::qp::Solution& solution,

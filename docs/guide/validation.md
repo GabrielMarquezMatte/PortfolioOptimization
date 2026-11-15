@@ -37,10 +37,26 @@ instead check each result against conditions that hold if and only if it is corr
 | Frontier variance and capital market line volatility, relative | 1e-10 |
 | Bound feasibility (`w >= lower`, a capped weight at its cap) | 1e-14 |
 
-The KKT residuals are relative: stationarity is divided by `max(1, |G|max |x|max, |g|max)`, primal and dual
-feasibility by `max(1, |rhs|max)` and complementarity by `max(1, |z|max) max(1, |rhs|max)`. NaN always fails, so a
-solution full of NaN cannot pass a residual check. The random covariances come from `tests/unit/random_covariance.hpp`,
-built from a random orthogonal basis and eigenvalues spread over a chosen condition number (100 by default).
+The KKT residuals (`tests/unit/kkt.hpp`) are relative, and the stationarity and dual scales have no floor of 1,
+so that a problem whose objective is scaled by 1e-4 is held to the same relative accuracy as one at scale 1:
+
+- **Stationarity** `|G x + g - E'y - C'z|max` is divided by the largest of `|Gx|max`, `|g|max`, `|E'y|max` and
+  `|C'z|max`, the four terms that cancel. Only an all-zero set of terms (scale 0, residual 0) is left undivided.
+- **Primal feasibility** (the equality gaps and the inequality violations) is divided by `max(1, |rhs|max)`.
+- **Dual feasibility** `max(-z_i)` is divided by the multiplier magnitude `|z|max`.
+- **Complementarity** is measured per row, as `|z_i s_i| / (max(|z_i|, tiny) max(1, |c_i|, sum_j |C_ij x_j|))`, with
+  `s_i = C_i x - c_i` and `tiny` the smallest normal double. For a row with a nonzero multiplier this is the slack
+  relative to the magnitude of the row at the point, and for a row whose multiplier is exactly 0 it is 0. The
+  solver gives an inactive row a multiplier of exactly 0, so a nonzero multiplier claims an active row, and the
+  claim to check is that the row holds with equality to the accuracy rounding allows for that row. A product
+  `|z_i s_i|` divided by global scales would let the slack of a row with a small multiplier, or of a row far smaller
+  than the largest right-hand side, grow unnoticed. `expect_user_kkt` applies the same measure to each
+  bound multiplier and its active bound.
+
+NaN always fails, so a solution full of NaN cannot pass a residual check. With these measures the worst residuals in
+the suite are 1.7e-14 (stationarity) at the 1e-10 tolerance and 3.9e-12 (stationarity) for the covariance of
+condition number 1e10 at 1e-8. The random covariances come from `tests/unit/random_covariance.hpp`, built from a
+random orthogonal basis and eigenvalues spread over a chosen condition number (100 by default).
 
 ## Positive definiteness
 

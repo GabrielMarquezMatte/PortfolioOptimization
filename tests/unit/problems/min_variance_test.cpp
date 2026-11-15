@@ -131,15 +131,19 @@ void expect_bounds(const Spec& spec, const Result& result, double tolerance)
         SCOPED_TRACE(k);
         double weight = result.weights[k];
         double beta = result.bound_multipliers[k];
-        EXPECT_GE(weight, lower_of(spec, k) - tolerance);
-        EXPECT_LE(weight, upper_of(spec, k) + tolerance);
+        double lower = lower_of(spec, k);
+        double upper = upper_of(spec, k);
+        EXPECT_GE(weight, lower - tolerance);
+        EXPECT_LE(weight, upper + tolerance);
         if (beta > 0.0)
         {
-            EXPECT_LE(beta * (weight - lower_of(spec, k)), tolerance);
+            double row_scale = std::fmax(1.0, std::fmax(std::fabs(lower), std::fabs(weight)));
+            EXPECT_LE(po::testing::complementarity_of_row(beta, weight - lower, row_scale), tolerance);
         }
         if (beta < 0.0)
         {
-            EXPECT_LE(-beta * (upper_of(spec, k) - weight), tolerance);
+            double row_scale = std::fmax(1.0, std::fmax(std::fabs(upper), std::fabs(weight)));
+            EXPECT_LE(po::testing::complementarity_of_row(beta, upper - weight, row_scale), tolerance);
         }
     }
 }
