@@ -41,7 +41,8 @@ add_library(portopt_core STATIC
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/problems/constraints.cpp
-    src/problems/min_variance.cpp
+    src/problems/mean_variance.cpp
+    src/problems/requirements.cpp
     src/problems/solve.cpp
     src/metrics/portfolio.cpp)
 set_target_properties(portopt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -99,6 +100,8 @@ if(PO_BUILD_TESTS)
         tests/unit/core/data_test.cpp
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/solve_test.cpp
+        tests/unit/problems/utility_test.cpp
+        tests/unit/problems/requirements_test.cpp
         tests/unit/metrics/portfolio_test.cpp)
     target_include_directories(portopt_tests PRIVATE tests/unit)
     target_compile_definitions(portopt_tests PRIVATE PO_BUILDING)

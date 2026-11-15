@@ -53,7 +53,7 @@ TEST(CapiData, NullCovarianceAllowedAtCreate)
     po_result* result = nullptr;
     EXPECT_EQ(po_solve(spec.get(), data.get(), &result), PO_INVALID_ARGUMENT);
     EXPECT_EQ(result, nullptr);
-    EXPECT_STREQ(po_last_error(), "MIN_VARIANCE requires a covariance");
+    EXPECT_STREQ(po_last_error(), "MIN_VARIANCE requires covariance");
 }
 
 TEST(CapiData, RejectsNaN)

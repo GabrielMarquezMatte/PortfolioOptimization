@@ -1,4 +1,4 @@
-#include "problems/min_variance.hpp"
+#include "problems/mean_variance.hpp"
 
 #include <gtest/gtest.h>
 
@@ -16,6 +16,7 @@
 #include "problems/solve.hpp"
 #include "qp/goldfarb_idnani.hpp"
 #include "random_covariance.hpp"
+#include "user_kkt.hpp"
 
 namespace
 {
@@ -24,6 +25,9 @@ using po::Data;
 using po::Result;
 using po::SolveStatus;
 using po::Spec;
+using po::testing::covariance_times;
+using po::testing::dot;
+using po::testing::excess_mu;
 
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kRiskFree = 0.02;
@@ -43,158 +47,25 @@ std::vector<double> covariance_solve(const Data& data, std::vector<double> rhs)
     return rhs;
 }
 
-double dot(std::span<const double> a, std::span<const double> b)
+Result solve_checked(const Spec& spec, const Data& data, double tolerance = 1e-10)
 {
-    double sum = 0.0;
-    for (std::size_t i = 0; i < a.size(); ++i)
+    po::problems::MeanVariance scales = po::problems::mean_variance_of(spec, data);
+    po::problems::Translation translation = po::problems::mean_variance_problem(spec, data, scales);
+    po::testing::expect_kkt(translation.problem, po::qp::solve(translation.problem), tolerance);
+    Result result = po::solve(spec, data).value();
+    std::vector<double> gradient = covariance_times(data, result.weights);
+    for (double& entry : gradient)
     {
-        sum += a[i] * b[i];
+        entry *= 2.0;
     }
-    return sum;
-}
-
-std::vector<double> covariance_times(const Data& data, std::span<const double> weights)
-{
-    std::size_t n = data.asset_count();
-    std::vector<double> product(n, 0.0);
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        product[i] = dot(data.covariance().subspan(i * n, n), weights.first(n));
-    }
-    return product;
+    po::testing::expect_user_kkt(spec, data, result, gradient, tolerance);
+    return result;
 }
 
 double variance(const Data& data, const Result& result)
 {
     std::span<const double> risky = std::span<const double>(result.weights).first(data.asset_count());
     return dot(risky, covariance_times(data, risky));
-}
-
-std::vector<double> excess_mu(const Data& data)
-{
-    double rate = data.risk_free().value_or(0.0);
-    std::vector<double> excess(data.mu().begin(), data.mu().end());
-    for (double& value : excess)
-    {
-        value -= rate;
-    }
-    return excess;
-}
-
-double lower_of(const Spec& spec, std::size_t weight)
-{
-    if (spec.asset_lower.empty())
-    {
-        return spec.lower;
-    }
-    return spec.asset_lower[weight];
-}
-
-double upper_of(const Spec& spec, std::size_t weight)
-{
-    if (spec.asset_upper.empty())
-    {
-        return spec.upper;
-    }
-    return spec.asset_upper[weight];
-}
-
-void expect_equalities(const Spec& spec, const Data& data, const Result& result, double tolerance)
-{
-    double total = 0.0;
-    for (double weight : result.weights)
-    {
-        total += weight;
-    }
-    EXPECT_NEAR(total, 1.0, tolerance);
-    EXPECT_EQ(std::isnan(result.budget_multiplier), data.risk_free().has_value());
-    EXPECT_EQ(std::isnan(result.target_return_multiplier), !spec.target_return.has_value());
-    EXPECT_TRUE(std::isnan(result.volatility_multiplier));
-    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
-    if (!spec.target_return.has_value())
-    {
-        return;
-    }
-    std::span<const double> risky = std::span<const double>(result.weights).first(data.asset_count());
-    double portfolio_return = dot(risky, data.mu());
-    if (data.risk_free().has_value())
-    {
-        portfolio_return += *data.risk_free() * result.weights.back();
-    }
-    EXPECT_NEAR(portfolio_return, *spec.target_return, tolerance);
-}
-
-void expect_bounds(const Spec& spec, const Result& result, double tolerance)
-{
-    for (std::size_t k = 0; k < result.weights.size(); ++k)
-    {
-        SCOPED_TRACE(k);
-        double weight = result.weights[k];
-        double beta = result.bound_multipliers[k];
-        double lower = lower_of(spec, k);
-        double upper = upper_of(spec, k);
-        EXPECT_GE(weight, lower - tolerance);
-        EXPECT_LE(weight, upper + tolerance);
-        if (beta > 0.0)
-        {
-            double row_scale = std::fmax(1.0, std::fmax(std::fabs(lower), std::fabs(weight)));
-            EXPECT_LE(po::testing::complementarity_of_row(beta, weight - lower, row_scale), tolerance);
-        }
-        if (beta < 0.0)
-        {
-            double row_scale = std::fmax(1.0, std::fmax(std::fabs(upper), std::fabs(weight)));
-            EXPECT_LE(po::testing::complementarity_of_row(beta, upper - weight, row_scale), tolerance);
-        }
-    }
-}
-
-// The convention under test: grad(w'Sigma w) = budget * 1 + target * grad(return) + beta_i e_i - beta_0 * 1.
-void expect_stationarity(const Spec& spec, const Data& data, const Result& result, double tolerance)
-{
-    std::size_t n = data.asset_count();
-    std::vector<double> gradient = covariance_times(data, result.weights);
-    std::vector<double> return_gradient = excess_mu(data);
-    std::vector<double> residual(n);
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        gradient[i] *= 2.0;
-        residual[i] = gradient[i] - result.bound_multipliers[i];
-        if (!data.risk_free().has_value())
-        {
-            residual[i] -= result.budget_multiplier;
-        }
-        if (data.risk_free().has_value())
-        {
-            residual[i] += result.bound_multipliers[n];
-        }
-        if (spec.target_return.has_value())
-        {
-            residual[i] -= result.target_return_multiplier * return_gradient[i];
-        }
-    }
-    double scale = std::fmax(1.0, po::testing::largest_magnitude(gradient));
-    scale = std::fmax(scale, po::testing::largest_magnitude(result.bound_multipliers));
-    EXPECT_LE(po::testing::largest_magnitude(residual) / scale, tolerance);
-}
-
-void expect_user_kkt(const Spec& spec, const Data& data, const Result& result, double tolerance = 1e-10)
-{
-    ASSERT_EQ(result.status, SolveStatus::Optimal);
-    ASSERT_EQ(result.weights.size(), data.weight_count());
-    ASSERT_EQ(result.bound_multipliers.size(), data.weight_count());
-    EXPECT_EQ(result.residual, 0.0);
-    expect_equalities(spec, data, result, tolerance);
-    expect_bounds(spec, result, tolerance);
-    expect_stationarity(spec, data, result, tolerance);
-}
-
-Result solve_checked(const Spec& spec, const Data& data, double tolerance = 1e-10)
-{
-    po::problems::Translation translation = po::problems::min_variance_problem(spec, data);
-    po::testing::expect_kkt(translation.problem, po::qp::solve(translation.problem), tolerance);
-    Result result = po::solve(spec, data).value();
-    expect_user_kkt(spec, data, result, tolerance);
-    return result;
 }
 
 void expect_weights_near(const std::vector<double>& actual, const std::vector<double>& expected, double relative)

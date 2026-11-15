@@ -24,7 +24,7 @@ void expect_failure(const std::expected<po::Result, po::Failure>& result, Failur
 TEST(Solve, MissingCovarianceIsInvalid)
 {
     po::Data data = po::Data::create(3, std::vector<double>{0.1, 0.2, 0.3}, {}).value();
-    expect_failure(po::solve(po::Spec{}, data), FailureKind::InvalidArgument, "MIN_VARIANCE requires a covariance");
+    expect_failure(po::solve(po::Spec{}, data), FailureKind::InvalidArgument, "MIN_VARIANCE requires covariance");
 }
 
 TEST(Solve, TargetReturnWithoutMuIsInvalid)
@@ -32,14 +32,12 @@ TEST(Solve, TargetReturnWithoutMuIsInvalid)
     po::Data data = po::Data::create(3, {}, po::testing::random_covariance(3, 1)).value();
     po::Spec spec;
     spec.target_return = 0.1;
-    expect_failure(po::solve(spec, data), FailureKind::InvalidArgument, "target_return requires mu");
+    expect_failure(po::solve(spec, data), FailureKind::InvalidArgument, "MIN_VARIANCE requires mu");
 }
 
 TEST(Solve, UnimplementedObjectiveIsUnsupported)
 {
-    constexpr std::array kObjectives = {Objective::MaxReturn,     Objective::MaxSharpe,
-                                        Objective::Utility,       Objective::Importance,
-                                        Objective::Kelly,         Objective::TrackingError,
+    constexpr std::array kObjectives = {Objective::MaxReturn, Objective::MaxSharpe, Objective::TrackingError,
                                         Objective::MaxDiversification, Objective::RiskParity};
     po::Data data = po::Data::create(3, {}, {}).value();
     for (Objective objective : kObjectives)

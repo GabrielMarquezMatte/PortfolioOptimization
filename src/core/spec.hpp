@@ -18,6 +18,9 @@ struct Spec
     std::vector<double> asset_lower;
     std::vector<double> asset_upper;
     std::optional<double> target_return;
+    std::optional<double> risk_aversion;
+    std::optional<double> importance;
+    std::optional<double> max_volatility;
 };
 
 } // namespace po
