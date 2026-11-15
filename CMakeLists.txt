@@ -38,6 +38,7 @@ include(FetchContent)
 
 add_library(portopt_core STATIC
     src/linalg/cholesky.cpp
+    src/linalg/qr.cpp
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/problems/constraints.cpp
@@ -99,6 +100,7 @@ if(PO_BUILD_TESTS)
         tests/unit/capi/solve_test.cpp
         tests/unit/capi/metrics_test.cpp
         tests/unit/linalg/cholesky_test.cpp
+        tests/unit/linalg/qr_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
         tests/unit/problems/max_return_test.cpp
