@@ -55,8 +55,9 @@ typedef struct po_result po_result;
    Values only grow, by addition.
 
    Each solved objective is the minimization of f over the weights, subject to the budget (the weights sum to
-   one, cash included) and the weight bounds, with mu~ = mu - rate * 1 (rate = 0 without cash) and Sigma the
-   covariance:
+   one, cash included), the weight bounds and, for MIN_VARIANCE and TRACKING_ERROR when
+   po_spec_set_target_return was called, the target return (mu' w plus rate times the cash weight equals the
+   target), with mu~ = mu - rate * 1 (rate = 0 without cash) and Sigma the covariance:
      MIN_VARIANCE    f = w' Sigma w
      MAX_RETURN      f = -mu~' w, subject to sqrt(w' Sigma w) <= sigma (po_spec_set_max_volatility)
      UTILITY         f = (delta / 2) w' Sigma w - mu~' w, delta from po_spec_set_risk_aversion (default 5)
@@ -193,8 +194,8 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    PO_OBJECTIVE_MAX_RETURN, and the leverage constraint is absent in this version.
 
    One documented exception, for PO_OBJECTIVE_MAX_RETURN: when the cap equals the minimum volatility of the
-   feasible set and the efficient frontier is vertical there, lambda_vol = -inf, and the budget, target-return
-   and bound multipliers are NaN even though those constraints exist. */
+   feasible set and the efficient frontier is vertical there, lambda_vol = -inf, and the budget multiplier
+   (without cash) and the bound multipliers are NaN even though those constraints exist. */
 PO_API po_status po_result_status(const po_result* r, int32_t* out);
 
 /* The weight count of the data the result was solved on. */
