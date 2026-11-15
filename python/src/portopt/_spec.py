@@ -41,11 +41,15 @@ def doubles_pointer(array: NDArray[np.float64]) -> "ctypes._Pointer[ctypes.c_dou
     return array.ctypes.data_as(_DOUBLES)
 
 
-def canonical_bound(side: float | ArrayLike) -> float | tuple[float, ...]:
-    array = np.asarray(side, dtype=np.float64)
-    if array.ndim == 0:
-        return float(array)
-    return tuple(float(value) for value in array)
+def canonical_bounds(
+    lower: float | ArrayLike, upper: float | ArrayLike
+) -> tuple[float | tuple[float, ...], float | tuple[float, ...]]:
+    """Two floats, or, when either side is an array, both sides broadcast to tuples of the same length."""
+    low, high = np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)
+    if low.ndim == 0 and high.ndim == 0:
+        return float(low), float(high)
+    low, high = np.broadcast_arrays(low, high)
+    return tuple(float(value) for value in low), tuple(float(value) for value in high)
 
 
 @dataclass(frozen=True)
@@ -64,8 +68,7 @@ class Spec:
         object.__setattr__(self, "_handle", handle)
         if self.bounds is not None:
             self._set_bounds(*self.bounds)
-            lower, upper = self.bounds
-            object.__setattr__(self, "bounds", (canonical_bound(lower), canonical_bound(upper)))
+            object.__setattr__(self, "bounds", canonical_bounds(*self.bounds))
         for name, setter in SCALAR_SETTERS:
             value = getattr(self, name)
             if value is not None:

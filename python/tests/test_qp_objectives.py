@@ -39,10 +39,19 @@ def test_spec_with_array_bounds_compares_and_hashes_by_value() -> None:
     assert first == same
     assert hash(first) == hash(same)
     assert first != other
-    assert first != mixed
     targeted = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, upper), target_return=0.07)
     assert replace(mixed, target_return=0.07) == targeted
     assert po.solve(first, po.Data(MU, COV)).status == po.SolveStatus.OPTIMAL
+
+
+def test_spec_broadcasts_a_scalar_side_against_an_array() -> None:
+    mixed = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, [1.0, 1.0]))
+    arrays = po.Spec(po.Objective.MIN_VARIANCE, bounds=([0.0, 0.0], [1.0, 1.0]))
+    assert mixed == arrays
+    assert hash(mixed) == hash(arrays)
+    assert mixed.bounds == ((0.0, 0.0), (1.0, 1.0))
+    assert po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, 1.0)).bounds == (0.0, 1.0)
+    assert mixed != po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, 1.0))
 
 
 def test_spec_replace_builds_validated_spec() -> None:
