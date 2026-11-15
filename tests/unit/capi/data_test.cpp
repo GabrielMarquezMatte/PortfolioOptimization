@@ -113,4 +113,96 @@ TEST(CapiData, RejectsNonFiniteRiskFreeRate)
     EXPECT_EQ(weights, kAssets);
 }
 
+constexpr std::size_t kPeriods = 12;
+
+std::vector<double> sample_returns()
+{
+    return po::testing::random_vector(kPeriods * kAssets, 21, -0.05, 0.05);
+}
+
+std::vector<double> sample_benchmark()
+{
+    return po::testing::random_vector(kPeriods, 22, -0.03, 0.03);
+}
+
+DataPtr data_with_returns()
+{
+    DataPtr data = po::testing::make_data(kAssets, {}, {});
+    po::testing::set_returns_ok(data.get(), sample_returns(), sample_benchmark());
+    return data;
+}
+
+std::vector<double> tracking_weights(const po_data* data)
+{
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_TRACKING_ERROR);
+    return po::testing::weights_of(po::testing::solve_ok(spec.get(), data).get());
+}
+
+TEST(CapiData, SetReturnsCopies)
+{
+    std::vector<double> returns = sample_returns();
+    std::vector<double> benchmark = sample_benchmark();
+    DataPtr data = po::testing::make_data(kAssets, {}, {});
+    po::testing::set_returns_ok(data.get(), returns, benchmark);
+    std::vector<double> before = tracking_weights(data.get());
+    std::fill(returns.begin(), returns.end(), kNaN);
+    std::fill(benchmark.begin(), benchmark.end(), kNaN);
+    EXPECT_EQ(tracking_weights(data.get()), before);
+}
+
+TEST(CapiData, SetReturnsRejectsNaNAndZeroT)
+{
+    DataPtr data = data_with_returns();
+    std::vector<double> before = tracking_weights(data.get());
+    std::vector<double> returns = sample_returns();
+    std::vector<double> benchmark = sample_benchmark();
+
+    EXPECT_EQ(po_data_set_returns(data.get(), returns.data(), benchmark.data(), 0), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "returns need at least one observation");
+    returns[5] = kNaN;
+    EXPECT_EQ(po_data_set_returns(data.get(), returns.data(), benchmark.data(), kPeriods),
+              PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "returns is not finite at (1, 1)");
+    returns[5] = 0.0;
+    benchmark[2] = kNaN;
+    EXPECT_EQ(po_data_set_returns(data.get(), returns.data(), benchmark.data(), kPeriods),
+              PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "benchmark is not finite at 2");
+
+    EXPECT_EQ(tracking_weights(data.get()), before);
+}
+
+TEST(CapiData, SetReturnsRejectsOverflowingSize)
+{
+    DataPtr data = data_with_returns();
+    std::vector<double> returns = sample_returns();
+    std::vector<double> benchmark = sample_benchmark();
+    const std::size_t huge = std::numeric_limits<std::size_t>::max();
+    EXPECT_EQ(po_data_set_returns(data.get(), returns.data(), benchmark.data(), huge), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "returns size is too large");
+}
+
+TEST(CapiData, NullReturnsIsInvalid)
+{
+    DataPtr data = data_with_returns();
+    std::vector<double> before = tracking_weights(data.get());
+    std::vector<double> returns = sample_returns();
+    std::vector<double> benchmark = sample_benchmark();
+
+    EXPECT_EQ(po_data_set_returns(data.get(), nullptr, benchmark.data(), kPeriods), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "returns and benchmark must not be null");
+    EXPECT_EQ(po_data_set_returns(data.get(), returns.data(), nullptr, kPeriods), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_data_set_returns(nullptr, returns.data(), benchmark.data(), kPeriods), PO_INVALID_HANDLE);
+    EXPECT_EQ(tracking_weights(data.get()), before);
+}
+
+TEST(CapiData, SetReturnsReplacesEarlierReturns)
+{
+    DataPtr data = data_with_returns();
+    std::vector<double> first = tracking_weights(data.get());
+    po::testing::set_returns_ok(data.get(), po::testing::random_vector(kPeriods * kAssets, 31, -0.05, 0.05),
+                                sample_benchmark());
+    EXPECT_NE(tracking_weights(data.get()), first);
+}
+
 } // namespace

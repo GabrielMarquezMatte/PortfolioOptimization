@@ -152,6 +152,60 @@ extern "C" po_status po_spec_set_target_return(po_spec* s, double r)
         });
 }
 
+extern "C" po_status po_spec_set_risk_aversion(po_spec* s, double delta)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (!std::isfinite(delta) || delta <= 0.0)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "delta must be positive and finite");
+            }
+            s->spec.risk_aversion = delta;
+            return PO_OK;
+        });
+}
+
+extern "C" po_status po_spec_set_importance(po_spec* s, double lambda)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (!(lambda >= 0.0 && lambda < 1.0))
+            {
+                return set_error(PO_INVALID_ARGUMENT, "lambda must satisfy 0 <= lambda < 1");
+            }
+            s->spec.importance = lambda;
+            return PO_OK;
+        });
+}
+
+extern "C" po_status po_spec_set_max_volatility(po_spec* s, double sigma)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (!std::isfinite(sigma) || sigma <= 0.0)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "sigma must be positive and finite");
+            }
+            s->spec.max_volatility = sigma;
+            return PO_OK;
+        });
+}
+
 extern "C" void po_spec_free(po_spec* s)
 {
     std::unique_ptr<po_spec> owner(s);

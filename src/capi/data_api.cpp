@@ -77,6 +77,33 @@ extern "C" po_status po_data_set_risk_free(po_data* d, double rate)
         });
 }
 
+extern "C" po_status po_data_set_returns(po_data* d, const double* returns, const double* benchmark, size_t t)
+{
+    return guard(
+        [&]
+        {
+            if (d == nullptr)
+            {
+                return null_handle("d");
+            }
+            if (returns == nullptr || benchmark == nullptr)
+            {
+                return null_argument("returns and benchmark");
+            }
+            std::size_t n = d->data.asset_count();
+            if (t > std::numeric_limits<std::size_t>::max() / n)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "returns size is too large");
+            }
+            auto stored = d->data.set_returns(view_of(returns, t * n), view_of(benchmark, t), t);
+            if (!stored.has_value())
+            {
+                return po::capi::from_failure(stored.error());
+            }
+            return PO_OK;
+        });
+}
+
 extern "C" po_status po_data_asset_count(const po_data* d, size_t* out)
 {
     return guard(

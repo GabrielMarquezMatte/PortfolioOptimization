@@ -55,6 +55,12 @@ inline DataPtr make_data(std::size_t n, std::span<const double> mu, std::span<co
     return DataPtr(raw);
 }
 
+inline void set_returns_ok(po_data* data, const std::vector<double>& returns,
+                           const std::vector<double>& benchmark)
+{
+    EXPECT_EQ(po_data_set_returns(data, returns.data(), benchmark.data(), benchmark.size()), PO_OK);
+}
+
 inline ResultPtr solve_ok(const po_spec* spec, const po_data* data)
 {
     po_result* raw = nullptr;

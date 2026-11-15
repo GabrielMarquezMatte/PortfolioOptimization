@@ -23,6 +23,12 @@ DataPtr three_asset_data()
     return po::testing::make_data(kAssets, {}, po::testing::random_covariance(kAssets, 7));
 }
 
+DataPtr three_asset_data_with_mu()
+{
+    return po::testing::make_data(kAssets, po::testing::random_vector(kAssets, 3, 0.03, 0.15),
+                                  po::testing::random_covariance(kAssets, 7));
+}
+
 TEST(CapiSpec, RejectsUnknownObjective)
 {
     for (int32_t objective : {-1, 9})
@@ -122,6 +128,45 @@ TEST(CapiSpec, WrongAssetBoundCountFailsAtSolve)
     EXPECT_EQ(po_solve(spec.get(), data.get(), &result), PO_INVALID_ARGUMENT);
     EXPECT_EQ(result, nullptr);
     EXPECT_STREQ(po_last_error(), "asset_lower has 2 entries; expected 3");
+}
+
+using Setter = po_status (*)(po_spec*, double);
+
+void expect_domain(int32_t objective, Setter setter, double valid, const std::vector<double>& invalid,
+                   const char* message)
+{
+    DataPtr data = three_asset_data_with_mu();
+    SpecPtr spec = po::testing::make_spec(objective);
+    ASSERT_EQ(po_spec_set_bounds(spec.get(), 0.0, 1.0), PO_OK);
+    ASSERT_EQ(setter(spec.get(), valid), PO_OK);
+    std::vector<double> expected = po::testing::weights_of(po::testing::solve_ok(spec.get(), data.get()).get());
+    for (double value : invalid)
+    {
+        SCOPED_TRACE(value);
+        EXPECT_EQ(setter(spec.get(), value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), message);
+        EXPECT_EQ(po::testing::weights_of(po::testing::solve_ok(spec.get(), data.get()).get()), expected);
+    }
+}
+
+TEST(CapiSpec, RiskAversionDomain)
+{
+    expect_domain(PO_OBJECTIVE_UTILITY, po_spec_set_risk_aversion, 2.0, {0.0, -1.0, kNaN, kInfinity},
+                  "delta must be positive and finite");
+}
+
+TEST(CapiSpec, ImportanceDomain)
+{
+    expect_domain(PO_OBJECTIVE_IMPORTANCE, po_spec_set_importance, 0.3, {1.0, -0.1, kNaN, 2.0},
+                  "lambda must satisfy 0 <= lambda < 1");
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_IMPORTANCE);
+    EXPECT_EQ(po_spec_set_importance(spec.get(), 0.0), PO_OK);
+}
+
+TEST(CapiSpec, MaxVolatilityDomain)
+{
+    expect_domain(PO_OBJECTIVE_MAX_RETURN, po_spec_set_max_volatility, 5.0, {0.0, -0.1, kNaN, kInfinity},
+                  "sigma must be positive and finite");
 }
 
 } // namespace
