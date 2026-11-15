@@ -30,6 +30,21 @@ def test_spec_is_frozen_dataclass() -> None:
     assert "handle" not in text
 
 
+def test_spec_with_array_bounds_compares_and_hashes_by_value() -> None:
+    upper = np.array([0.5, 1.0, 1.0])
+    first = po.Spec(po.Objective.MIN_VARIANCE, bounds=(np.zeros(3), upper))
+    same = po.Spec(po.Objective.MIN_VARIANCE, bounds=([0.0, 0.0, 0.0], (0.5, 1.0, 1.0)))
+    mixed = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, upper))
+    other = po.Spec(po.Objective.MIN_VARIANCE, bounds=(np.zeros(3), np.array([0.5, 1.0, 0.9])))
+    assert first == same
+    assert hash(first) == hash(same)
+    assert first != other
+    assert first != mixed
+    targeted = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, upper), target_return=0.07)
+    assert replace(mixed, target_return=0.07) == targeted
+    assert po.solve(first, po.Data(MU, COV)).status == po.SolveStatus.OPTIMAL
+
+
 def test_spec_replace_builds_validated_spec() -> None:
     data = po.Data(MU, COV)
     spec = po.Spec(po.Objective.MIN_VARIANCE)

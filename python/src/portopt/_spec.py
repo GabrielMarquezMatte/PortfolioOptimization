@@ -41,6 +41,13 @@ def doubles_pointer(array: NDArray[np.float64]) -> "ctypes._Pointer[ctypes.c_dou
     return array.ctypes.data_as(_DOUBLES)
 
 
+def canonical_bound(side: float | ArrayLike) -> float | tuple[float, ...]:
+    array = np.asarray(side, dtype=np.float64)
+    if array.ndim == 0:
+        return float(array)
+    return tuple(float(value) for value in array)
+
+
 @dataclass(frozen=True)
 class Spec:
     objective: Objective
@@ -57,6 +64,8 @@ class Spec:
         object.__setattr__(self, "_handle", handle)
         if self.bounds is not None:
             self._set_bounds(*self.bounds)
+            lower, upper = self.bounds
+            object.__setattr__(self, "bounds", (canonical_bound(lower), canonical_bound(upper)))
         for name, setter in SCALAR_SETTERS:
             value = getattr(self, name)
             if value is not None:
