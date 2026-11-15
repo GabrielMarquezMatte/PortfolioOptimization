@@ -236,11 +236,12 @@ po_status po_result_status(const po_result* r, int32_t* out);
           /* PO_SOLVE_OPTIMAL, _INFEASIBLE, _UNBOUNDED (supremum not attained), _MAX_ITER */
 po_status po_result_asset_count(const po_result* r, size_t* out);  /* N or N+1 */
 po_status po_result_weights(const po_result* r, double* out, size_t n);
-po_status po_result_iterations(const po_result* r, int32_t* out);
+po_status po_result_iterations(const po_result* r, int32_t* out);  /* total, per method; diagnostics only */
 po_status po_result_multiplier(const po_result* r, int32_t constraint, double* out);
           /* PO_CONSTRAINT_BUDGET, _TARGET_RETURN, _VOLATILITY, _LEVERAGE */
 po_status po_result_bound_multipliers(const po_result* r, double* out, size_t n);
-po_status po_result_residual(const po_result* r, double* out);     /* risk parity; 0 elsewhere */
+po_status po_result_residual(const po_result* r, double* out);
+          /* risk parity: sum (c_i - b_i)^2 at the point; 0 elsewhere; NaN when the weights are NaN */
 void po_result_free(po_result* r);
 ```
 
@@ -249,7 +250,10 @@ void po_result_free(po_result* r);
   combinação objetivo × setter fora da matriz da seção 3.3. Um setter com valor inválido deixa a spec inalterada.
 - Status do resultado (`OPTIMAL`, `INFEASIBLE`, `MAX_ITER`) é sobre o problema bem formado: restrições
   incompatíveis, vol-alvo abaixo da mínima, Sharpe sem excesso positivo, risk parity sem convergir. Um resultado
-  com status diferente de `OPTIMAL` existe e pode ser lido (pesos NaN quando não há ponto).
+  com status diferente de `OPTIMAL` existe e pode ser lido. Pesos e multiplicadores são NaN quando o status não
+  fornece ponto: sempre em `INFEASIBLE` e `UNBOUNDED`, e em `MAX_ITER` dos objetivos resolvidos por QP (todos da v1
+  exceto `RISK_PARITY`), porque o iterado dual do solver não é primal viável; a semântica de `MAX_ITER` do
+  `RISK_PARITY` é documentada quando ele for acrescentado.
 - A spec e os dados são copiados no `po_solve`; mudá-los depois não muda nenhum resultado. `po_result` é imutável e
   pode ser lido de várias threads. `po_solve` pode ser chamado concorrentemente com handles diferentes ou com os
   mesmos handles somente leitura.
@@ -258,7 +262,9 @@ void po_result_free(po_result* r);
   no MAX_DIVERSIFICATION são os do problema de razão em w, obtidos dos homogeneizados por mudança de escala. No
   RISK_PARITY, os do problema de mínimos quadrados no ponto de convergência. Uma restrição que não existe no
   problema (orçamento com caixa, target_return não definido) devolve NaN, sem erro. A convenção de sinal é do
-  builder: uma só para todos os objetivos, documentada no header.
+  builder: uma só para todos os objetivos, documentada no header. Cada multiplicador é a derivada do f ótimo em
+  relação ao lado direito da sua restrição (uma restrição `<=` tem multiplicador `<= 0`, como beta num bound
+  superior); com restrições dependentes os multiplicadores não são únicos e um conjunto válido é devolvido.
 
 ### 5.3 Métricas
 

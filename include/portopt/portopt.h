@@ -38,8 +38,9 @@ typedef int32_t po_status;
    until the next PortOpt call on that thread. */
 PO_API const char* po_last_error(void);
 
-/* Handles are opaque. A null handle is PO_INVALID_HANDLE, a null output pointer or null input array is
-   PO_INVALID_ARGUMENT. After a failed po_*_create or po_solve, *out is NULL (when out itself is not null).
+/* Handles are opaque. A null handle is PO_INVALID_HANDLE; a null output pointer or a null required input array is
+   PO_INVALID_ARGUMENT (the one exception: mu and cov of po_data_create may be NULL, see there). After a failed
+   po_*_create or po_solve, *out is NULL (when out itself is not null).
    Every *_free accepts NULL and does nothing. Handles are independent: freeing one never invalidates another.
    Functions that take const handles only read them, so they are safe to call in parallel on the same handles;
    a handle that is being modified (a setter) must not be used by another thread at the same time. */
@@ -115,17 +116,26 @@ PO_API void po_data_free(po_data* d);
    count. Infeasibility is reported in the result. Safe in parallel with the same read-only spec and data. */
 PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
 
-/* Result, immutable. For a status other than PO_SOLVE_OPTIMAL the weights, bound multipliers and the multipliers
-   of the named constraints are NaN.
+/* Result, immutable. The weights, the bound multipliers and the multipliers of the named constraints are NaN when
+   the status provides no point: always for PO_SOLVE_INFEASIBLE and PO_SOLVE_UNBOUNDED, and for PO_SOLVE_MAX_ITER
+   of every objective solved as a QP (every objective except PO_OBJECTIVE_RISK_PARITY), because the dual iterate of
+   the QP solver is not primal feasible. What PO_SOLVE_MAX_ITER reports for PO_OBJECTIVE_RISK_PARITY is documented
+   when that objective is added.
 
    Multiplier convention. Let f be the objective in minimization form: for PO_OBJECTIVE_MIN_VARIANCE
    f(w) = w' Sigma w, without the factor 1/2, and a maximized objective enters negated. At the optimum, over the
    risky weights w (the first po_data_asset_count entries),
-       grad f(w) = lambda_budget * 1 + lambda_return * grad(return)(w) + sum_i beta_i e_i - beta_0 * 1
+       grad f(w) = lambda_budget * 1 + lambda_return * grad(return) + sum_i beta_i e_i - beta_0 * 1
    where lambda_budget and lambda_return are po_result_multiplier for PO_CONSTRAINT_BUDGET and
-   PO_CONSTRAINT_TARGET_RETURN, beta is po_result_bound_multipliers (lower-bound multiplier minus upper-bound
-   multiplier: >= 0 at an active lower bound, <= 0 at an active upper bound) and beta_0 is its cash entry, which
-   enters with a minus sign because the cash weight is 1 - 1'w.
+   PO_CONSTRAINT_TARGET_RETURN, grad(return) is mu (mu - rate * 1 with cash), beta is po_result_bound_multipliers
+   (lower-bound multiplier minus upper-bound multiplier: >= 0 at an active lower bound, <= 0 at an active upper
+   bound) and beta_0 is its cash entry, which enters with a minus sign because the cash weight is 1 - 1'w. The term
+   of an absent constraint is omitted: no budget term with cash, no return term without a target return, no beta_0
+   without cash.
+
+   Each multiplier is the derivative of the optimal f with respect to the right-hand side of its constraint, so a
+   '<=' constraint has a multiplier <= 0, like beta at an upper bound. When the constraints are dependent the
+   multipliers are not unique; one valid set is returned.
 
    A bound multiplier is 0 (not NaN) for a weight with no finite bound. NaN is only for an absent named
    constraint: the budget constraint does not exist when there is cash, the target-return constraint when no
@@ -137,11 +147,16 @@ PO_API po_status po_result_weight_count(const po_result* r, size_t* out);
 
 /* The vector accessors require n to be exactly the weight count, otherwise PO_INVALID_ARGUMENT. */
 PO_API po_status po_result_weights(const po_result* r, double* out, size_t n);
+
+/* Total iterations of the solver, counted in a method-specific way; for diagnostics only. */
 PO_API po_status po_result_iterations(const po_result* r, int32_t* out);
 
 /* constraint is one of PO_CONSTRAINT_*, otherwise PO_INVALID_ARGUMENT. */
 PO_API po_status po_result_multiplier(const po_result* r, int32_t constraint, double* out);
 PO_API po_status po_result_bound_multipliers(const po_result* r, double* out, size_t n);
+
+/* For PO_OBJECTIVE_RISK_PARITY, sum_i (c_i - b_i)^2 at the reported point, with c_i = w_i (Sigma w)_i / w' Sigma w
+   the risk contributions and b the risk budget; 0 for every other objective; NaN when the weights are NaN. */
 PO_API po_status po_result_residual(const po_result* r, double* out);
 PO_API void po_result_free(po_result* r);
 

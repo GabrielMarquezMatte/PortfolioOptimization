@@ -218,6 +218,7 @@ void expect_no_point(const Result& result, std::size_t weight_count)
         EXPECT_TRUE(std::isnan(result.bound_multipliers[k]));
     }
     EXPECT_TRUE(std::isnan(result.budget_multiplier));
+    EXPECT_TRUE(std::isnan(result.residual));
 }
 
 Spec long_only()

@@ -74,6 +74,8 @@ at the optimum, over the risky weights, is
 
 - `lambda_budget` and `lambda_return` are `po_result_multiplier` for `PO_CONSTRAINT_BUDGET` and
   `PO_CONSTRAINT_TARGET_RETURN`. `grad(return)` is `mu`, or `mu - rf 1` with cash.
+- The term of an absent constraint is omitted: there is no budget term with cash, no return term without a target
+  return and no `beta_0` without cash.
 - `beta_k` is the lower-bound multiplier minus the upper-bound multiplier of weight k (`po_result_bound_multipliers`):
   `>= 0` at an active lower bound and `<= 0` at an active upper bound. It is 0, not NaN, for a weight without a
   finite bound.
@@ -81,7 +83,14 @@ at the optimum, over the risky weights, is
   cash rows have the opposite signs of those of an asset (see the table).
 - A multiplier of an absent constraint is NaN: the budget when there is cash, the target return when none was set,
   and the volatility and leverage constraints, which do not exist in this version.
-- When the status is not `PO_SOLVE_OPTIMAL`, the weights and all multipliers are NaN.
+- Each multiplier is the derivative of the optimal `f` with respect to the right-hand side of its constraint. A `<=`
+  constraint therefore has a multiplier `<= 0`, like `beta` at an upper bound, and a `>=` constraint one `>= 0`.
+- When the constraints are dependent (a target-return row parallel to the budget row, two equal bounds), the
+  multipliers are not unique; one valid set is returned.
+- The weights and all multipliers are NaN when the status provides no point: always for `PO_SOLVE_INFEASIBLE` and
+  `PO_SOLVE_UNBOUNDED`, and for `PO_SOLVE_MAX_ITER` of every objective solved as a QP (every objective except
+  `PO_OBJECTIVE_RISK_PARITY`), because the dual iterate of the QP solver is not primal feasible. `po_result_residual`
+  is then NaN too; otherwise it is 0 for every objective but `PO_OBJECTIVE_RISK_PARITY`.
 
 Without a box or cash, `lambda_budget = 2 / A`: it is the derivative of the optimal variance with respect to the
 budget `b`: the optimal variance is `b^2 / A`, whose derivative at `b = 1` is 2 / A.

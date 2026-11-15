@@ -97,7 +97,8 @@ VolEngine).
 | ABI drift | Semantic versioning, with `PO_ABI_VERSION` in the header and `po_abi_version()` at run time; the contract freezes at 1.0 and 0.x releases may break it. |
 
 Types on the boundary are `int32_t`, `size_t`, `double` and pointers. A null handle is `PO_INVALID_HANDLE`, a null
-output or input array `PO_INVALID_ARGUMENT`, and every `*_free` accepts `NULL`.
+output pointer or a null required input array `PO_INVALID_ARGUMENT` (the one exception: `mu` and `cov` of
+`po_data_create` may be `NULL`), and every `*_free` accepts `NULL`.
 
 ## Anatomy of a `po_solve`
 
@@ -131,8 +132,9 @@ The Python `solve` builds the handles below and then makes one call; any C clien
 5. **Remapping to the user's variables.** `to_result` (`src/problems/constraints.cpp`) turns the QP solution into
    a `Result`: with cash, the last weight is 1 - 1'w; the budget and target-return multipliers are read from the
    equality rows (NaN when the constraint does not exist); each bound multiplier is the lower-row multiplier minus the
-   upper-row multiplier, 0 for a weight with no finite bound. A status other than `Optimal` gives NaN weights and NaN
-   bound multipliers, never a partial point. The QP objective equals the user's minimization form, so the
+   upper-row multiplier, 0 for a weight with no finite bound. A status other than `Optimal` (for a QP, `Infeasible`
+   or `MaxIterations`, whose dual iterate is not primal feasible) gives NaN weights, NaN multipliers and a NaN
+   residual, never a partial point. The QP objective equals the user's minimization form, so the
    multipliers need no rescaling.
 6. **Publishing.** The `Result` is moved into a freshly allocated `po_result` and its pointer written to `*out` only
    once everything has succeeded, so a failure leaves `*out` NULL. The Python layer reads the result into a frozen

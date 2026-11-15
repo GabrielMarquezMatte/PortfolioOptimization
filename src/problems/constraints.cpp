@@ -162,6 +162,7 @@ Result without_point(const Data& data, const qp::Solution& solution)
     result.status = status_of(solution.status);
     result.weights.assign(data.weight_count(), kNaN);
     result.bound_multipliers.assign(data.weight_count(), kNaN);
+    result.residual = kNaN;
     result.iterations = solution.iterations;
     return result;
 }

@@ -104,6 +104,9 @@ TEST(CapiSolve, InfeasibleIsResultNotError)
     {
         EXPECT_TRUE(std::isnan(weight));
     }
+    double residual = 0.0;
+    ASSERT_EQ(po_result_residual(result.get(), &residual), PO_OK);
+    EXPECT_TRUE(std::isnan(residual));
 }
 
 TEST(CapiSolve, UnsupportedObjective)
