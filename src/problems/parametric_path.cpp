@@ -5,8 +5,11 @@
 #include <cstddef>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "linalg/cholesky.hpp"
+#include "linalg/qr.hpp"
 #include "problems/mean_variance.hpp"
 #include "qp/goldfarb_idnani.hpp"
 
@@ -15,8 +18,12 @@ namespace po::problems
 namespace
 {
 
-constexpr double kSameWeightsTolerance = 1e-14;
+// The rounding of Q(t), as a multiple of the noise models below. On equal-mean paths, where w(t) is constant,
+// the measured weight change stays below 0.3 times weight_noise / kNoiseFactor up to a condition number of
+// 1e8 (docs/guide/validation.md).
+constexpr double kNoiseFactor = 16.0;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
+constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 
 double dot(std::span<const double> a, std::span<const double> b)
 {
@@ -26,6 +33,16 @@ double dot(std::span<const double> a, std::span<const double> b)
         sum += a[i] * b[i];
     }
     return sum;
+}
+
+double largest_magnitude(std::span<const double> values)
+{
+    double largest = 0.0;
+    for (double value : values)
+    {
+        largest = std::max(largest, std::fabs(value));
+    }
+    return largest;
 }
 
 std::vector<double> difference(std::span<const double> later, std::span<const double> earlier)
@@ -64,42 +81,85 @@ std::vector<double> excess_of(const Data& data)
     return excess;
 }
 
-double multiplier_magnitude(const PathPoint& point)
+double free_scale_of(const Data& data, std::vector<double> excess)
 {
-    return std::max(largest_magnitude(point.solution.equality_multipliers),
-                    largest_magnitude(point.solution.inequality_multipliers));
+    std::size_t n = data.asset_count();
+    linalg::solve_lower(data.covariance_factor(), n, excess);
+    linalg::solve_lower_transposed(data.covariance_factor(), n, excess);
+    return largest_magnitude(excess);
 }
 
-// A multiplier whose slope is zero moves by rounding, which grows with t: only a larger fall is a decrease.
-bool decreases(const PathPoint& earlier, const PathPoint& later, std::size_t row)
+// The solver starts from the unconstrained minimizer t Sigma^-1 mu~ and every later step carries its
+// rounding: a weight is known to n eps (max(1, |w|max) + t |Sigma^-1 mu~|max), the noise of the stationarity
+// equation.
+double weight_noise(const Path& path, const PathPoint& earlier, const PathPoint& later)
 {
-    double scale = std::max(multiplier_magnitude(earlier), multiplier_magnitude(later));
-    double fall = earlier.solution.inequality_multipliers[row] - later.solution.inequality_multipliers[row];
-    return fall > kSameWeightsTolerance * scale;
+    double n = static_cast<double>(later.solution.x.size());
+    double scale =
+        std::max({1.0, largest_magnitude(earlier.solution.x), largest_magnitude(later.solution.x)});
+    return kNoiseFactor * n * kEpsilon * (scale + later.t * path.free_scale);
 }
 
-bool same_weights(std::span<const double> earlier, std::span<const double> later)
+// b from N b = -mu~ by Householder least squares is known to n eps |mu~|max.
+double slope_noise(const Path& path)
 {
-    double scale = std::max(largest_magnitude(earlier), largest_magnitude(later));
-    return largest_magnitude(difference(later, earlier)) <= kSameWeightsTolerance * scale;
+    return kNoiseFactor * static_cast<double>(path.excess.size()) * kEpsilon * largest_magnitude(path.excess);
+}
+
+// The solver keeps the active normals independent, so the equality rows and the active rows have rank equal
+// to their count, and a count of n fixes w. (MAX_RETURN has one equality row at most, the budget.)
+bool is_vertex(const Path& path, const PathPoint& point)
+{
+    const qp::Problem& problem = path.translation.problem;
+    return problem.equality_rhs.size() + point.solution.active_inequalities.size() == problem.n;
+}
+
+// Normal k of the active set: the equality rows first, then the active rows in ascending order.
+std::span<const double> active_normal(const qp::Problem& problem, const PathPoint& point, std::size_t k)
+{
+    std::size_t n = problem.n;
+    std::size_t equalities = problem.equality_rhs.size();
+    if (k < equalities)
+    {
+        return std::span<const double>(problem.equality_rows).subspan(k * n, n);
+    }
+    std::size_t row = point.solution.active_inequalities[k - equalities];
+    return std::span<const double>(problem.inequality_rows).subspan(row * n, n);
+}
+
+// N (n x m, row-major), the active normals as columns.
+std::vector<double> active_normals(const qp::Problem& problem, const PathPoint& point)
+{
+    std::size_t n = problem.n;
+    std::size_t m = problem.equality_rhs.size() + point.solution.active_inequalities.size();
+    std::vector<double> normals(n * m);
+    for (std::size_t k = 0; k < m; ++k)
+    {
+        std::span<const double> normal = active_normal(problem, point, k);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            normals[i * m + k] = normal[i];
+        }
+    }
+    return normals;
+}
+
+// An inequality multiplier is nonnegative. The combinations taken here are nonnegative in exact arithmetic; a
+// negative value is rounding: a slope above -slope_noise (not a decrease), that slope times the distance
+// along it, or the rounding of u(point) at the exit itself. It is set to 0.
+double nonnegative(double multiplier)
+{
+    return std::max(multiplier, 0.0);
 }
 
 } // namespace
 
-double largest_magnitude(std::span<const double> values)
-{
-    double largest = 0.0;
-    for (double value : values)
-    {
-        largest = std::max(largest, std::fabs(value));
-    }
-    return largest;
-}
-
 Path make_path(const Spec& spec, const Data& data)
 {
-    return Path{mean_variance_problem(spec, data, MeanVariance{1.0, 0.0}), excess_of(data),
-                data.covariance_factor(), *spec.max_volatility, 0};
+    std::vector<double> excess = excess_of(data);
+    double free_scale = free_scale_of(data, excess);
+    return Path{mean_variance_problem(spec, data, MeanVariance{1.0, 0.0}), std::move(excess),
+                data.covariance_factor(), *spec.max_volatility, free_scale, 0};
 }
 
 PathPoint solve_at(Path& path, double t)
@@ -119,48 +179,93 @@ PathPoint solve_at(Path& path, double t)
     return point;
 }
 
-qp::Solution combined(const PathPoint& earlier, const PathPoint& later, double a, double b)
+bool same_segment(const PathPoint& earlier, const PathPoint& later)
 {
-    qp::Solution solution = earlier.solution;
-    for (std::size_t k = 0; k < solution.equality_multipliers.size(); ++k)
-    {
-        solution.equality_multipliers[k] =
-            a * earlier.solution.equality_multipliers[k] + b * later.solution.equality_multipliers[k];
-    }
-    for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
-    {
-        double value =
-            a * earlier.solution.inequality_multipliers[k] + b * later.solution.inequality_multipliers[k];
-        solution.inequality_multipliers[k] = std::max(value, 0.0);
-    }
-    return solution;
+    return earlier.solution.active_inequalities == later.solution.active_inequalities;
 }
 
-double vertex_exit(const PathPoint& earlier, const PathPoint& later)
+bool weights_moved(const Path& path, const PathPoint& earlier, const PathPoint& later)
 {
-    double exit = kInfinity;
-    for (std::size_t row : later.solution.active_inequalities)
+    double change = largest_magnitude(difference(later.solution.x, earlier.solution.x));
+    return change > weight_noise(path, earlier, later);
+}
+
+bool weights_constant(const Path& path, const PathPoint& earlier, const PathPoint& later)
+{
+    if (!same_segment(earlier, later))
     {
-        if (!decreases(earlier, later, row))
+        return false;
+    }
+    return is_vertex(path, later) || !weights_moved(path, earlier, later);
+}
+
+Slope multiplier_slope(const Path& path, const PathPoint& point)
+{
+    const qp::Problem& problem = path.translation.problem;
+    std::size_t equalities = problem.equality_rhs.size();
+    std::size_t m = equalities + point.solution.active_inequalities.size();
+    std::vector<double> target(path.excess.size());
+    for (std::size_t i = 0; i < target.size(); ++i)
+    {
+        target[i] = -path.excess[i];
+    }
+    std::vector<double> b =
+        linalg::least_squares(linalg::householder_qr(active_normals(problem, point), problem.n, m), target);
+    Slope slope{std::vector<double>(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(equalities)),
+                std::vector<double>(problem.inequality_rhs.size(), 0.0)};
+    for (std::size_t k = equalities; k < m; ++k)
+    {
+        slope.inequality[point.solution.active_inequalities[k - equalities]] = b[k];
+    }
+    return slope;
+}
+
+double vertex_exit(const Path& path, const PathPoint& point, const Slope& slope)
+{
+    double noise = slope_noise(path);
+    double exit = kInfinity;
+    for (std::size_t row : point.solution.active_inequalities)
+    {
+        double rate = slope.inequality[row];
+        if (!(rate < -noise))
         {
             continue;
         }
-        double start = earlier.solution.inequality_multipliers[row];
-        double slope = (later.solution.inequality_multipliers[row] - start) / (later.t - earlier.t);
-        exit = std::min(exit, earlier.t - start / slope);
+        exit = std::min(exit, point.t - point.solution.inequality_multipliers[row] / rate);
     }
     return exit;
 }
 
-bool stays(const PathPoint& earlier, const PathPoint& later)
+qp::Solution moved_along(const PathPoint& point, const Slope& slope, double t)
 {
-    return earlier.solution.active_inequalities == later.solution.active_inequalities &&
-           same_weights(earlier.solution.x, later.solution.x);
+    qp::Solution solution = point.solution;
+    double distance = t - point.t;
+    for (std::size_t k = 0; k < solution.equality_multipliers.size(); ++k)
+    {
+        solution.equality_multipliers[k] += distance * slope.equality[k];
+    }
+    for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
+    {
+        solution.inequality_multipliers[k] = nonnegative(solution.inequality_multipliers[k] +
+                                                         distance * slope.inequality[k]);
+    }
+    return solution;
+}
+
+qp::Solution slope_solution(const PathPoint& point, const Slope& slope)
+{
+    qp::Solution solution = point.solution;
+    solution.equality_multipliers = slope.equality;
+    for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
+    {
+        solution.inequality_multipliers[k] = nonnegative(slope.inequality[k]);
+    }
+    return solution;
 }
 
 // |L'w|^2 = c + 2 b tau + a tau^2 reaches s^2 at the root in [0, 1], written without the cancellation of
 // -b + sqrt(...) since b >= 0 where the volatility is nondecreasing.
-double crossing_t(const Path& path, const Bracket& bracket)
+double crossing_fraction(const Path& path, const Bracket& bracket)
 {
     std::vector<double> start = factor_transposed_times(path.factor, bracket.lower.solution.x);
     std::vector<double> direction =
@@ -168,8 +273,29 @@ double crossing_t(const Path& path, const Bracket& bracket)
     double curvature = dot(direction, direction);
     double slope = dot(start, direction);
     double gap = (path.cap - bracket.lower.volatility) * (path.cap + bracket.lower.volatility);
-    double fraction = gap / (slope + std::sqrt(slope * slope + curvature * gap));
-    return bracket.lower.t + fraction * (bracket.upper.t - bracket.lower.t);
+    return std::clamp(gap / (slope + std::sqrt(slope * slope + curvature * gap)), 0.0, 1.0);
+}
+
+qp::Solution on_segment(const Bracket& bracket, double fraction)
+{
+    const qp::Solution& lower = bracket.lower.solution;
+    const qp::Solution& upper = bracket.upper.solution;
+    qp::Solution solution = lower;
+    for (std::size_t i = 0; i < solution.x.size(); ++i)
+    {
+        solution.x[i] = (1.0 - fraction) * lower.x[i] + fraction * upper.x[i];
+    }
+    for (std::size_t k = 0; k < solution.equality_multipliers.size(); ++k)
+    {
+        solution.equality_multipliers[k] =
+            (1.0 - fraction) * lower.equality_multipliers[k] + fraction * upper.equality_multipliers[k];
+    }
+    for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
+    {
+        solution.inequality_multipliers[k] =
+            (1.0 - fraction) * lower.inequality_multipliers[k] + fraction * upper.inequality_multipliers[k];
+    }
+    return solution;
 }
 
 } // namespace po::problems

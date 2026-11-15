@@ -13,8 +13,8 @@ struct Qr
 {
     std::size_t rows = 0;
     std::size_t cols = 0;
-    // Reflector k is the unit vector v of H_k = I - 2 v v', zero above entry k (cols x rows, row-major); a zero
-    // vector is the identity.
+    // Reflector k is the unit vector v of H_k = I - 2 v v', zero above entry k (cols x rows, row-major); a
+    // zero vector is the identity.
     std::vector<double> reflectors;
     // R, cols x cols, row-major.
     std::vector<double> upper;

@@ -30,11 +30,14 @@ using po::testing::excess_mu;
 
 constexpr double kRiskFree = 0.02;
 
-Data random_data(std::size_t n, std::uint64_t seed)
+Data random_data(std::size_t n, std::uint64_t seed, double condition = 100.0)
 {
     std::vector<double> mu = po::testing::random_vector(n, seed + 500, 0.03, 0.15);
-    return Data::create(n, mu, po::testing::random_covariance(n, seed)).value();
+    return Data::create(n, mu, po::testing::random_covariance(n, seed, condition)).value();
 }
+
+// vol(w) = s of a solved point, relative.
+constexpr double kVolatilityTolerance = 1e-12;
 
 std::vector<double> covariance_solve(const Data& data, std::vector<double> rhs)
 {
@@ -355,6 +358,131 @@ TEST(MaxReturn, RandomLongOnly)
         }
         EXPECT_LT(result.volatility_multiplier, 0.0);
         EXPECT_NEAR(achieved, cap, 1e-12 * cap);
+    }
+}
+
+// The QP solutions of Q(t) have a stationarity residual that grows with cond(Sigma), to 2.2e-10 at 1e7 on
+// these problems (measured on qp::solve alone): above 1e6 the KKT conditions are held to 1e-8, the tolerance
+// of an ill-conditioned covariance.
+double sweep_tolerance(double condition)
+{
+    if (condition > 1e6)
+    {
+        return 1e-8;
+    }
+    return 1e-10;
+}
+
+// The QP rounding of vol(w(t*)) grows with cond(Sigma) (about 1e-15 cond s): the crossing is accepted on the
+// segment it lies on, and the reported point is the exact root of that segment.
+TEST(MaxReturn, ConditioningSweep)
+{
+    for (double condition : {1e2, 1e4, 1e5, 1e6, 1e7})
+    {
+        SCOPED_TRACE(condition);
+        for (std::uint64_t seed = 1; seed <= 8; ++seed)
+        {
+            SCOPED_TRACE(seed);
+            std::size_t n = 5 + static_cast<std::size_t>((7 * seed) % 36);
+            Data data = random_data(n, seed, condition);
+            double minimum = minimum_volatility(long_only(), data);
+            for (double fraction : {0.1, 0.3, 0.6, 0.9})
+            {
+                SCOPED_TRACE(fraction);
+                double cap = minimum + fraction * (largest_asset_volatility(data) - minimum);
+                Result result = solve_checked(max_return(long_only(), cap), data, sweep_tolerance(condition));
+                if (result.volatility_multiplier == 0.0)
+                {
+                    EXPECT_LT(volatility(data, result.weights), cap);
+                    continue;
+                }
+                EXPECT_NEAR(volatility(data, result.weights), cap, kVolatilityTolerance * cap);
+            }
+        }
+    }
+}
+
+// Every excess return is negative: all cash is the maximum return at any cap, and the cap is inactive.
+TEST(MaxReturn, RiskFreeAboveAllMeans)
+{
+    for (std::uint64_t seed = 1; seed <= 6; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        std::size_t n = 2 + static_cast<std::size_t>((5 * seed) % 28);
+        Data data = random_data(n, seed);
+        data.set_risk_free(0.2);
+        for (double cap : {1e-4, 0.01, 0.1, 0.5})
+        {
+            SCOPED_TRACE(cap);
+            Result result = solve_checked(max_return(long_only(), cap), data);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                EXPECT_NEAR(result.weights[i], 0.0, 1e-14);
+            }
+            EXPECT_NEAR(result.weights[n], 1.0, 1e-14);
+            EXPECT_EQ(result.volatility_multiplier, 0.0);
+        }
+    }
+}
+
+Spec capped_long_only(double upper)
+{
+    Spec spec;
+    spec.lower = 0.0;
+    spec.upper = upper;
+    return spec;
+}
+
+// With equal means the budget takes up all of t (mu - rf 1): w(t) is the minimum variance for every t, with
+// interior weights, weights at zero and weights at the upper bound, and the cap is inactive at every s, even
+// at s = sigma_min.
+TEST(MaxReturn, EqualMeansTightUpperBounds)
+{
+    constexpr std::size_t n = 50;
+    constexpr double kUpper = 0.05;
+    for (std::uint64_t seed = 1; seed <= 4; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        std::vector<double> covariance = po::testing::random_covariance(n, seed, 1e4);
+        Data data = Data::create(n, std::vector<double>(n, 0.1), covariance).value();
+        Result minimum = po::solve(capped_long_only(kUpper), data).value();
+        ASSERT_EQ(minimum.status, SolveStatus::Optimal);
+        auto at_upper = [](double weight) { return weight > kUpper - 1e-14; };
+        ASSERT_TRUE(std::ranges::any_of(minimum.weights, at_upper));
+        double sigma_min = volatility(data, minimum.weights);
+        for (double factor : {1.0, 1.01, 2.0, 1e4})
+        {
+            SCOPED_TRACE(factor);
+            Result result = solve_checked(max_return(capped_long_only(kUpper), factor * sigma_min), data);
+            expect_near_relative(result.weights, minimum.weights, 1e-10);
+            EXPECT_EQ(result.volatility_multiplier, 0.0);
+        }
+    }
+}
+
+// Equal means with cash: w(t) grows along the capital market line until the cash weight reaches 0 and then
+// stays at the long-only minimum variance of the risky assets, which is not a vertex.
+TEST(MaxReturn, EqualMeansWithCash)
+{
+    for (std::size_t n : {std::size_t{6}, std::size_t{20}, std::size_t{40}})
+    {
+        SCOPED_TRACE(n);
+        std::vector<double> covariance = po::testing::random_covariance(n, n, 1e4);
+        Data risky = Data::create(n, std::vector<double>(n, 0.1), covariance).value();
+        Result minimum = po::solve(long_only(), risky).value();
+        double sigma_min = volatility(risky, minimum.weights);
+        Data data = risky;
+        data.set_risk_free(kRiskFree);
+        for (double factor : {1.0, 2.0, 1e4})
+        {
+            SCOPED_TRACE(factor);
+            Result result = solve_checked(max_return(long_only(), factor * sigma_min), data);
+            expect_near_relative(result.weights, minimum.weights, 1e-10);
+            EXPECT_NEAR(result.weights[n], 0.0, 1e-12);
+        }
+        Result below = solve_checked(max_return(long_only(), 0.5 * sigma_min), data);
+        EXPECT_LT(below.volatility_multiplier, 0.0);
+        EXPECT_NEAR(volatility(data, below.weights), 0.5 * sigma_min, kVolatilityTolerance * sigma_min);
     }
 }
 

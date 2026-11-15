@@ -6,7 +6,6 @@
 #include <limits>
 #include <span>
 #include <utility>
-#include <vector>
 
 #include "problems/parametric_path.hpp"
 #include "qp/problem.hpp"
@@ -16,7 +15,12 @@ namespace po::problems
 namespace
 {
 
-constexpr double kVolatilityTolerance = 1e-12;
+// s within this of sigma_min, relative, is the case s = sigma_min.
+constexpr double kMinimumTolerance = 1e-12;
+// Q(t*) confirms the crossing when it lies on the bracket's segment and its volatility is within this
+// fraction of the bracket's volatility range from s: an error of the affine model is a sizable fraction of
+// the range, while the rounding of vol(Q(t*)) is about 1e-15 cond(Sigma) s (docs/guide/validation.md).
+constexpr double kCrossingSanity = 1e-6;
 constexpr int kMaxDoublings = 200;
 constexpr int kMaxBisections = 200;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -31,6 +35,12 @@ Result stopped(const Data& data, const Path& path, qp::Status status)
     return to_result(data, path.translation.rows, solution);
 }
 
+// Feasibility is decided once, at t = 0: a QP that fails at t > 0 has broken down along the path.
+Result broke_down(const Data& data, const Path& path)
+{
+    return stopped(data, path, qp::Status::MaxIterations);
+}
+
 Result answer(const Data& data, const Path& path, const qp::Solution& solution, double multiplier_scale,
               double volatility_multiplier)
 {
@@ -40,21 +50,19 @@ Result answer(const Data& data, const Path& path, const qp::Solution& solution, 
     return result;
 }
 
-// Where w(t) is constant, the QP multipliers are u(t) = a + b t and Sigma w - t (mu - rf 1) = N u(t) for
-// every t, so -(mu - rf 1) = N b: the user multipliers are the slope b, and the volatility multiplier is 0.
-Result at_limit(const Data& data, const Path& path, const PathPoint& earlier, const PathPoint& later)
+// Where w(t) is constant, Sigma w - t mu~ = N u(t) for every t, so -mu~ = N b with b = du/dt: the user
+// multipliers are b and the volatility multiplier is 0.
+Result at_limit(const Data& data, const Path& path, const PathPoint& point, const Slope& slope)
 {
-    return answer(data, path, combined(earlier, later, -1.0, 1.0), later.t - earlier.t, 0.0);
+    return answer(data, path, slope_solution(point, slope), 1.0, 0.0);
 }
 
-// w(t) stays at w(earlier) up to exit, where an active multiplier reaches zero. There
-// Sigma w - exit (mu - rf 1) = N u(exit), so the user multipliers are u(exit) / exit and the volatility
-// multiplier is -s / exit, the right derivative of the optimum in s.
-Result at_exit(const Data& data, const Path& path, const PathPoint& earlier, const PathPoint& later,
-               double exit)
+// w(t) stays at w(point) up to exit, where an active multiplier reaches zero. There
+// Sigma w - exit mu~ = N u(exit), so the user multipliers are u(exit) / exit and the volatility multiplier is
+// -s / exit, the right derivative of the optimum in s.
+Result at_exit(const Data& data, const Path& path, const PathPoint& point, const Slope& slope, double exit)
 {
-    double fraction = (exit - earlier.t) / (later.t - earlier.t);
-    return answer(data, path, combined(earlier, later, 1.0 - fraction, fraction), exit, -path.cap / exit);
+    return answer(data, path, moved_along(point, slope, exit), exit, -path.cap / exit);
 }
 
 // The volatility grows as soon as t > 0: at s = sigma_min the frontier is vertical, the volatility multiplier
@@ -70,9 +78,36 @@ Result vertical(const Data& data, const Path& path, const PathPoint& start)
     return result;
 }
 
-bool reaches_cap(const Path& path, const PathPoint& point)
+// The point of the segment where vol = s: there Sigma w - t* mu~ = N u, so the user multipliers are u / t*
+// and the volatility multiplier is -s / t*.
+Result at_crossing(const Data& data, const Path& path, const Bracket& bracket, double fraction)
 {
-    return std::fabs(point.volatility - path.cap) <= kVolatilityTolerance * path.cap;
+    double t = bracket.lower.t + fraction * (bracket.upper.t - bracket.lower.t);
+    return answer(data, path, on_segment(bracket, fraction), t, -path.cap / t);
+}
+
+bool confirms(const Path& path, const Bracket& bracket, const PathPoint& crossing)
+{
+    double range = bracket.upper.volatility - bracket.lower.volatility;
+    return same_segment(bracket.lower, crossing) &&
+           std::fabs(crossing.volatility - path.cap) <= kCrossingSanity * range;
+}
+
+// t_a and t_b are adjacent doubles. On one segment the root is still exact; across a breakpoint, the lower
+// end, whose volatility is below s by rounding only, with the volatility multiplier -vol / t that keeps it
+// stationary (the upper end when the lower is t = 0).
+Result at_adjacent(const Data& data, const Path& path, const Bracket& bracket)
+{
+    if (same_segment(bracket.lower, bracket.upper))
+    {
+        return at_crossing(data, path, bracket, crossing_fraction(path, bracket));
+    }
+    const PathPoint* end = &bracket.lower;
+    if (end->t == 0.0)
+    {
+        end = &bracket.upper;
+    }
+    return answer(data, path, end->solution, end->t, -end->volatility / end->t);
 }
 
 void narrow(const Path& path, Bracket& bracket, PathPoint point)
@@ -85,33 +120,52 @@ void narrow(const Path& path, Bracket& bracket, PathPoint point)
     bracket.lower = std::move(point);
 }
 
-// On one segment w(t) is affine and the root of vol(w(t)) = s is exact; a root that misses s by more than the
-// tolerance narrows the bracket like any other point.
+// On one segment w(t) is affine and the root of vol(w(t)) = s is exact; Q(t*) confirms that t* lies on that
+// segment. A crossing that does not narrows the bracket like any other point.
 Result bisect(const Data& data, Path& path, Bracket bracket)
 {
     for (int step = 0; step < kMaxBisections; ++step)
     {
-        if (bracket.lower.solution.active_inequalities == bracket.upper.solution.active_inequalities)
+        if (same_segment(bracket.lower, bracket.upper))
         {
-            PathPoint crossing = solve_at(path, crossing_t(path, bracket));
+            double fraction = crossing_fraction(path, bracket);
+            double t = bracket.lower.t + fraction * (bracket.upper.t - bracket.lower.t);
+            PathPoint crossing = solve_at(path, t);
             if (crossing.solution.status != qp::Status::Optimal)
             {
-                return stopped(data, path, crossing.solution.status);
+                return broke_down(data, path);
             }
-            if (reaches_cap(path, crossing))
+            if (confirms(path, bracket, crossing))
             {
-                return answer(data, path, crossing.solution, crossing.t, -path.cap / crossing.t);
+                return at_crossing(data, path, bracket, fraction);
             }
             narrow(path, bracket, std::move(crossing));
         }
-        PathPoint middle = solve_at(path, 0.5 * (bracket.lower.t + bracket.upper.t));
-        if (middle.solution.status != qp::Status::Optimal)
+        double middle = 0.5 * (bracket.lower.t + bracket.upper.t);
+        if (middle <= bracket.lower.t || middle >= bracket.upper.t)
         {
-            return stopped(data, path, middle.solution.status);
+            return at_adjacent(data, path, bracket);
         }
-        narrow(path, bracket, std::move(middle));
+        PathPoint point = solve_at(path, middle);
+        if (point.solution.status != qp::Status::Optimal)
+        {
+            return broke_down(data, path);
+        }
+        narrow(path, bracket, std::move(point));
     }
-    return stopped(data, path, qp::Status::MaxIterations);
+    return broke_down(data, path);
+}
+
+// w(t) stays at w(upper) for every larger t: constant from lower to upper and no active multiplier
+// decreasing.
+bool stays_beyond(const Path& path, const PathPoint& lower, const PathPoint& upper, Slope& slope)
+{
+    if (!weights_constant(path, lower, upper))
+    {
+        return false;
+    }
+    slope = multiplier_slope(path, upper);
+    return vertex_exit(path, upper, slope) == kInfinity;
 }
 
 Result climb(const Data& data, Path& path, PathPoint lower, double first_t)
@@ -122,40 +176,44 @@ Result climb(const Data& data, Path& path, PathPoint lower, double first_t)
         PathPoint upper = solve_at(path, t);
         if (upper.solution.status != qp::Status::Optimal)
         {
-            return stopped(data, path, upper.solution.status);
+            return broke_down(data, path);
         }
         if (upper.volatility >= path.cap)
         {
             return bisect(data, path, Bracket{std::move(lower), std::move(upper)});
         }
-        if (stays(lower, upper) && vertex_exit(lower, upper) == kInfinity)
+        Slope slope;
+        if (stays_beyond(path, lower, upper, slope))
         {
-            return at_limit(data, path, lower, upper);
+            return at_limit(data, path, upper, slope);
         }
         lower = std::move(upper);
         t *= 2.0;
     }
-    return stopped(data, path, qp::Status::MaxIterations);
+    return broke_down(data, path);
 }
 
-// t_b = sup{t : w(t) = w(0)} decides the multipliers at s = sigma_min: infinite, at a vertex exit, or zero.
-// moved is the smallest t seen with w(t) != w(0), which bounds t_b.
+// t_b = sup{t : w(t) = w(0)} decides the multipliers at s = sigma_min: zero when t_b is infinite, -s / t_b at
+// a vertex exit, and -infinity when t_b = 0. moved is the smallest t seen on the segment of w(0) where the
+// weights moved beyond their rounding, which bounds t_b: -infinity needs that evidence and no exit before it;
+// otherwise the multipliers decide.
 Result leave_minimum(const Data& data, const Path& path, const PathPoint& start, const PathPoint& point,
                      double moved)
 {
-    double exit = vertex_exit(start, point);
-    if (exit == kInfinity && moved == kInfinity)
+    Slope slope = multiplier_slope(path, point);
+    double exit = vertex_exit(path, point, slope);
+    if (moved == kInfinity && exit == kInfinity)
     {
-        return at_limit(data, path, start, point);
+        return at_limit(data, path, point, slope);
     }
     if (exit <= moved)
     {
-        return at_exit(data, path, start, point, exit);
+        return at_exit(data, path, point, slope, exit);
     }
     return vertical(data, path, start);
 }
 
-// Halves t from first_t until w(t) = w(0); when it never does, t_b = 0.
+// Halves t from first_t until w(t) = w(0).
 Result at_minimum(const Data& data, Path& path, const PathPoint& start, double first_t)
 {
     double moved = kInfinity;
@@ -165,25 +223,50 @@ Result at_minimum(const Data& data, Path& path, const PathPoint& start, double f
         PathPoint point = solve_at(path, t);
         if (point.solution.status != qp::Status::Optimal)
         {
-            return stopped(data, path, point.solution.status);
+            return broke_down(data, path);
         }
-        if (stays(start, point))
+        if (weights_constant(path, start, point))
         {
             return leave_minimum(data, path, start, point, moved);
         }
-        moved = t;
+        if (same_segment(start, point) && weights_moved(path, start, point))
+        {
+            moved = t;
+        }
         t *= 0.5;
+    }
+    if (moved == kInfinity)
+    {
+        return broke_down(data, path);
     }
     return vertical(data, path, start);
 }
 
-// t has the units of a variance over a return. With a zero minimum volatility (all cash), s^2 sets the scale.
-double first_step(std::span<const double> excess, double minimum, double cap)
+double largest_magnitude(std::span<const double> values)
+{
+    double largest = 0.0;
+    for (double value : values)
+    {
+        largest = std::max(largest, std::fabs(value));
+    }
+    return largest;
+}
+
+// t has the units of a variance over a return: sigma_min^2, or, with a zero minimum volatility (all cash),
+// the smaller of s^2 and the largest asset variance. The rounding of Q(t) grows with t, so a large cap must
+// not start the path far beyond its last breakpoint.
+double first_step(const Data& data, std::span<const double> excess, double minimum, double cap)
 {
     double variance = minimum * minimum;
     if (variance == 0.0)
     {
-        variance = cap * cap;
+        std::size_t n = data.asset_count();
+        double largest = 0.0;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            largest = std::max(largest, data.covariance()[i * n + i]);
+        }
+        variance = std::min(cap * cap, largest);
     }
     return variance / std::max(largest_magnitude(excess), kEpsilon);
 }
@@ -199,12 +282,12 @@ Result solve_max_return(const Spec& spec, const Data& data)
         return stopped(data, path, start.solution.status);
     }
     double minimum = start.volatility;
-    if (path.cap < minimum * (1.0 - kVolatilityTolerance))
+    if (path.cap < minimum * (1.0 - kMinimumTolerance))
     {
         return stopped(data, path, qp::Status::Infeasible);
     }
-    double first_t = first_step(path.excess, minimum, path.cap);
-    if (std::fabs(path.cap - minimum) <= kVolatilityTolerance * path.cap)
+    double first_t = first_step(data, path.excess, minimum, path.cap);
+    if (std::fabs(path.cap - minimum) <= kMinimumTolerance * path.cap)
     {
         return at_minimum(data, path, start, first_t);
     }
