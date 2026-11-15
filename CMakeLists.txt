@@ -39,7 +39,11 @@ include(FetchContent)
 add_library(portopt_core STATIC
     src/capi/error.cpp
     src/linalg/cholesky.cpp
-    src/qp/goldfarb_idnani.cpp)
+    src/qp/goldfarb_idnani.cpp
+    src/core/data.cpp
+    src/problems/constraints.cpp
+    src/problems/min_variance.cpp
+    src/problems/solve.cpp)
 set_target_properties(portopt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(portopt_core PUBLIC src include)
 target_compile_options(portopt_core PRIVATE ${PO_WARNING_FLAGS})
@@ -78,7 +82,10 @@ if(PO_BUILD_TESTS)
         src/capi/version_api.cpp
         tests/unit/capi/abi_test.cpp
         tests/unit/linalg/cholesky_test.cpp
-        tests/unit/qp/goldfarb_idnani_test.cpp)
+        tests/unit/qp/goldfarb_idnani_test.cpp
+        tests/unit/core/data_test.cpp
+        tests/unit/problems/min_variance_test.cpp
+        tests/unit/problems/solve_test.cpp)
     target_include_directories(portopt_tests PRIVATE tests/unit)
     target_compile_definitions(portopt_tests PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
     target_link_libraries(portopt_tests PRIVATE portopt_core GTest::gtest_main)

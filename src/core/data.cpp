@@ -1,0 +1,193 @@
+#include "core/data.hpp"
+
+#include <cmath>
+#include <string>
+#include <utility>
+
+#include "linalg/cholesky.hpp"
+
+namespace po
+{
+namespace
+{
+
+constexpr double kSymmetryTolerance = 1e-10;
+
+Failure invalid(std::string message)
+{
+    return Failure{FailureKind::InvalidArgument, std::move(message)};
+}
+
+std::string position(std::size_t i, std::size_t j)
+{
+    return "(" + std::to_string(i) + ", " + std::to_string(j) + ")";
+}
+
+std::optional<Failure> check_sizes(std::size_t n, std::span<const double> mu, std::span<const double> covariance)
+{
+    if (n == 0)
+    {
+        return invalid("asset count must be positive");
+    }
+    if (!mu.empty() && mu.size() != n)
+    {
+        return invalid("mu has " + std::to_string(mu.size()) + " entries; expected " + std::to_string(n));
+    }
+    if (!covariance.empty() && covariance.size() != n * n)
+    {
+        return invalid("covariance has " + std::to_string(covariance.size()) + " entries; expected " +
+                       std::to_string(n * n));
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_mu(std::span<const double> mu)
+{
+    for (std::size_t i = 0; i < mu.size(); ++i)
+    {
+        if (!std::isfinite(mu[i]))
+        {
+            return invalid("mu is not finite at " + std::to_string(i));
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_finite(std::span<const double> covariance, std::size_t n)
+{
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            if (!std::isfinite(covariance[i * n + j]))
+            {
+                return invalid("covariance is not finite at " + position(i, j));
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+bool symmetric_pair(std::span<const double> covariance, std::size_t n, std::size_t i, std::size_t j)
+{
+    double scale = std::fmax(std::fabs(covariance[i * n + i]), std::fabs(covariance[j * n + j]));
+    double gap = std::fabs(covariance[i * n + j] - covariance[j * n + i]);
+    return gap <= kSymmetryTolerance * scale;
+}
+
+std::optional<Failure> check_symmetric(std::span<const double> covariance, std::size_t n)
+{
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = i + 1; j < n; ++j)
+        {
+            if (!symmetric_pair(covariance, n, i, j))
+            {
+                return invalid("covariance is not symmetric at " + position(i, j));
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_covariance(std::span<const double> covariance, std::size_t n)
+{
+    if (covariance.empty())
+    {
+        return std::nullopt;
+    }
+    return check_finite(covariance, n).or_else([&] { return check_symmetric(covariance, n); });
+}
+
+std::optional<Failure> first_failure(std::size_t n, std::span<const double> mu, std::span<const double> covariance)
+{
+    return check_sizes(n, mu, covariance)
+        .or_else([&] { return check_mu(mu); })
+        .or_else([&] { return check_covariance(covariance, n); });
+}
+
+std::vector<double> symmetrized(std::span<const double> covariance, std::size_t n)
+{
+    std::vector<double> symmetric(covariance.size());
+    if (covariance.empty())
+    {
+        return symmetric;
+    }
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            symmetric[i * n + j] = 0.5 * (covariance[i * n + j] + covariance[j * n + i]);
+        }
+    }
+    return symmetric;
+}
+
+} // namespace
+
+std::expected<Data, Failure> Data::create(std::size_t n, std::span<const double> mu,
+                                          std::span<const double> covariance)
+{
+    std::optional<Failure> failure = first_failure(n, mu, covariance);
+    if (failure.has_value())
+    {
+        return std::unexpected(std::move(*failure));
+    }
+    std::vector<double> symmetric = symmetrized(covariance, n);
+    if (!symmetric.empty() && !linalg::cholesky(symmetric, n).has_value())
+    {
+        return std::unexpected(invalid("covariance is not positive definite"));
+    }
+    return Data(n, std::vector<double>(mu.begin(), mu.end()), std::move(symmetric));
+}
+
+Data::Data(std::size_t n, std::vector<double> mu, std::vector<double> covariance)
+    : n_(n), mu_(std::move(mu)), covariance_(std::move(covariance))
+{
+}
+
+std::size_t Data::asset_count() const
+{
+    return n_;
+}
+
+std::size_t Data::weight_count() const
+{
+    if (risk_free_.has_value())
+    {
+        return n_ + 1;
+    }
+    return n_;
+}
+
+bool Data::has_mu() const
+{
+    return !mu_.empty();
+}
+
+bool Data::has_covariance() const
+{
+    return !covariance_.empty();
+}
+
+std::span<const double> Data::mu() const
+{
+    return mu_;
+}
+
+std::span<const double> Data::covariance() const
+{
+    return covariance_;
+}
+
+std::optional<double> Data::risk_free() const
+{
+    return risk_free_;
+}
+
+void Data::set_risk_free(double rate)
+{
+    risk_free_ = rate;
+}
+
+} // namespace po
