@@ -282,4 +282,18 @@ TEST(GoldfarbIdnani, RedundantConsistentEqualityAtSmallScale)
     }
 }
 
+TEST(GoldfarbIdnani, RandomProblemsAtExtremeScales)
+{
+    for (double factor : {1e-4, 1e8})
+    {
+        for (std::uint64_t seed = 1; seed <= 50; ++seed)
+        {
+            SCOPED_TRACE(testing::Message() << "factor " << factor << " seed " << seed);
+            Problem problem = random_budget_problem(seed);
+            scale_objective(problem, factor);
+            po::testing::expect_kkt(problem, po::qp::solve(problem));
+        }
+    }
+}
+
 } // namespace

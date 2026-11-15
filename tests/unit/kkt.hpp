@@ -97,8 +97,9 @@ inline KktResiduals kkt_residuals(const po::qp::Problem& problem, const po::qp::
     }
     double rhs_scale = std::fmax(1.0, std::fmax(largest_magnitude(problem.equality_rhs),
                                                 largest_magnitude(problem.inequality_rhs)));
+    double multiplier_scale = std::fmax(1.0, largest_magnitude(solution.inequality_multipliers));
     return KktResiduals{stationarity_residual(problem, solution), primal / rhs_scale, dual / rhs_scale,
-                        complementarity / rhs_scale};
+                        complementarity / (multiplier_scale * rhs_scale)};
 }
 
 inline void expect_kkt(const po::qp::Problem& problem, const po::qp::Solution& solution,

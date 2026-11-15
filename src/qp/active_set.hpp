@@ -98,18 +98,58 @@ inline void rotate_basis(ActiveSet& set, std::size_t column, Givens rotation)
     }
 }
 
-inline void back_substitute(ActiveSet& set)
+inline void solve_triangle(const ActiveSet& set, std::span<double> values)
 {
     std::size_t n = set.n;
-    std::size_t q = set.active.size();
-    for (std::size_t i = q; i-- > 0;)
+    for (std::size_t i = values.size(); i-- > 0;)
     {
-        double sum = set.projection[i];
-        for (std::size_t j = i + 1; j < q; ++j)
+        double sum = values[i];
+        for (std::size_t j = i + 1; j < values.size(); ++j)
         {
-            sum -= set.triangle[i * n + j] * set.dual_direction[j];
+            sum -= set.triangle[i * n + j] * values[j];
         }
-        set.dual_direction[i] = sum / set.triangle[i * n + i];
+        values[i] = sum / set.triangle[i * n + i];
+    }
+}
+
+inline void solve_triangle_transposed(const ActiveSet& set, std::span<double> values)
+{
+    std::size_t n = set.n;
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        double sum = values[i];
+        for (std::size_t j = 0; j < i; ++j)
+        {
+            sum -= set.triangle[j * n + i] * values[j];
+        }
+        values[i] = sum / set.triangle[i * n + i];
+    }
+}
+
+inline void back_substitute(ActiveSet& set)
+{
+    std::size_t q = set.active.size();
+    std::copy_n(set.projection.begin(), q, set.dual_direction.begin());
+    solve_triangle(set, std::span<double>(set.dual_direction).first(q));
+}
+
+// One step of iterative refinement for the active residuals r = b+ - N' x. Since N' J1 = R' and
+// G J1 = N R^{-1}, x += J1 R^{-T} r restores N' x = b+ and u += R^{-1} R^{-T} r keeps G x + g = N u.
+inline void refine_toward_active(ActiveSet& set, std::span<double> residual, std::span<double> x)
+{
+    solve_triangle_transposed(set, residual);
+    for (std::size_t k = 0; k < residual.size(); ++k)
+    {
+        std::span<const double> column = basis_column(set, k);
+        for (std::size_t i = 0; i < x.size(); ++i)
+        {
+            x[i] += residual[k] * column[i];
+        }
+    }
+    solve_triangle(set, residual);
+    for (std::size_t k = 0; k < residual.size(); ++k)
+    {
+        set.active[k].multiplier += residual[k];
     }
 }
 

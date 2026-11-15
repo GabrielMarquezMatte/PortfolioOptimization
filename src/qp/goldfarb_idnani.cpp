@@ -250,8 +250,20 @@ Progress add_constraint(const Constraints& constraints, State& state, ActiveCons
     }
 }
 
+void refine_active(const Constraints& constraints, State& state)
+{
+    std::vector<double> residual(state.set.active.size());
+    for (std::size_t k = 0; k < residual.size(); ++k)
+    {
+        const ActiveConstraint& constraint = state.set.active[k];
+        residual[k] = -constraint.sign * slack(constraints, state, constraint.index);
+    }
+    refine_toward_active(state.set, residual, state.x);
+}
+
 Solution optimal_solution(const Constraints& constraints, State& state)
 {
+    refine_active(constraints, state);
     Solution solution;
     solution.status = Status::Optimal;
     solution.x = std::move(state.x);
