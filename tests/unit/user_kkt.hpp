@@ -93,9 +93,9 @@ inline void expect_user_equalities(const po::Spec& spec, const po::Data& data, c
     EXPECT_NEAR(portfolio_return, *spec.target_return, tolerance);
 }
 
-// Complementarity of a bound row relative to max(|bound|, |w|max), with no floor of 1: a bound at a small scale
-// is held to the same relative accuracy as one at scale 1. The scale is that of all the weights, not of the one
-// weight, because the rounding of a weight at its bound comes from the whole solution.
+// Complementarity of a bound row relative to max(|bound|, |w|max), with no floor of 1: a bound at a small
+// scale is held to the same relative accuracy as one at scale 1. The scale is that of all the weights, not of
+// the one weight, because the rounding of a weight at its bound comes from the whole solution.
 inline double bound_complementarity(double beta, double slack, double bound, double weight_scale)
 {
     double row_scale = std::fmax(std::fabs(bound), weight_scale);
@@ -129,9 +129,9 @@ inline void expect_user_bounds(const po::Spec& spec, const po::Result& result, d
     }
 }
 
-// grad f over the risky weights as the sum of the terms the objective is made of. The stationarity residual is
-// relative to the largest magnitude of a term, so that a gradient that cancels to rounding (an unconstrained
-// optimum) is not compared with its own rounding.
+// grad f over the risky weights as the sum of the terms the objective is made of. The stationarity residual
+// is relative to the largest magnitude of a term, so that a gradient that cancels to rounding (an
+// unconstrained optimum) is not compared with its own rounding.
 struct ObjectiveGradient
 {
     std::vector<double> value;
@@ -152,8 +152,8 @@ inline ObjectiveGradient sum_of(const std::vector<std::vector<double>>& terms)
     return gradient;
 }
 
-// Sigma w / vol, the gradient of the volatility over the risky weights; empty when the volatility multiplier is
-// NaN.
+// Sigma w / vol, the gradient of the volatility over the risky weights; empty when the volatility multiplier
+// is NaN.
 inline std::vector<double> volatility_gradient(const po::Data& data, const po::Result& result)
 {
     std::vector<double> gradient;
@@ -162,7 +162,8 @@ inline std::vector<double> volatility_gradient(const po::Data& data, const po::R
         return gradient;
     }
     gradient = covariance_times(data, result.weights);
-    double volatility = std::sqrt(dot(std::span<const double>(result.weights).first(data.asset_count()), gradient));
+    std::span<const double> risky = std::span<const double>(result.weights).first(data.asset_count());
+    double volatility = std::sqrt(dot(risky, gradient));
     for (double& entry : gradient)
     {
         entry /= volatility;
@@ -214,8 +215,8 @@ inline ConstraintTerms constraint_terms(const po::Data& data, const po::Result& 
     return terms;
 }
 
-// The residual relative to the largest magnitude of a term of the gradient or of the constraints, with no floor of
-// 1: a problem at a small scale is held to the same relative accuracy as one at scale 1.
+// The residual relative to the largest magnitude of a term of the gradient or of the constraints, with no
+// floor of 1: a problem at a small scale is held to the same relative accuracy as one at scale 1.
 inline void expect_user_stationarity(const po::Data& data, const po::Result& result,
                                      const ObjectiveGradient& objective_gradient, double tolerance)
 {
@@ -248,8 +249,8 @@ inline void expect_user_volatility(const po::Spec& spec, const po::Data& data, c
     EXPECT_LE(complementarity_of_row(result.volatility_multiplier, volatility - cap, cap), tolerance);
 }
 
-// Checks, independently of the QP, the equalities, the bounds with per-row complementarity, the volatility cap
-// with its complementarity, and
+// Checks, independently of the QP, the equalities, the bounds with per-row complementarity, the volatility
+// cap with its complementarity, and
 //   grad f(w) = budget * 1 + target_return * (mu - rf 1) + volatility * Sigma w / vol + beta - beta_0 * 1,
 // where objective_gradient is grad f over the risky weights, with the scale of its terms.
 inline void expect_user_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
