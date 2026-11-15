@@ -49,6 +49,8 @@ instead check each result against conditions that hold if and only if it is corr
 |---|---|
 | KKT residuals (stationarity, primal, dual, complementarity), relative | 1e-10 |
 | KKT residuals of a covariance with condition number 1e10 | 1e-8 |
+| KKT residuals of `MAX_RETURN` with `cond(Sigma) = 1e7` (`MaxReturn.ConditioningSweep`) | 1e-8 |
+| `TRACKING_ERROR` objective with `cond(R) = 1e8` against an independent least squares, relative | 1e-10 |
 | Closed forms (unconstrained weights and multiplier, equal-mean target) | 1e-12 |
 | Frontier variance and capital market line volatility, relative | 1e-10 |
 | Volatility multiplier of `MAX_RETURN` against a finite difference, relative | 1e-5 |
@@ -68,12 +70,26 @@ so that a problem whose objective is scaled by 1e-4 is held to the same relative
   solver gives an inactive row a multiplier of exactly 0, so a nonzero multiplier claims an active row, and the
   claim to check is that the row holds with equality to the accuracy rounding allows for that row. A product
   `|z_i s_i|` divided by global scales would let the slack of a row with a small multiplier, or of a row far smaller
-  than the largest right-hand side, grow unnoticed. `expect_user_kkt` applies the same measure to each
-  bound multiplier and its active bound.
+  than the largest right-hand side, grow unnoticed.
+
+`expect_user_kkt` holds the user's variables to the same standard, with no floor of 1 either:
+
+- **Stationarity** is divided by the largest magnitude of a single term: each term of the gradient of `f` (passed as
+  its terms, such as `delta Sigma w` and `-mu~`, so that a gradient that cancels at an unconstrained optimum is not
+  compared with its own rounding) and each constraint term (`lambda_budget 1`, `lambda_return mu~`,
+  `lambda_vol Sigma w / vol`, `beta`, `beta_0`).
+- **Bound complementarity** is the per-row measure above with the row scale `max(|bound|, |w|max)`: the rounding of a
+  weight at its bound comes from the whole solution, so the scale is that of all the weights, not of the one weight
+  (which is 0 at a bound of 0).
+- **The volatility cap**, when its multiplier is finite: `vol(w) <= s (1 + tol)`, `lambda_vol <= 0`, and
+  `|lambda_vol (vol - s)|` relative to `|lambda_vol| s`.
 
 NaN always fails, so a solution full of NaN cannot pass a residual check. With these measures the worst residuals in
-the suite are 1.7e-14 (stationarity) at the 1e-10 tolerance and 3.9e-12 (stationarity) for the covariance of
-condition number 1e10 at 1e-8. The random covariances come from `tests/unit/random_covariance.hpp`, built from a
+the suite are, for the QP, 1.7e-14 (stationarity) at the 1e-10 tolerance and 3.9e-12 for the covariance of condition
+number 1e10 at 1e-8; in the user's variables, 4.0e-14 at 1e-10 outside the conditioning sweep of `MAX_RETURN`, and in
+that sweep 3.8e-11 up to `cond(Sigma) = 1e6` (at 1e-10) and 2.8e-10 at 1e7 (at 1e-8). The last one is the solver's
+own: on the same problems `qp::solve` alone reaches a stationarity of 2.2e-10 along `Q(t)` at 1e7 (5.4e-12 at
+`t = 0`), because it starts from the unconstrained minimizer `t Sigma^-1 mu~`. The random covariances come from `tests/unit/random_covariance.hpp`, built from a
 random orthogonal basis and eigenvalues spread over a chosen condition number (100 by default).
 
 ## Positive definiteness
@@ -89,8 +105,41 @@ condition number 1e10 the smallest pivot is above 4e5 `n eps a_jj`, so `c = 16` 
 `Data` keeps the factor L, and every objective with `G = a Sigma` (the four built by
 `src/problems/mean_variance.cpp`, and the path `Q(t)` of `MAX_RETURN`) hands `sqrt(a) L` to the QP as the factor of
 `G` (`qp::Problem::hessian_factor`); the solver does not factor G again and does not decide definiteness a second
-time. `TRACKING_ERROR` has no covariance: it factors `R~'R~` once, and that single Cholesky decides the column rank
-of the return series.
+time. `TRACKING_ERROR` has no covariance: it factors `R~` once by Householder QR (`src/linalg/qr.cpp`), never
+`R~'R~`, whose condition number is the square of that of `R~`. The Hessian factor is `sqrt(2) R_qr'`, and the column
+rank is decided on the diagonal of `R_qr`: full when every `|R_jj| > c max(T, N) eps max_j |R~_j|`, `c = 16`
+(`kRankFactor` in `src/linalg/qr.hpp`), a bound on the rounding of Householder QR relative to the largest column.
+With the former Cholesky of `R~'R~`, `cond(R)` above about 1e7 was rejected and accepted problems near that limit lost
+up to 1e-3 of the objective; with the QR, 300 random series with `cond(R)` up to 1e8 are all solved, with a largest
+relative objective excess of 2.0e-10 against a least-squares reference.
+
+## Numerical decisions of MAX_RETURN
+
+The path `Q(t)` (`src/problems/parametric_path.cpp`, the policy in `src/problems/max_return.cpp`) takes four
+decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp`.
+
+- **The rounding of a weight along the path.** The solver starts from the unconstrained minimizer `t Sigma^-1 mu~`, so
+  a weight of `Q(t)` is known to `16 n eps (max(1, |w|max) + t |Sigma^-1 mu~|max)` (`kNoiseFactor = 16`). On
+  equal-mean paths, where `w(t)` is constant, the measured change of the weights between doublings stayed below 0.3
+  of `n eps (max(1, |w|max) + t |Sigma^-1 mu~|max)` for `n` from 6 to 50 and condition numbers from 1e2 to 1e8, so
+  16 leaves a margin of about 50. Two points on the same active set have constant weights when the equality and
+  active rows fix `w` (a vertex, decided by their count), or else when the weights differ by no more than that
+  rounding. The former fixed tolerance, 1e-14 of the weight scale, is 0 for weights at 0 and is exceeded by the
+  rounding as `t` grows, which made a constant path climb until `Q(t)` broke down.
+- **The multiplier slope.** Where `w` is constant the slope `b` of the QP multipliers solves `N b = -mu~` over the
+  active normals, by Householder least squares; a slope below `-16 n eps |mu~|max` is a decrease. Differencing two
+  QP solutions instead gave slopes whose rounding reached 1e6 eps of the multiplier scale at a condition number of
+  1e8, and a stationarity of 2.5e-10 for an inactive cap at 1e7.
+- **The crossing.** The rounding of the volatility of one QP solution `Q(t*)` was measured at about
+  `1e-15 cond(Sigma)` relative (up to 1e-8 at 1e7 and 1e-7 at 1e8), so the former test
+  `|vol(w(t*)) - s| <= 1e-12 s` failed on ill-conditioned problems until the bracket shrank to adjacent doubles and
+  the search stopped at `MAX_ITER` (4% of long-only problems at 1e4, 50% at 1e7). `Q(t*)` now only confirms that
+  `t*` lies on the bracket's segment: the same active set and a volatility within `1e-6` of the bracket's volatility
+  range from `s` (`kCrossingSanity`; an error of the affine model is a sizable fraction of the range). The reported
+  point is the exact root of the segment, the interpolation of its two ends, whose volatility is `s` to rounding
+  (within the 1e-12 of the table, also at 1e7).
+- **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
+  `INFEASIBLE`.
 
 ## Numerical decisions of the QP solver
 
@@ -118,12 +167,13 @@ equality at the objective scale 1e-4, and G and g scaled by 1e-4 and 1e8.
 | Suite | What it checks |
 |---|---|
 | `tests/unit/linalg/cholesky_test.cpp` | The factor and the triangular solves; rejection of an indefinite matrix and of a pivot at rounding level |
+| `tests/unit/linalg/qr_test.cpp` | Householder QR: `Q'a = R`, the lower factor of `a'a`, least squares, rank deficiency (duplicated, combined and zero columns), and a rank threshold relative to the columns (`cond = 1e10` full rank, `1e15` not) |
 | `tests/unit/qp/goldfarb_idnani_test.cpp` | Unconstrained, equality-only and bounded problems; infeasible and inconsistent ones; the scale tests above; a provided factor of G gives the same solution |
 | `tests/unit/core/data_test.cpp` | Rejection of non-finite, asymmetric, indefinite, singular (a duplicated asset, a sample covariance of fewer periods than assets) and mismatched input; symmetrization within tolerance; the stored factor |
 | `tests/unit/problems/min_variance_test.cpp` | KKT in the user's variables, the closed forms, the frontier and the capital market line, per-asset bounds, cash bounds, an ill-conditioned covariance |
 | `tests/unit/problems/utility_test.cpp` | `UTILITY`, `IMPORTANCE` and `KELLY`: closed forms, defaults, KKT, and the identities between them and `MIN_VARIANCE` |
-| `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, no covariance needed |
-| `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems |
+| `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, an ill-conditioned one (`cond(R) = 1e8`) accepted with the objective of an independent least squares, no covariance needed |
+| `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems, a conditioning sweep (`cond(Sigma)` 1e2 to 1e7), a risk-free rate above every mean (all cash), equal means with tight upper bounds or with cash |
 | `tests/unit/problems/requirements_test.cpp` | The objective x setter matrix, its messages and the order of the checks |
 | `tests/unit/problems/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |

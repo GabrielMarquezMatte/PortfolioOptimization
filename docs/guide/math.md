@@ -88,9 +88,13 @@ so the QP is
     G = 2 R~'R~,    g = -2 R~'(b - rf 1)
 
 and `0.5 w'Gw + g'w` is `f` minus the constant `|b - rf 1|^2`. It needs the returns and not the covariance; a target
-return also needs `mu`. The Hessian factor is `sqrt(2)` times the Cholesky factor of `R~'R~`, which is the one
-decision on the column rank of `R~`: when `R~'R~` is not positive definite (fewer periods than assets, a duplicated
-or constant column) the request is rejected with `PO_INVALID_ARGUMENT`. `po_tracking_error` reports the root mean
+return also needs `mu`. `R~` is factored by Householder QR, `R~ = Q R_qr` (`src/linalg/qr.cpp`), and never through
+`R~'R~`, whose condition number is the square of that of `R~`: since `R~'R~ = R_qr'R_qr`, the Hessian factor is
+`sqrt(2) R_qr'` (rows signed so that its diagonal is nonnegative). That factorization is the one decision on the
+column rank of `R~`: with fewer periods than assets, or a diagonal entry `|R_jj| <= c max(T, N) eps max_j |R~_j|`
+(`c = 16`, `kRankFactor` in `src/linalg/qr.hpp`; `|R~_j|` the column norms), the request is rejected with
+`PO_INVALID_ARGUMENT`, "returns minus the risk-free rate do not have full column rank numerically" (a duplicated or
+constant column, or one that depends on the others to working precision). `po_tracking_error` reports the root mean
 square `sqrt(f / T)`.
 
 ## MAX_RETURN
@@ -110,28 +114,58 @@ parametric QP
 `t` and its volatility is nondecreasing, from the minimum volatility `sigma_min` at `t = 0`. The solver finds the
 `t*` where the volatility reaches `s`:
 
-1. At `t = 0` it solves the minimum-variance point. `s` below `sigma_min` is `PO_SOLVE_INFEASIBLE`.
-2. It doubles `t` until the volatility reaches `s`, or until `w(t)` stops changing (the inactive cap below).
-3. It bisects until both ends of the bracket have the same active set, takes the exact root of
-   `|L'w|^2 = s^2` on that affine segment and solves `Q(t*)` once more, so the reported point is a QP solution.
+1. At `t = 0` it solves the minimum-variance point. `s` below `sigma_min` is `PO_SOLVE_INFEASIBLE`. Feasibility is
+   decided there, once: a `Q(t)` that fails at `t > 0` has broken down along the path and is `PO_SOLVE_MAX_ITER`,
+   never `PO_SOLVE_INFEASIBLE`.
+2. It doubles `t`, from `t_1 = sigma_min^2 / |mu~|max` (with `sigma_min = 0`, all cash, from
+   `min(s^2, max_i Sigma_ii) / |mu~|max`, so that a large cap does not start far past the last breakpoint), until
+   the volatility reaches `s`, or until `w(t)` stops changing (the inactive cap below).
+3. It bisects until both ends of the bracket have the same active set, takes the exact root `t*` of
+   `|L'w|^2 = s^2` on that affine segment and solves `Q(t*)`. When `Q(t*)` has the same active set (it lies on the
+   segment) and `|vol(w(t*)) - s|` is at most `1e-6` of the bracket's volatility range (`kCrossingSanity`), the
+   crossing is accepted; otherwise `Q(t*)` narrows the bracket like any other point. A bracket whose ends are
+   adjacent doubles is accepted as it is.
+
+The reported point is the point of the segment at the root: the weights and the multipliers are the interpolation
+of the two ends of the bracket at the fraction of the root. The KKT conditions of `Q(t)` on one active set are linear
+in `(w, u, t)`, and the interpolation keeps the nonnegative multipliers nonnegative and the inactive rows feasible,
+so that point is an exact solution of `Q(t*)` up to the rounding of the ends, and `vol(w) = s` to rounding. The
+rounding of `vol(w(t*))` of a single QP solution, about `1e-15 cond(Sigma) s`, does not enter. (At adjacent ends
+across a breakpoint, the lower end is reported, with `lambda_vol = -vol / t`.)
 
 At `t*`, `Sigma w - t* mu~ = N u`, where `N u` collects the QP multipliers `u` of the rows. Dividing by `t*`:
 
     -mu~ = N (u / t*) - (1 / t*) Sigma w = N (u / t*) + lambda_vol Sigma w / vol(w),    lambda_vol = -s / t*
 
-since `vol(w) = s`. The multipliers of the budget, target-return and bound rows are the QP's divided by `t*`, and
-the volatility multiplier is `lambda_vol = -s / t*`, the derivative of the optimal `f = -mu~'w` with respect to
-`s` (<= 0). Special cases:
+since `vol(w) = s`. The multipliers of the budget and bound rows are the QP's divided by `t*`, and the volatility
+multiplier is `lambda_vol = -s / t*`, the derivative of the optimal `f = -mu~'w` with respect to `s` (<= 0).
 
-- **Inactive cap.** When `w(t)` stays at the same weights and the same active set for every larger `t`, with no
-  active multiplier decreasing (beyond `1e-14` of the multiplier scale), the volatility never reaches `s`. The
-  weights are the maximum-return point of the box and `lambda_vol = 0`; the other multipliers are the slopes of the
-  QP multipliers in `t`.
-- **`s = sigma_min`.** Let `t_b = sup{t : w(t) = w(0)}`. If `t_b` is infinite, `lambda_vol = 0`. If `t_b` is finite,
-  `lambda_vol = -s / t_b`. If `t_b = 0` the efficient frontier is vertical at `sigma_min`: `lambda_vol = -inf` and
-  the budget, target-return and bound multipliers are NaN, although those constraints exist. This is the one case
-  where a multiplier is NaN for an existing constraint.
-- A solved point has `vol(w(t*)) = s` to `1e-12` relative; a root that misses it narrows the bracket again.
+**When `w(t)` is constant.** Two points of the path on the same active set have the same weights when the equality
+rows and the active rows fix `w`: a vertex, decided combinatorially (the solver keeps the active normals independent,
+so their rank is their count, and a count of `n` is a vertex). Otherwise the weights are compared with the rounding
+the solver carries: it starts from the unconstrained minimizer `t Sigma^-1 mu~`, so a weight is known to
+
+    16 n eps (max(1, |w|max) + t |Sigma^-1 mu~|max)
+
+(the weight scale floored at 1, plus the size of that minimizer, which grows with `t |mu~|`; `16` is
+`kNoiseFactor` in `src/problems/parametric_path.cpp`). Where `w` is constant, `Sigma w - t mu~ = N u(t)` for every `t`, so
+`u(t) = u(t_b) + (t - t_b) b` with `N b = -mu~`. The slope `b` is computed from that equation by Householder least
+squares over the active normals, not by differencing two QP solutions (whose rounding grows with `t`); a slope below
+`-16 n eps |mu~|max` is a decrease, and an active multiplier that decreases reaches zero at the vertex exit
+`t_b + u_k(t_b) / |b_k|`. A combination that comes out negative by rounding (within those bounds) is set to 0.
+
+Special cases:
+
+- **Inactive cap.** When `w(t)` is constant between two consecutive points of the climb and no active multiplier
+  decreases, `w` stays optimal for every larger `t` and the volatility never reaches `s`. The weights are the
+  maximum-return point of the box and `lambda_vol = 0`; the other multipliers are the slopes `b`.
+- **`s = sigma_min`** (to `1e-12` relative). Let `t_b = sup{t : w(t) = w(0)}`; `t` is halved from `t_1` until `w(t)` is
+  constant with `w(0)`. If `t_b` is infinite (no decrease), `lambda_vol = 0`. If `t_b` is finite (a vertex exit),
+  `lambda_vol = -s / t_b`. The efficient frontier is vertical at `sigma_min` (`t_b = 0`) only when the weights moved
+  beyond their rounding at a larger `t` on the active set of `w(0)` and no exit comes before that `t`: then
+  `lambda_vol = -inf` and the budget multiplier (without cash) and the bound multipliers are NaN, although those
+  constraints exist. This is the one case where a multiplier is NaN for an existing constraint. When the weights and
+  the multipliers disagree, the multipliers decide (`0` or `-s / t_b`), never `-inf`.
 
 Without a box, `MAX_RETURN` lies on the efficient frontier. With cash it is the capital market line,
 `w = s Sigma^-1 mu~ / sqrt(mu~' Sigma^-1 mu~)` over the risky assets, and `lambda_vol = -sqrt(mu~' Sigma^-1 mu~)`,
@@ -202,8 +236,8 @@ is
   cash rows have the opposite signs of those of an asset (see the table).
 - A multiplier of an absent constraint is NaN: the budget when there is cash, the target return when none was set
   (and for the objectives that take none), the volatility constraint unless the objective is MAX_RETURN, and the
-  leverage constraint, which does not exist in this version. The one other NaN is the `s = sigma_min` case of
-  MAX_RETURN above.
+  leverage constraint, which does not exist in this version. The one other NaN is the vertical `s = sigma_min` case
+  of MAX_RETURN above: the budget multiplier (without cash) and the bound multipliers.
 - Each multiplier is the derivative of the optimal `f` with respect to the right-hand side of its constraint. A `<=`
   constraint therefore has a multiplier `<= 0`, like `beta` at an upper bound, and a `>=` constraint one `>= 0`. For
   MAX_RETURN, `lambda_vol <= 0` is the derivative with respect to the cap `s`, and 0 when the cap is inactive.

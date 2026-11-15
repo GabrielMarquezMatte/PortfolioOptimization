@@ -29,13 +29,12 @@ API. The other objectives of the enum return `PO_UNSUPPORTED`.
           |        |             |
         src/core   spec, data, result, failure
           |        |
-        src/linalg   Cholesky, triangular solves
+        src/linalg   Cholesky, triangular solves, Householder QR
 ```
 
 Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (requirements,
-mean_variance, tracking_error, max_return, constraints, solve: translate a spec and data to a QP and read the
-solution back) <- `capi`. `linalg` (Cholesky and
-triangular solves) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
+mean_variance, tracking_error, max_return, parametric_path, constraints, solve: translate a spec and data to a QP
+and read the solution back) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
 only on `linalg`. `core/data.cpp` uses the Cholesky factor to reject a covariance that is not positive definite, and
 `problems` uses `qp`. `metrics` depends on `core` and is used by `capi`. Nothing in `src/` includes from `src/capi/`
 except `capi` itself. Everything below the C API is internal and may change in any release; only the header is a
@@ -66,14 +65,16 @@ Build targets (`CMakeLists.txt`):
 | `src/core/result.hpp` | `po::Result` and `SolveStatus`: weights, status, multipliers, iterations; the multiplier convention is stated there |
 | `src/core/failure.hpp` | `Failure` (kind and message), the error type of `std::expected` below the C API |
 | `src/linalg/cholesky.*` | Cholesky factor of a symmetric matrix (`nullopt` if not positive definite to working precision) and the two triangular solves; no explicit inverse |
+| `src/linalg/qr.*` | Householder QR of a tall matrix without forming `a'a`: the rank decision on `diag(R)`, least squares, and `R'` as the lower factor of `a'a` |
 | `src/qp/problem.hpp` | `qp::Problem` (G, an optional precomputed factor of G, g, equality and inequality rows) and `qp::Solution`, with the stationarity convention |
 | `src/qp/goldfarb_idnani.*` | `qp::solve`: the dual active-set loop, the tolerances and the final refinement |
 | `src/qp/active_set.hpp` | The active-set factorization (J, R), Givens rotations, the add and drop updates and the refinement step |
 | `src/problems/solve.*` | `po::solve`: `check_request`, then dispatch to the objective |
 | `src/problems/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
-| `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~`, `g = -2 R~'(b - rf 1)`, one Cholesky of `R~'R~` deciding the column rank |
-| `src/problems/max_return.*` | `MAX_RETURN`: the parametric QP `Q(t)`, the search for the `t*` where the volatility reaches the cap, and the volatility multiplier `-s / t*` |
+| `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
+| `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the vertex exit, the crossing on a segment |
+| `src/problems/max_return.*` | `MAX_RETURN`: the policy over the path (climb, bisection, the case `s = sigma_min`) and the volatility multiplier `-s / t*` |
 | `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers |
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility` and `tracking_error` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
@@ -125,8 +126,9 @@ The Python `solve` builds the handles below and then makes one call; any C clien
 3. **Translation to a QP.** `mean_variance_problem` (`src/problems/mean_variance.cpp`) takes the risky weights as
    the QP variables, with G = a Sigma (passed with its factor sqrt(a) L) and g = -b mu~; `(a, b)` is (2, 0) for
    `MIN_VARIANCE`, (delta, 1) for `UTILITY`, (2 (1 - lambda), lambda) for `IMPORTANCE` and (1 / (1 + rf), 1) for
-   `KELLY`. `tracking_error_problem` builds G = 2 R~'R~ and g = -2 R~'(b - rf 1) from the return series, and
-   `solve_max_return` does not build one QP but `Q(t)`, with G = Sigma and g = -t mu~, solved at several `t`. Each uses
+   `KELLY`. `tracking_error_problem` builds G = 2 R~'R~ (passed with the factor sqrt(2) R_qr' of a Householder QR
+   of R~) and g = -2 R~'(b - rf 1) from the return series, and `solve_max_return` does not build one QP but `Q(t)`,
+   with G = Sigma and g = -t mu~, solved at several `t` (`src/problems/parametric_path.cpp`). Each uses
    `add_constraint_rows`
    (`src/problems/constraints.cpp`) appends the budget row (no cash), the target-return row and one row per finite
    bound, recording in `ConstraintRows` which row is which. With cash, the cash weight 1 - 1'w is eliminated, so its bounds become rows over the risky weights. The
@@ -147,7 +149,8 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    or `MaxIterations`, whose dual iterate is not primal feasible) gives NaN weights, NaN multipliers and a NaN
    residual, never a partial point. The QP objective equals the user's minimization form up to a constant, so
    the multipliers need no rescaling, with one exception: `MAX_RETURN` divides the multipliers of `Q(t*)` by `t*`
-   (`multiplier_scale`) and sets the volatility multiplier to `-s / t*`.
+   (`multiplier_scale`) and sets the volatility multiplier to `-s / t*`; for an inactive cap the multipliers are
+   the slope `b` of `N b = -mu~`, with scale 1.
 6. **Publishing.** The `Result` is moved into a freshly allocated `po_result` and its pointer written to `*out` only
    once everything has succeeded, so a failure leaves `*out` NULL. The Python layer reads the result into a frozen
    dataclass, with read-only weight and multiplier arrays, and frees the handle.
