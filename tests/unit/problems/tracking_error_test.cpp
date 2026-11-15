@@ -95,26 +95,29 @@ Data data_with(const Series& series, std::size_t n, bool cash)
     return data;
 }
 
-// grad f = 2 R~'(R~ w + rf 1 - b), with R~ = R - rf 1 1' and rf = 0 without cash.
-std::vector<double> objective_gradient(const Data& data, std::span<const double> weights)
+// grad f = 2 R~'(R~ w + rf 1 - b), with R~ = R - rf 1 1' and rf = 0 without cash, as its two terms 2 R~'R~ w and
+// -2 R~'(b - rf 1).
+po::testing::ObjectiveGradient objective_gradient(const Data& data, std::span<const double> weights)
 {
     std::size_t n = data.asset_count();
-    std::size_t periods = data.observation_count();
     double rate = data.risk_free().value_or(0.0);
-    std::vector<double> gradient(n, 0.0);
-    for (std::size_t t = 0; t < periods; ++t)
+    std::vector<double> curvature(n, 0.0);
+    std::vector<double> linear(n, 0.0);
+    for (std::size_t t = 0; t < data.observation_count(); ++t)
     {
-        double residual = rate - data.benchmark()[t];
+        double fitted = 0.0;
         for (std::size_t i = 0; i < n; ++i)
         {
-            residual += (data.returns()[t * n + i] - rate) * weights[i];
+            fitted += (data.returns()[t * n + i] - rate) * weights[i];
         }
         for (std::size_t i = 0; i < n; ++i)
         {
-            gradient[i] += 2.0 * (data.returns()[t * n + i] - rate) * residual;
+            double excess = data.returns()[t * n + i] - rate;
+            curvature[i] += 2.0 * excess * fitted;
+            linear[i] -= 2.0 * excess * (data.benchmark()[t] - rate);
         }
     }
-    return gradient;
+    return po::testing::sum_of({curvature, linear});
 }
 
 double tracking_error_value(const Data& data, std::span<const double> weights)

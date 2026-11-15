@@ -51,15 +51,17 @@ std::vector<double> covariance_solve(const Data& data, std::vector<double> rhs)
     return rhs;
 }
 
-std::vector<double> objective_gradient(const Data& data, const Result& result, Scales scales)
+// grad f = quadratic Sigma w - linear (mu - rf 1), as its two terms.
+po::testing::ObjectiveGradient objective_gradient(const Data& data, const Result& result, Scales scales)
 {
-    std::vector<double> gradient = covariance_times(data, result.weights);
+    std::vector<double> curvature = covariance_times(data, result.weights);
     std::vector<double> excess = excess_mu(data);
-    for (std::size_t i = 0; i < gradient.size(); ++i)
+    for (std::size_t i = 0; i < curvature.size(); ++i)
     {
-        gradient[i] = scales.quadratic * gradient[i] - scales.linear * excess[i];
+        curvature[i] *= scales.quadratic;
+        excess[i] *= -scales.linear;
     }
-    return gradient;
+    return po::testing::sum_of({curvature, excess});
 }
 
 Result solve_checked(const Spec& spec, const Data& data, Scales scales, double tolerance = 1e-10)

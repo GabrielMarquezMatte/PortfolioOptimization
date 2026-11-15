@@ -58,7 +58,7 @@ Result solve_checked(const Spec& spec, const Data& data, double tolerance = 1e-1
     {
         entry *= 2.0;
     }
-    po::testing::expect_user_kkt(spec, data, result, gradient, tolerance);
+    po::testing::expect_user_kkt(spec, data, result, po::testing::sum_of({gradient}), tolerance);
     return result;
 }
 
