@@ -6,11 +6,14 @@
 namespace po::qp
 {
 
-// min 0.5 x'Gx + g'x  subject to  E x = e (rows of E),  C x >= c (rows of C).
+// min 0.5 x'Gx + g'x  subject to  E x = e (rows of E),  C x >= c (rows of C). hessian_factor, when not
+// empty, is the lower Cholesky factor L of G = L L' (n x n, row-major): the solver uses it as given and
+// neither factors G nor decides again whether G is positive definite. Empty means the solver factors G.
 struct Problem
 {
     std::size_t n = 0;
     std::vector<double> hessian;
+    std::vector<double> hessian_factor;
     std::vector<double> linear;
     std::vector<double> equality_rows;
     std::vector<double> equality_rhs;

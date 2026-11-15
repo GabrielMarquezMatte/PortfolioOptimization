@@ -1,6 +1,7 @@
 #include "linalg/cholesky.hpp"
 
 #include <cmath>
+#include <limits>
 
 namespace po::linalg
 {
@@ -10,6 +11,7 @@ namespace
 
 bool factor_in_place(std::span<const double> a, std::size_t n, std::vector<double>& l)
 {
+    double relative_floor = kPivotFactor * static_cast<double>(n) * std::numeric_limits<double>::epsilon();
     for (std::size_t j = 0; j < n; ++j)
     {
         double pivot = a[j * n + j];
@@ -17,7 +19,7 @@ bool factor_in_place(std::span<const double> a, std::size_t n, std::vector<doubl
         {
             pivot -= l[j * n + k] * l[j * n + k];
         }
-        if (!(pivot > 0.0))
+        if (!(pivot > relative_floor * a[j * n + j]))
         {
             return false;
         }

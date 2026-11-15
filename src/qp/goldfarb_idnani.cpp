@@ -322,6 +322,10 @@ void validate_sizes(const Problem& problem)
     {
         throw std::invalid_argument("qp: the hessian must be n x n and the linear term must have n entries");
     }
+    if (!problem.hessian_factor.empty() && problem.hessian_factor.size() != n * n)
+    {
+        throw std::invalid_argument("qp: the hessian factor must be empty or n x n");
+    }
     if (problem.equality_rows.size() != problem.equality_rhs.size() * n)
     {
         throw std::invalid_argument("qp: the equality rows must have n entries per right-hand side");
@@ -337,6 +341,10 @@ void validate_sizes(const Problem& problem)
 Solution solve(const Problem& problem)
 {
     validate_sizes(problem);
+    if (!problem.hessian_factor.empty())
+    {
+        return solve_factored(problem, problem.hessian_factor);
+    }
     std::optional<std::vector<double>> factor = linalg::cholesky(problem.hessian, problem.n);
     if (!factor)
     {

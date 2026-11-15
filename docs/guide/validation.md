@@ -42,6 +42,20 @@ feasibility by `max(1, |rhs|max)` and complementarity by `max(1, |z|max) max(1, 
 solution full of NaN cannot pass a residual check. The random covariances come from `tests/unit/random_covariance.hpp`,
 built from a random orthogonal basis and eigenvalues spread over a chosen condition number (100 by default).
 
+## Positive definiteness
+
+A covariance is accepted only if `linalg::cholesky` factors it, and that decision is taken once, in
+`Data::create`. The factor rejects a pivot `p_j <= c n eps a_jj`, with `c = 16` (`kPivotFactor` in
+`src/linalg/cholesky.hpp`), `eps = DBL_EPSILON` and `a_jj` the original diagonal entry, whatever the sign of
+`p_j`. The rounding error of a Cholesky pivot is bounded by a small multiple of `n eps a_jj`, so a pivot below the
+floor carries no information: in a singular matrix (a duplicated asset, a sample covariance of fewer periods than
+assets) its sign is decided by rounding, and a test against 0 accepted such matrices at random. On sample
+covariances of rank T - 1 the largest noise pivot measured was 1.3 `n eps a_jj`; on the test covariances of
+condition number 1e10 the smallest pivot is above 4e5 `n eps a_jj`, so `c = 16` separates them with wide margins.
+`Data` keeps the factor L, and MIN_VARIANCE hands `sqrt(2) L` to the QP as the factor of `G = 2 Sigma`
+(`qp::Problem::hessian_factor`); the solver does not factor G again and does not decide definiteness a second
+time. Later objectives with `G = k Sigma` pass `sqrt(k) L`.
+
 ## Numerical decisions of the QP solver
 
 Three decisions were taken while validating the Goldfarb-Idnani implementation (`src/qp/`). Each is pinned by a test.
@@ -67,9 +81,9 @@ equality at the objective scale 1e-4, and G and g scaled by 1e-4 and 1e8.
 
 | Suite | What it checks |
 |---|---|
-| `tests/unit/linalg/cholesky_test.cpp` | The factor and the triangular solves; rejection of an indefinite matrix |
-| `tests/unit/qp/goldfarb_idnani_test.cpp` | Unconstrained, equality-only and bounded problems; infeasible and inconsistent ones; the scale tests above |
-| `tests/unit/core/data_test.cpp` | Rejection of non-finite, asymmetric, indefinite and mismatched input; symmetrization within tolerance |
+| `tests/unit/linalg/cholesky_test.cpp` | The factor and the triangular solves; rejection of an indefinite matrix and of a pivot at rounding level |
+| `tests/unit/qp/goldfarb_idnani_test.cpp` | Unconstrained, equality-only and bounded problems; infeasible and inconsistent ones; the scale tests above; a provided factor of G gives the same solution |
+| `tests/unit/core/data_test.cpp` | Rejection of non-finite, asymmetric, indefinite, singular (a duplicated asset, a sample covariance of fewer periods than assets) and mismatched input; symmetrization within tolerance; the stored factor |
 | `tests/unit/problems/min_variance_test.cpp` | KKT in the user's variables, the closed forms, the frontier and the capital market line, per-asset bounds, cash bounds, an ill-conditioned covariance |
 | `tests/unit/problems/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, with and without cash |

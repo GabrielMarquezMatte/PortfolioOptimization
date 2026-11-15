@@ -3,8 +3,11 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <limits>
+#include <random>
+#include <span>
 #include <vector>
 
 #include "random_covariance.hpp"
@@ -44,6 +47,81 @@ TEST(Data, RejectsIndefinite)
 {
     std::vector<double> covariance = {1.0, 2.0, 2.0, 1.0};
     expect_invalid(Data::create(2, {}, covariance), "covariance is not positive definite");
+}
+
+std::vector<double> sample_covariance(std::size_t n, std::size_t periods, std::uint64_t seed)
+{
+    std::mt19937_64 engine(seed);
+    std::vector<double> returns(periods * n);
+    for (double& value : returns)
+    {
+        value = 0.01 * po::testing::standard_normal(engine);
+    }
+    std::vector<double> mean(n, 0.0);
+    for (std::size_t t = 0; t < periods; ++t)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            mean[i] += returns[t * n + i] / static_cast<double>(periods);
+        }
+    }
+    std::vector<double> covariance(n * n, 0.0);
+    for (std::size_t t = 0; t < periods; ++t)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            for (std::size_t j = 0; j < n; ++j)
+            {
+                covariance[i * n + j] += (returns[t * n + i] - mean[i]) * (returns[t * n + j] - mean[j]);
+            }
+        }
+    }
+    for (double& value : covariance)
+    {
+        value /= static_cast<double>(periods - 1);
+    }
+    return covariance;
+}
+
+TEST(Data, RejectsDuplicatedAsset)
+{
+    std::vector<double> covariance = {0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.09};
+    expect_invalid(Data::create(3, {}, covariance), "covariance is not positive definite");
+}
+
+// With fewer periods than assets the sample covariance is singular: its last pivots are rounding noise, of
+// either sign.
+TEST(Data, RejectsRankDeficientSampleCovariance)
+{
+    constexpr std::size_t n = 10;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        std::vector<double> covariance = sample_covariance(n, n - 1, seed);
+        expect_invalid(Data::create(n, {}, covariance), "covariance is not positive definite");
+    }
+}
+
+TEST(Data, StoresCovarianceFactor)
+{
+    constexpr std::size_t n = 4;
+    std::vector<double> covariance = po::testing::random_covariance(n, 6);
+    Data data = Data::create(n, {}, covariance).value();
+    std::span<const double> factor = data.covariance_factor();
+    ASSERT_EQ(factor.size(), n * n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            double product = 0.0;
+            for (std::size_t k = 0; k < n; ++k)
+            {
+                product += factor[i * n + k] * factor[j * n + k];
+            }
+            EXPECT_NEAR(product, covariance[i * n + j], 1e-14 * covariance[0]);
+        }
+    }
+    EXPECT_TRUE(Data::create(n, {}, {}).value().covariance_factor().empty());
 }
 
 TEST(Data, RejectsMismatchedSizes)

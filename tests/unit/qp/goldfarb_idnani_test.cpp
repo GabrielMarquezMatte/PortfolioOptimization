@@ -282,6 +282,35 @@ TEST(GoldfarbIdnani, RedundantConsistentEqualityAtSmallScale)
     }
 }
 
+TEST(GoldfarbIdnani, UsesProvidedFactor)
+{
+    for (std::uint64_t seed = 1; seed <= 10; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_budget_problem(seed);
+        Solution internal = po::qp::solve(problem);
+        problem.hessian_factor = po::linalg::cholesky(problem.hessian, problem.n).value();
+        Solution provided = po::qp::solve(problem);
+        po::testing::expect_kkt(problem, provided);
+        EXPECT_EQ(provided.x, internal.x);
+        EXPECT_EQ(provided.equality_multipliers, internal.equality_multipliers);
+        EXPECT_EQ(provided.inequality_multipliers, internal.inequality_multipliers);
+    }
+}
+
+TEST(GoldfarbIdnani, ProvidedFactorIsNotRefactored)
+{
+    Problem problem;
+    problem.n = 2;
+    problem.hessian = {1.0, 1.0, 1.0, 1.0};
+    problem.linear = {0.0, 0.0};
+    EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
+    problem.hessian_factor = {1.0, 0.0, 1.0, 1e-3};
+    EXPECT_EQ(po::qp::solve(problem).status, Status::Optimal);
+    problem.hessian_factor.pop_back();
+    EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
+}
+
 TEST(GoldfarbIdnani, RandomProblemsAtExtremeScales)
 {
     for (double factor : {1e-4, 1e8})

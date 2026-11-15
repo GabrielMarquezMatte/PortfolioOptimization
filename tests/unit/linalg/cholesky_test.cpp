@@ -62,6 +62,12 @@ TEST(Cholesky, RejectsIndefinite)
     EXPECT_FALSE(po::linalg::cholesky(a, 2).has_value());
 }
 
+TEST(Cholesky, RejectsPivotAtRoundingLevel)
+{
+    std::vector<double> a{0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.09};
+    EXPECT_FALSE(po::linalg::cholesky(a, 3).has_value());
+}
+
 TEST(Cholesky, SolvesSystem)
 {
     constexpr std::size_t n = 6;

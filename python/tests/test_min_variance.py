@@ -60,6 +60,12 @@ def test_invalid_covariance_raises_value_error() -> None:
         po.Data(MU[:2], np.array([[1.0, 2.0], [2.0, 1.0]]))
 
 
+def test_singular_covariance_raises_value_error() -> None:
+    duplicated = np.array([[0.04, 0.04, 0.01], [0.04, 0.04, 0.01], [0.01, 0.01, 0.09]])
+    with pytest.raises(ValueError, match="covariance is not positive definite"):
+        po.Data(MU, duplicated)
+
+
 def test_unsupported_objective_raises_not_implemented() -> None:
     with pytest.raises(NotImplementedError):
         po.solve(po.Spec(po.Objective.RISK_PARITY), po.Data(MU, COV))

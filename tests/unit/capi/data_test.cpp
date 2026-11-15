@@ -77,6 +77,12 @@ TEST(CapiData, RejectsNotPositiveDefiniteCovariance)
     expect_create_fails(kAssets, nullptr, covariance.data(), "covariance is not positive definite");
 }
 
+TEST(CapiData, RejectsDuplicatedAsset)
+{
+    std::vector<double> covariance = {0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.09};
+    expect_create_fails(3, nullptr, covariance.data(), "covariance is not positive definite");
+}
+
 TEST(CapiData, RejectsCountWhoseSquareOverflows)
 {
     const std::size_t huge = std::numeric_limits<std::size_t>::max();

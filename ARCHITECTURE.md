@@ -60,11 +60,11 @@ Build targets (`CMakeLists.txt`):
 | `src/capi/spec_api.cpp`, `data_api.cpp`, `solve_api.cpp`, `result_api.cpp`, `metrics_api.cpp`, `version_api.cpp` | The `extern "C"` functions, one file per handle family |
 | `src/core/objective.hpp` | `po::Objective`, matching the `PO_OBJECTIVE_*` values |
 | `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-asset bounds, optional target return; a copyable value |
-| `src/core/data.hpp`, `data.cpp` | `po::Data`: mu, covariance and the optional risk-free rate; `Data::create` validates and symmetrizes the covariance |
+| `src/core/data.hpp`, `data.cpp` | `po::Data`: mu, covariance, its Cholesky factor and the optional risk-free rate; `Data::create` validates and symmetrizes the covariance and factors it once |
 | `src/core/result.hpp` | `po::Result` and `SolveStatus`: weights, status, multipliers, iterations; the multiplier convention is stated there |
 | `src/core/failure.hpp` | `Failure` (kind and message), the error type of `std::expected` below the C API |
-| `src/linalg/cholesky.*` | Cholesky factor of a symmetric matrix (`nullopt` if not positive definite) and the two triangular solves; no explicit inverse |
-| `src/qp/problem.hpp` | `qp::Problem` (G, g, equality and inequality rows) and `qp::Solution`, with the stationarity convention |
+| `src/linalg/cholesky.*` | Cholesky factor of a symmetric matrix (`nullopt` if not positive definite to working precision) and the two triangular solves; no explicit inverse |
+| `src/qp/problem.hpp` | `qp::Problem` (G, an optional precomputed factor of G, g, equality and inequality rows) and `qp::Solution`, with the stationarity convention |
 | `src/qp/goldfarb_idnani.*` | `qp::solve`: the dual active-set loop, the tolerances and the final refinement |
 | `src/qp/active_set.hpp` | The active-set factorization (J, R), Givens rotations, the add and drop updates and the refinement step |
 | `src/problems/solve.*` | `po::solve`: argument checks that need both spec and data, then dispatch to the objective |
@@ -106,20 +106,22 @@ The Python `solve` builds the handles below and then makes one call; any C clien
 1. **Handles.** `po_spec_create` and the spec setters validate bounds and the target return as they are set (a
    rejected call leaves the spec unchanged). `po_data_create` copies mu and the covariance, rejects a non-finite
    entry, a covariance asymmetric beyond 1e-10 of the larger diagonal entry or one that is not positive definite
-   (`Data::create`, by Cholesky), and stores the covariance symmetrized. `po_data_set_risk_free` adds cash as the
-   last weight.
+   (`Data::create`, by Cholesky, with a pivot floor relative to the diagonal; see
+   [docs/guide/validation.md](docs/guide/validation.md#positive-definiteness)), and stores the covariance
+   symmetrized together with its Cholesky factor L: this is the only place positive definiteness is decided.
+   `po_data_set_risk_free` adds cash as the last weight.
 2. **Validation.** `po_solve` (`src/capi/solve_api.cpp`) sets `*out` to NULL, checks the handles inside `guard` and
    calls `po::solve` (`src/problems/solve.cpp`). That function rejects an objective other than `MinVariance`
    (`PO_UNSUPPORTED`), a missing covariance, a target return without mu, and per-asset bounds whose size is not the
    weight count, cash included (`PO_INVALID_ARGUMENT`). Each is an error status, not a result.
 3. **Translation to a QP.** `min_variance_problem` (`src/problems/min_variance.cpp`) takes the risky weights as the
-   QP variables, with G = 2 Sigma and g = 0, and `add_constraint_rows` (`src/problems/constraints.cpp`) appends the
-   budget row (no cash), the target-return row and one row per finite bound, recording in `ConstraintRows` which row
-   is which. With cash, the cash weight 1 - 1'w is eliminated, so its bounds become rows over the risky weights. The
+   QP variables, with G = 2 Sigma (passed with its factor sqrt(2) L) and g = 0, and `add_constraint_rows`
+   (`src/problems/constraints.cpp`) appends the budget row (no cash), the target-return row and one row per finite
+   bound, recording in `ConstraintRows` which row is which. With cash, the cash weight 1 - 1'w is eliminated, so its bounds become rows over the risky weights. The
    rows are in [docs/guide/math.md](docs/guide/math.md#the-qp-rows).
-4. **Goldfarb-Idnani.** `qp::solve` (`src/qp/goldfarb_idnani.cpp`) factors G by Cholesky, starts at the
-   unconstrained minimum and adds constraints one at a time: the equalities first, then the most violated
-   inequality, each with a primal step bounded by the dual step that drops an active inequality whose multiplier
+4. **Goldfarb-Idnani.** `qp::solve` (`src/qp/goldfarb_idnani.cpp`) uses the factor of G it is given (it factors
+   G by Cholesky only when none is given), starts at the unconstrained minimum and adds constraints one at a time:
+   the equalities first, then the most violated inequality, each with a primal step bounded by the dual step that drops an active inequality whose multiplier
    reaches zero. The active set keeps the factorization J'N = [R; 0] updated by Givens rotations and never forms an
    inverse. Three numerical decisions are fixed by tests (details in
    [docs/guide/validation.md](docs/guide/validation.md#numerical-decisions-of-the-qp-solver)): a scale-free

@@ -134,15 +134,21 @@ std::expected<Data, Failure> Data::create(std::size_t n, std::span<const double>
         return std::unexpected(std::move(*failure));
     }
     std::vector<double> symmetric = symmetrized(covariance, n);
-    if (!symmetric.empty() && !linalg::cholesky(symmetric, n).has_value())
+    std::vector<double> factor;
+    if (!symmetric.empty())
     {
-        return std::unexpected(invalid("covariance is not positive definite"));
+        std::optional<std::vector<double>> computed = linalg::cholesky(symmetric, n);
+        if (!computed.has_value())
+        {
+            return std::unexpected(invalid("covariance is not positive definite"));
+        }
+        factor = std::move(*computed);
     }
-    return Data(n, std::vector<double>(mu.begin(), mu.end()), std::move(symmetric));
+    return Data(n, std::vector<double>(mu.begin(), mu.end()), std::move(symmetric), std::move(factor));
 }
 
-Data::Data(std::size_t n, std::vector<double> mu, std::vector<double> covariance)
-    : n_(n), mu_(std::move(mu)), covariance_(std::move(covariance))
+Data::Data(std::size_t n, std::vector<double> mu, std::vector<double> covariance, std::vector<double> factor)
+    : n_(n), mu_(std::move(mu)), covariance_(std::move(covariance)), covariance_factor_(std::move(factor))
 {
 }
 
@@ -178,6 +184,11 @@ std::span<const double> Data::mu() const
 std::span<const double> Data::covariance() const
 {
     return covariance_;
+}
+
+std::span<const double> Data::covariance_factor() const
+{
+    return covariance_factor_;
 }
 
 std::optional<double> Data::risk_free() const
