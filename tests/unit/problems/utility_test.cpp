@@ -84,16 +84,26 @@ void expect_near_relative(std::span<const double> actual, std::span<const double
     }
 }
 
+// The same value, or both NaN.
+void expect_same(double actual, double expected)
+{
+    EXPECT_EQ(std::isnan(actual), std::isnan(expected));
+    if (!std::isnan(expected))
+    {
+        EXPECT_EQ(actual, expected);
+    }
+}
+
 void expect_identical(const Result& actual, const Result& expected)
 {
     EXPECT_EQ(actual.status, expected.status);
     EXPECT_EQ(actual.weights, expected.weights);
     EXPECT_EQ(actual.bound_multipliers, expected.bound_multipliers);
-    EXPECT_EQ(std::isnan(actual.budget_multiplier), std::isnan(expected.budget_multiplier));
-    if (!std::isnan(expected.budget_multiplier))
-    {
-        EXPECT_EQ(actual.budget_multiplier, expected.budget_multiplier);
-    }
+    expect_same(actual.budget_multiplier, expected.budget_multiplier);
+    expect_same(actual.target_return_multiplier, expected.target_return_multiplier);
+    expect_same(actual.volatility_multiplier, expected.volatility_multiplier);
+    expect_same(actual.leverage_multiplier, expected.leverage_multiplier);
+    EXPECT_EQ(actual.residual, expected.residual);
     EXPECT_EQ(actual.iterations, expected.iterations);
 }
 
