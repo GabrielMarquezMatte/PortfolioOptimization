@@ -42,6 +42,7 @@ add_library(portopt_core STATIC
     src/core/data.cpp
     src/problems/constraints.cpp
     src/problems/max_return.cpp
+    src/problems/parametric_path.cpp
     src/problems/mean_variance.cpp
     src/problems/requirements.cpp
     src/problems/solve.cpp
