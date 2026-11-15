@@ -205,6 +205,14 @@ void take_step(State& state, ActiveConstraint& candidate, double length, bool mo
     }
 }
 
+bool is_independent_of_active(const ActiveSet& set)
+{
+    std::span<const double> projection = set.projection;
+    std::span<const double> outside_active = projection.subspan(set.active.size());
+    double outside_norm = std::sqrt(dot(outside_active, outside_active));
+    return outside_norm > kRelativeTolerance * std::sqrt(dot(projection, projection));
+}
+
 Progress add_constraint(const Constraints& constraints, State& state, ActiveConstraint candidate)
 {
     while (true)
@@ -212,8 +220,7 @@ Progress add_constraint(const Constraints& constraints, State& state, ActiveCons
         compute_directions(state.set, row(constraints, candidate.index), candidate.sign);
         double violation = slack(constraints, state, candidate.index);
         double limit = tolerance(constraints, candidate.index, max_abs(state.x));
-        std::span<const double> direction = state.set.primal_direction;
-        bool moves_primal = std::sqrt(dot(direction, direction)) > limit;
+        bool moves_primal = is_independent_of_active(state.set);
         if (!moves_primal && std::fabs(violation) <= limit)
         {
             return Progress::Added;

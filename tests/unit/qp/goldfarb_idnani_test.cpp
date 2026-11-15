@@ -28,6 +28,23 @@ Problem unconstrained_problem(std::size_t n, std::uint64_t seed, double linear_s
     return problem;
 }
 
+void scale_hessian(Problem& problem, double factor)
+{
+    for (double& entry : problem.hessian)
+    {
+        entry *= factor;
+    }
+}
+
+void scale_objective(Problem& problem, double factor)
+{
+    scale_hessian(problem, factor);
+    for (double& entry : problem.linear)
+    {
+        entry *= factor;
+    }
+}
+
 std::vector<double> solve_hessian(const Problem& problem, std::vector<double> rhs)
 {
     std::vector<double> factor = po::linalg::cholesky(problem.hessian, problem.n).value();
@@ -249,6 +266,20 @@ TEST(GoldfarbIdnani, RandomProblemsSatisfyKkt)
         }
     }
     EXPECT_GT(active_bounds, 50u);
+}
+
+TEST(GoldfarbIdnani, RedundantConsistentEqualityAtSmallScale)
+{
+    for (std::uint64_t seed = 1; seed <= 50; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_budget_problem(seed);
+        add_equality(problem, std::vector<double>(problem.n, 2.0), 2.0);
+        scale_objective(problem, 1e-4);
+        Solution solution = po::qp::solve(problem);
+        EXPECT_EQ(solution.status, Status::Optimal);
+        po::testing::expect_kkt(problem, solution);
+    }
 }
 
 } // namespace
