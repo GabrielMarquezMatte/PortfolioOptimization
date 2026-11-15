@@ -123,9 +123,18 @@ inline std::vector<double> constraint_gradient(const po::Data& data, const po::R
 {
     std::size_t n = data.asset_count();
     std::vector<double> total(result.bound_multipliers.begin(), result.bound_multipliers.begin() + n);
-    std::vector<double> return_gradient = excess_mu(data);
-    std::vector<double> curvature = covariance_times(data, result.weights);
-    double volatility = std::sqrt(dot(std::span<const double>(result.weights).first(n), curvature));
+    std::vector<double> return_gradient;
+    if (!std::isnan(result.target_return_multiplier))
+    {
+        return_gradient = excess_mu(data);
+    }
+    std::vector<double> curvature;
+    double volatility = 1.0;
+    if (!std::isnan(result.volatility_multiplier))
+    {
+        curvature = covariance_times(data, result.weights);
+        volatility = std::sqrt(dot(std::span<const double>(result.weights).first(n), curvature));
+    }
     for (std::size_t i = 0; i < n; ++i)
     {
         if (data.risk_free().has_value())

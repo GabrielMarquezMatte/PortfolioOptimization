@@ -22,11 +22,20 @@ using po::Objective;
 using po::Spec;
 
 constexpr std::size_t kAssets = 3;
+constexpr std::size_t kPeriods = 5;
+
+Data with_returns(Data data)
+{
+    std::vector<double> returns = po::testing::random_vector(kPeriods * kAssets, 3, -0.05, 0.05);
+    std::vector<double> benchmark = po::testing::random_vector(kPeriods, 4, -0.05, 0.05);
+    EXPECT_TRUE(data.set_returns(returns, benchmark, kPeriods).has_value());
+    return data;
+}
 
 Data full_data()
 {
     std::vector<double> mu = {0.05, 0.08, 0.11};
-    return Data::create(kAssets, mu, po::testing::random_covariance(kAssets, 1)).value();
+    return with_returns(Data::create(kAssets, mu, po::testing::random_covariance(kAssets, 1)).value());
 }
 
 Data without_mu()
@@ -130,6 +139,23 @@ TEST(Requirements, MinVarianceTargetReturnRequiresMu)
     expect_invalid(spec, without_mu(), "MIN_VARIANCE requires mu");
 }
 
+TEST(Requirements, TrackingErrorRequiresReturns)
+{
+    Data data = Data::create(kAssets, std::vector<double>{0.05, 0.08, 0.11},
+                             po::testing::random_covariance(kAssets, 1))
+                    .value();
+    expect_invalid(spec_of(Objective::TrackingError), data, "TRACKING_ERROR requires returns");
+}
+
+TEST(Requirements, TrackingErrorTargetReturnRequiresMu)
+{
+    Data data = with_returns(Data::create(kAssets, {}, {}).value());
+    Spec spec = spec_of(Objective::TrackingError);
+    expect_accepted(spec, data);
+    spec.target_return = 0.08;
+    expect_invalid(spec, data, "TRACKING_ERROR requires mu");
+}
+
 TEST(Requirements, MeanVarianceObjectivesRequireCovariance)
 {
     expect_invalid(spec_of(Objective::Utility), without_covariance(), "UTILITY requires covariance");
@@ -174,7 +200,8 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
     constexpr std::array kCells = {Cell{Objective::MinVariance, "MIN_VARIANCE", true, false, false},
                                    Cell{Objective::Utility, "UTILITY", false, true, false},
                                    Cell{Objective::Importance, "IMPORTANCE", false, false, true},
-                                   Cell{Objective::Kelly, "KELLY", false, false, false}};
+                                   Cell{Objective::Kelly, "KELLY", false, false, false},
+                                   Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false}};
     constexpr std::array kSetters = {"target_return", "risk_aversion", "importance", "max_volatility"};
     for (const Cell& cell : kCells)
     {
@@ -188,7 +215,8 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
                 expect_accepted(spec, full_data());
                 continue;
             }
-            expect_invalid(spec, full_data(), std::string(kSetters[setter]) + " does not apply to " + cell.objective_name);
+            expect_invalid(spec, full_data(),
+                           std::string(kSetters[setter]) + " does not apply to " + cell.objective_name);
         }
     }
 }

@@ -10,8 +10,8 @@ namespace po::problems
 namespace
 {
 
-// One row of the objective x setter matrix. Every objective listed here requires a covariance, and mu whenever
-// target_return is set.
+// One row of the objective x setter matrix. An objective requires returns when requires_returns is set and a
+// covariance otherwise, and mu whenever target_return is set.
 struct Requirements
 {
     const char* name;
@@ -19,6 +19,7 @@ struct Requirements
     bool accepts_risk_aversion;
     bool accepts_importance;
     bool requires_mu;
+    bool requires_returns;
 };
 
 struct Setter
@@ -38,13 +39,15 @@ std::optional<Requirements> requirements_of(Objective objective)
     switch (objective)
     {
     case Objective::MinVariance:
-        return Requirements{"MIN_VARIANCE", true, false, false, false};
+        return Requirements{"MIN_VARIANCE", true, false, false, false, false};
     case Objective::Utility:
-        return Requirements{"UTILITY", false, true, false, true};
+        return Requirements{"UTILITY", false, true, false, true, false};
     case Objective::Importance:
-        return Requirements{"IMPORTANCE", false, false, true, true};
+        return Requirements{"IMPORTANCE", false, false, true, true, false};
     case Objective::Kelly:
-        return Requirements{"KELLY", false, false, false, true};
+        return Requirements{"KELLY", false, false, false, true, false};
+    case Objective::TrackingError:
+        return Requirements{"TRACKING_ERROR", true, false, false, false, true};
     default:
         return std::nullopt;
     }
@@ -68,12 +71,21 @@ std::optional<Failure> check_setters(const Spec& spec, const Requirements& requi
     return std::nullopt;
 }
 
-std::optional<Failure> check_data(const Spec& spec, const Data& data, const Requirements& requirements)
+std::optional<Failure> check_matrix(const Data& data, const Requirements& requirements)
 {
-    if (!data.has_covariance())
+    if (requirements.requires_returns && !data.has_returns())
+    {
+        return invalid(std::string(requirements.name) + " requires returns");
+    }
+    if (!requirements.requires_returns && !data.has_covariance())
     {
         return invalid(std::string(requirements.name) + " requires covariance");
     }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_mu_and_rate(const Spec& spec, const Data& data, const Requirements& requirements)
+{
     bool requires_mu = requirements.requires_mu || spec.target_return.has_value();
     if (requires_mu && !data.has_mu())
     {
@@ -84,6 +96,13 @@ std::optional<Failure> check_data(const Spec& spec, const Data& data, const Requ
         return invalid("KELLY requires risk_free > -1");
     }
     return std::nullopt;
+}
+
+std::optional<Failure> check_data(const Spec& spec, const Data& data, const Requirements& requirements)
+{
+    return check_matrix(data, requirements).or_else([&] {
+        return check_mu_and_rate(spec, data, requirements);
+    });
 }
 
 std::optional<Failure> check_bound_size(const char* name, std::size_t size, std::size_t expected)

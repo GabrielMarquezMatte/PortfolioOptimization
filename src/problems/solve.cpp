@@ -5,13 +5,14 @@
 
 #include "problems/mean_variance.hpp"
 #include "problems/requirements.hpp"
+#include "problems/tracking_error.hpp"
 
 namespace po
 {
 namespace
 {
 
-Result solve_request(const Spec& spec, const Data& data)
+std::expected<Result, Failure> solve_request(const Spec& spec, const Data& data)
 {
     switch (spec.objective)
     {
@@ -20,6 +21,8 @@ Result solve_request(const Spec& spec, const Data& data)
     case Objective::Importance:
     case Objective::Kelly:
         return problems::solve_mean_variance(spec, data);
+    case Objective::TrackingError:
+        return problems::solve_tracking_error(spec, data);
     default:
         std::unreachable();
     }

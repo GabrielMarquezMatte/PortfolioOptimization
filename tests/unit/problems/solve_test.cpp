@@ -37,7 +37,7 @@ TEST(Solve, TargetReturnWithoutMuIsInvalid)
 
 TEST(Solve, UnimplementedObjectiveIsUnsupported)
 {
-    constexpr std::array kObjectives = {Objective::MaxReturn, Objective::MaxSharpe, Objective::TrackingError,
+    constexpr std::array kObjectives = {Objective::MaxReturn, Objective::MaxSharpe,
                                         Objective::MaxDiversification, Objective::RiskParity};
     po::Data data = po::Data::create(3, {}, {}).value();
     for (Objective objective : kObjectives)

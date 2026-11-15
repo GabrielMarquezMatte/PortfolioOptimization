@@ -1,6 +1,7 @@
 #include "core/data.hpp"
 
 #include <cmath>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -123,6 +124,58 @@ std::vector<double> symmetrized(std::span<const double> covariance, std::size_t 
     return symmetric;
 }
 
+std::optional<std::size_t> first_non_finite(std::span<const double> values)
+{
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        if (!std::isfinite(values[i]))
+        {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_return_sizes(std::size_t n, std::span<const double> returns,
+                                          std::span<const double> benchmark, std::size_t t)
+{
+    if (t == 0)
+    {
+        return invalid("returns need at least one observation");
+    }
+    if (t > std::numeric_limits<std::size_t>::max() / n)
+    {
+        return invalid("returns size is too large");
+    }
+    if (returns.size() != t * n)
+    {
+        return invalid("returns has " + std::to_string(returns.size()) + " entries; expected " +
+                       std::to_string(t * n));
+    }
+    if (benchmark.size() != t)
+    {
+        return invalid("benchmark has " + std::to_string(benchmark.size()) + " entries; expected " +
+                       std::to_string(t));
+    }
+    return std::nullopt;
+}
+
+std::optional<Failure> check_return_values(std::size_t n, std::span<const double> returns,
+                                           std::span<const double> benchmark)
+{
+    std::optional<std::size_t> bad_return = first_non_finite(returns);
+    if (bad_return.has_value())
+    {
+        return invalid("returns is not finite at " + position(*bad_return / n, *bad_return % n));
+    }
+    std::optional<std::size_t> bad_benchmark = first_non_finite(benchmark);
+    if (bad_benchmark.has_value())
+    {
+        return invalid("benchmark is not finite at " + std::to_string(*bad_benchmark));
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 std::expected<Data, Failure> Data::create(std::size_t n, std::span<const double> mu,
@@ -199,6 +252,42 @@ std::optional<double> Data::risk_free() const
 void Data::set_risk_free(double rate)
 {
     risk_free_ = rate;
+}
+
+std::expected<void, Failure> Data::set_returns(std::span<const double> returns,
+                                               std::span<const double> benchmark, std::size_t t)
+{
+    std::optional<Failure> failure = check_return_sizes(n_, returns, benchmark, t).or_else([&] {
+        return check_return_values(n_, returns, benchmark);
+    });
+    if (failure.has_value())
+    {
+        return std::unexpected(std::move(*failure));
+    }
+    returns_.assign(returns.begin(), returns.end());
+    benchmark_.assign(benchmark.begin(), benchmark.end());
+    observation_count_ = t;
+    return {};
+}
+
+bool Data::has_returns() const
+{
+    return observation_count_ > 0;
+}
+
+std::size_t Data::observation_count() const
+{
+    return observation_count_;
+}
+
+std::span<const double> Data::returns() const
+{
+    return returns_;
+}
+
+std::span<const double> Data::benchmark() const
+{
+    return benchmark_;
 }
 
 } // namespace po

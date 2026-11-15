@@ -26,6 +26,13 @@ void expect_invalid(const std::expected<Data, Failure>& data, const char* messag
     EXPECT_EQ(data.error().message, message);
 }
 
+void expect_invalid_returns(const std::expected<void, Failure>& result, const char* message)
+{
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error().kind, FailureKind::InvalidArgument);
+    EXPECT_EQ(result.error().message, message);
+}
+
 TEST(Data, RejectsNonFinite)
 {
     std::vector<double> mu = {0.1, std::numeric_limits<double>::quiet_NaN(), 0.2};
@@ -162,6 +169,42 @@ TEST(Data, SymmetrizesWithinTolerance)
     EXPECT_EQ(data.covariance()[0 * n + 2], 0.5 * (lower + upper));
     EXPECT_EQ(data.covariance()[2 * n + 0], 0.5 * (lower + upper));
     EXPECT_EQ(data.covariance()[1 * n + 1], covariance[1 * n + 1]);
+}
+
+TEST(Data, SetReturnsCopiesAndValidates)
+{
+    constexpr std::size_t n = 3;
+    constexpr std::size_t periods = 4;
+    Data data = Data::create(n, {}, {}).value();
+    EXPECT_FALSE(data.has_returns());
+    EXPECT_EQ(data.observation_count(), 0u);
+    EXPECT_TRUE(data.returns().empty());
+    EXPECT_TRUE(data.benchmark().empty());
+    std::vector<double> returns = po::testing::random_vector(periods * n, 11, -0.05, 0.05);
+    std::vector<double> benchmark = po::testing::random_vector(periods, 12, -0.05, 0.05);
+    ASSERT_TRUE(data.set_returns(returns, benchmark, periods).has_value());
+    EXPECT_TRUE(data.has_returns());
+    EXPECT_EQ(data.observation_count(), periods);
+    EXPECT_EQ(std::vector<double>(data.returns().begin(), data.returns().end()), returns);
+    EXPECT_EQ(std::vector<double>(data.benchmark().begin(), data.benchmark().end()), benchmark);
+    returns[0] = 9.0;
+    EXPECT_NE(data.returns()[0], 9.0);
+
+    expect_invalid_returns(data.set_returns(returns, benchmark, 0), "returns need at least one observation");
+    expect_invalid_returns(data.set_returns(returns, benchmark, periods - 1),
+                           "returns has 12 entries; expected 9");
+    std::span<const double> short_benchmark = std::span<const double>(benchmark).first(periods - 1);
+    expect_invalid_returns(data.set_returns(returns, short_benchmark, periods),
+                           "benchmark has 3 entries; expected 4");
+    constexpr std::size_t huge = std::numeric_limits<std::size_t>::max() / 2;
+    expect_invalid_returns(data.set_returns(returns, benchmark, huge), "returns size is too large");
+    returns[5] = std::numeric_limits<double>::quiet_NaN();
+    expect_invalid_returns(data.set_returns(returns, benchmark, periods), "returns is not finite at (1, 2)");
+    returns[5] = 0.01;
+    benchmark[3] = std::numeric_limits<double>::infinity();
+    expect_invalid_returns(data.set_returns(returns, benchmark, periods), "benchmark is not finite at 3");
+    EXPECT_EQ(data.observation_count(), periods);
+    EXPECT_NE(data.returns()[0], 9.0);
 }
 
 } // namespace
