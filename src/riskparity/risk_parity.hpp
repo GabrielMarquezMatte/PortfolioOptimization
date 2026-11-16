@@ -23,6 +23,7 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 //   problems::kMinimumVolatilityTolerance) that portfolio is the only feasible point: Optimal, with a
 //   volatility multiplier of -infinity and every other multiplier NaN, because there the gradients of the
 //   constraints are dependent and in general no multipliers exist.
+// - One asset without a target volatility: w = 1, the only feasible point, with every multiplier 0.
 // - From the point of the polyhedron nearest to the Spinu solution, the Gauss-Newton descent over the
 //   polyhedron, inside an augmented Lagrangian when there is a target volatility, and then Newton on the KKT
 //   system.

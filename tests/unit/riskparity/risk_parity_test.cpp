@@ -185,6 +185,31 @@ TEST(RiskParity, TwoAssetsWithTargetReturnIsThePoint)
     EXPECT_GT(result.residual, 1e-3);
 }
 
+// One asset: the only feasible point is w = 1, where c = 1 = b and grad f = 0. With a target return equal to
+// its mean the two equalities are the same row; every multiplier 0 is the valid set returned. The descent
+// cannot run there (J = 0, so its curvature is 0), so this point is answered directly.
+TEST(RiskParity, SingleAssetWithTargetReturnIsThePoint)
+{
+    Data data = Data::create(1, std::vector<double>{0.05}, std::vector<double>{0.04}).value();
+    Spec spec = risk_parity_spec();
+    spec.target_return = 0.05;
+    for (double upper : {std::numeric_limits<double>::infinity(), 1.0})
+    {
+        SCOPED_TRACE(upper);
+        spec.lower = -std::numeric_limits<double>::infinity();
+        spec.upper = upper;
+        Result result = solved(spec, data);
+        ASSERT_EQ(result.status, SolveStatus::Optimal);
+        EXPECT_EQ(result.weights, std::vector<double>{1.0});
+        EXPECT_EQ(result.budget_multiplier, 0.0);
+        EXPECT_EQ(result.target_return_multiplier, 0.0);
+        EXPECT_TRUE(std::isnan(result.volatility_multiplier));
+        EXPECT_EQ(result.bound_multipliers, std::vector<double>{0.0});
+        EXPECT_EQ(result.residual, 0.0);
+        po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10);
+    }
+}
+
 // The solution is a local minimum from the Spinu start: either the global minimum of the scan, or a point
 // away from it with a larger value.
 void expect_agrees_with_scan(const Spec& spec, const Data& data, const Result& result)

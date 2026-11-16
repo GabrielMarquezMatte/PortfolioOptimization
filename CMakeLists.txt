@@ -142,6 +142,10 @@ if(PO_BUILD_TESTS)
     target_compile_definitions(portopt_tests PRIVATE PO_BUILDING)
     target_link_libraries(portopt_tests PRIVATE portopt_capi GTest::gtest_main)
     target_compile_options(portopt_tests PRIVATE ${PO_WARNING_FLAGS})
+    # The test oracle (compensated_dot_of in tests/unit/fuzz/risk_parity) needs the same rounding as the core.
+    if(NOT MSVC)
+        target_compile_options(portopt_tests PRIVATE -ffp-contract=off)
+    endif()
     if(MINGW)
         # An older libstdc++-6.dll earlier on PATH crashes std::format in the test executable.
         target_link_options(portopt_tests PRIVATE -static-libgcc -static-libstdc++)

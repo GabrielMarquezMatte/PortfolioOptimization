@@ -122,6 +122,21 @@ Result kkt_point(const KktProblem& problem, KktPoint point, int iterations)
     return result;
 }
 
+// One asset without a target volatility: the minimum-variance portfolio w = 1 is the only feasible point, where
+// c = 1 = b and grad f = 0, so every multiplier 0 is a valid set (the budget and a target return are then the
+// same row). The descent cannot run there: J = 0 leaves it no curvature.
+Result single_asset(const KktProblem& problem, std::vector<double> weights, int iterations)
+{
+    Result result = at_weights(problem.data, std::move(weights), problem.budget, iterations);
+    result.budget_multiplier = 0.0;
+    if (problem.spec.target_return.has_value())
+    {
+        result.target_return_multiplier = 0.0;
+    }
+    result.bound_multipliers.assign(result.weights.size(), 0.0);
+    return result;
+}
+
 // The minimum-variance portfolio over the budget, the target return and the bounds: it decides whether the
 // linear rows are feasible and gives the smallest volatility they allow.
 Result minimum_variance(const Spec& spec, const Data& data)
@@ -231,6 +246,10 @@ Result constrained(const KktProblem& problem, const Result& minimum, const Spinu
         {
             return minimum_volatility_point(problem.data, minimum.weights, problem.budget, iterations);
         }
+    }
+    if (n == 1 && !problem.spec.target_volatility.has_value())
+    {
+        return single_asset(problem, minimum.weights, iterations);
     }
     qp::Solution start = nearest_in_polyhedron(problem.spec, problem.data, spinu_result.weights);
     if (start.status != qp::Status::Optimal)
