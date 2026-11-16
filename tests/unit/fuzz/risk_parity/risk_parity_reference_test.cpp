@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <numeric>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -494,6 +495,49 @@ TEST(RiskParityReference, HessianByDifferencesMatchesTheObjective)
         {
             EXPECT_NEAR(static_cast<double>(differences[k]), hessian[k], 1e-6 * scale) << "entry " << k;
         }
+    }
+}
+
+// The path the references take where long double is double (MSVC): the entries of Sigma w, which cancel by
+// up to cond(Sigma), by Dot2 in double agree with Dot2 in long double to the rounding of each entry.
+TEST(RiskParityReference, CompensatedDotInDoubleIsAccurateAtCondition1e8)
+{
+    std::size_t n = 20;
+    Data data = covariance_data(n, {}, random_covariance(n, 5, 1e8));
+    std::vector<double> weights = normalized(random_vector(n, 17, -0.3, 1.0));
+    double worst = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        std::span<const double> row = data.covariance().subspan(i * n, n);
+        double plain = po::testing::compensated_dot_of<double>(n, row, weights);
+        long double wide = po::testing::compensated_dot_of<long double>(n, row, weights);
+        worst = std::fmax(worst, static_cast<double>(std::fabs(plain - wide) / std::fabs(wide)));
+    }
+    EXPECT_LE(worst, std::numeric_limits<double>::epsilon());
+}
+
+// At cond(Sigma) = 1e8, where the floor check and the refinement rely on it without another check: a coarse
+// band, because the analytic Hessian of the library is itself rounded by about eps cond(Sigma).
+TEST(RiskParityReference, HessianByDifferencesMatchesTheObjectiveAtCondition1e8)
+{
+    std::size_t n = 6;
+    for (std::uint64_t seed : {3u, 5u, 7u})
+    {
+        SCOPED_TRACE(seed);
+        Data data = covariance_data(n, {}, random_covariance(n, seed, 1e8));
+        std::vector<double> budget = normalized(random_vector(n, 11 + seed, 0.2, 1.0));
+        std::vector<double> weights = normalized(random_vector(n, 13 + seed, -0.3, 1.0));
+        std::vector<long double> differences =
+            po::testing::wide_hessian(data, budget, po::testing::widened(weights));
+        std::vector<double> hessian = po::riskparity::linearize(data, budget, weights, true).hessian;
+        double scale = po::testing::largest_magnitude(hessian);
+        double worst = 0.0;
+        for (std::size_t k = 0; k < n * n; ++k)
+        {
+            worst = std::fmax(worst, std::fabs(static_cast<double>(differences[k]) - hessian[k]) / scale);
+        }
+        RecordProperty("worst_" + std::to_string(seed), ::testing::PrintToString(worst));
+        EXPECT_LE(worst, 1e-3);
     }
 }
 

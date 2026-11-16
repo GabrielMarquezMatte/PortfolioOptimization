@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
+#include <span>
 #include <vector>
 
 #include "core/data.hpp"
@@ -124,11 +126,8 @@ Wide wide_newton_step(const std::vector<double>& covariance, const std::vector<d
     std::vector<Wide> step(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        Wide product = 0.0L;
-        for (std::size_t j = 0; j < n; ++j)
-        {
-            product += static_cast<Wide>(covariance[i * n + j]) * y[j];
-        }
+        std::span<const double> row(covariance.data() + i * n, n);
+        Wide product = po::testing::compensated_dot_of<Wide>(n, row, y);
         step[i] = budget[i] / y[i] - product;
         hessian[i * n + i] += budget[i] / (y[i] * y[i]);
     }
@@ -150,8 +149,13 @@ Wide wide_newton_step(const std::vector<double>& covariance, const std::vector<d
     return relative;
 }
 
-// The weights of Spinu by Newton in long double until the step is below 1e-17 of the weights: a reference for the
-// relative error of each weight, independent of the code under test.
+// Below 1e-17 of the weights, or 8 ulps where long double is double (MSVC): the residual b / y - Sigma y is a
+// compensated dot product, so the iteration converges to the rounding of Wide either way.
+constexpr Wide kWideStop =
+    std::numeric_limits<Wide>::digits > 53 ? 1e-17L : 8.0L * std::numeric_limits<Wide>::epsilon();
+
+// The weights of Spinu by Newton in long double until the step is below kWideStop of the weights: a reference
+// for the relative error of each weight, independent of the code under test.
 std::vector<Wide> wide_spinu_weights(const std::vector<double>& covariance, const std::vector<double>& budget)
 {
     std::size_t n = budget.size();
@@ -161,7 +165,7 @@ std::vector<Wide> wide_spinu_weights(const std::vector<double>& covariance, cons
         y[i] = std::sqrt(static_cast<Wide>(budget[i]) / covariance[i * n + i]);
     }
     int iteration = 0;
-    while (iteration < 400 && wide_newton_step(covariance, budget, y) > 1e-17L)
+    while (iteration < 400 && wide_newton_step(covariance, budget, y) > kWideStop)
     {
         ++iteration;
     }

@@ -15,9 +15,8 @@
 namespace po::testing
 {
 
-// The refinement needs a long double wider than double: where it is not (MSVC), the reference is no better
-// than the point it refines.
-inline constexpr bool kLongDoubleIsExtended = std::numeric_limits<long double>::digits > 53;
+// The refinement needs a long double wider than double (kLongDoubleIsExtended): where it is not (MSVC), the
+// refined point cannot be held beyond double and is no better than the point it refines. Its callers skip.
 
 // Gaussian elimination with partial pivoting of a size x size system (row-major); false when a pivot is 0.
 inline bool solve_wide(std::vector<long double>& matrix, std::vector<long double>& rhs)

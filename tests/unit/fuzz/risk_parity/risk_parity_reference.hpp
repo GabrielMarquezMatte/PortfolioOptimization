@@ -30,6 +30,33 @@
 namespace po::testing
 {
 
+// long double is double under MSVC. The references below are accurate there too, because every sum that
+// cancels is a compensated dot product; the checks that need more than double precision (the rounding floor
+// of the stationarity, the refinement of a point beyond double) test this and are skipped where it is false.
+inline constexpr bool kLongDoubleIsExtended = std::numeric_limits<long double>::digits > 53;
+
+// a'b by Dot2 (Ogita, Rump and Oishi 2005): TwoProduct by fma and TwoSum, as accurate as a sum in twice the
+// precision of T rounded once, whatever T is. The same algorithm as po::riskparity::compensated_dot, written
+// here so that the reference does not share the code under test.
+template <typename T, typename Left, typename Right>
+T compensated_dot_of(std::size_t size, const Left& a, const Right& b)
+{
+    T sum = 0;
+    T correction = 0;
+    for (std::size_t i = 0; i < size; ++i)
+    {
+        T left = static_cast<T>(a[i]);
+        T right = static_cast<T>(b[i]);
+        T product = left * right;
+        T product_error = std::fma(left, right, -product);
+        T total = sum + product;
+        T carried = total - sum;
+        correction += (sum - (total - carried)) + (product - carried) + product_error;
+        sum = total;
+    }
+    return sum + correction;
+}
+
 inline std::vector<long double> widened(std::span<const double> values)
 {
     return std::vector<long double>(values.begin(), values.end());
@@ -42,22 +69,14 @@ inline std::vector<long double> wide_covariance_times(const po::Data& data, cons
     std::vector<long double> product(n, 0.0L);
     for (std::size_t i = 0; i < n; ++i)
     {
-        for (std::size_t j = 0; j < n; ++j)
-        {
-            product[i] += static_cast<long double>(covariance[i * n + j]) * weights[j];
-        }
+        product[i] = compensated_dot_of<long double>(n, covariance.subspan(i * n, n), weights);
     }
     return product;
 }
 
 inline long double wide_dot(const std::vector<long double>& a, const std::vector<long double>& b)
 {
-    long double total = 0.0L;
-    for (std::size_t i = 0; i < a.size(); ++i)
-    {
-        total += a[i] * b[i];
-    }
-    return total;
+    return compensated_dot_of<long double>(a.size(), a, b);
 }
 
 // c_i = w_i (Sigma w)_i / (w' Sigma w), in long double.
@@ -104,14 +123,14 @@ inline std::array<std::vector<long double>, 3> wide_gradient_terms_at(const po::
     std::size_t n = w.size();
     std::vector<long double> gap(n);
     std::vector<long double> scaled(n);
-    long double weighted_gap = 0.0L;
+    std::vector<long double> contributions(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        long double contribution = w[i] * product[i] / variance;
-        gap[i] = contribution - budget[i];
+        contributions[i] = w[i] * product[i] / variance;
+        gap[i] = contributions[i] - budget[i];
         scaled[i] = w[i] * gap[i];
-        weighted_gap += contribution * gap[i];
     }
+    long double weighted_gap = wide_dot(contributions, gap);
     std::vector<long double> spread = wide_covariance_times(data, scaled);
     std::array<std::vector<long double>, 3> terms{std::vector<long double>(n), std::vector<long double>(n),
                                                   std::vector<long double>(n)};
@@ -1012,6 +1031,12 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
     }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
     RiskParityStationarity stationarity = risk_parity_stationarity(spec, data, result, tolerance);
+    if (stationarity.relative > tolerance && !kLongDoubleIsExtended)
+    {
+        // The floor is eps of the magnitudes of the terms; in double their sum is rounded by about as much.
+        GTEST_SKIP() << "stationarity " << stationarity.relative << " above the tolerance " << tolerance
+                     << ": its rounding floor cannot be checked where long double is double";
+    }
     EXPECT_TRUE(stationarity.relative <= tolerance || stationarity.over_floor <= kRoundingFloorFactor)
         << "stationarity: " << stationarity.relative << " of the largest term, above the tolerance "
         << tolerance << ", and " << stationarity.over_floor << " of its rounding floor, above "
