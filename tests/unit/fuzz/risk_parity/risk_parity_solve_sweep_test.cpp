@@ -380,16 +380,16 @@ TEST(RiskParitySolveSweep, DISABLED_MeasureHardestClass)
         sizes = {static_cast<std::size_t>(std::atoi(size))};
         seeds = 1;
     }
+    std::vector<Shape> hardest = po::testing::risk_parity_shapes(192, 1);
+    std::erase_if(hardest, [](const Shape& shape) {
+        return shape.condition != 1e8 || shape.box != Shape::Box::None || !shape.target_volatility;
+    });
     for (std::size_t n : sizes)
     {
         for (std::uint64_t seed = 1; seed <= seeds; ++seed)
         {
-            for (const Shape& base : po::testing::risk_parity_shapes(192, 1))
+            for (const Shape& base : hardest)
             {
-                if (base.condition != 1e8 || base.box != Shape::Box::None || !base.target_volatility)
-                {
-                    continue;
-                }
                 Shape shape = base;
                 shape.n = n;
                 shape.seed = seed * 7919 + n;

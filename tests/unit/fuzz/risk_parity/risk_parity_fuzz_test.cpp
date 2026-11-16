@@ -208,28 +208,24 @@ std::vector<double> extreme_budget(std::size_t n)
 // box. Every OPTIMAL is KKT at the band; any other status has no point.
 TEST(RiskParityFuzz, UnevenBudgetsAndConditioning)
 {
+    constexpr std::size_t kSizes[] = {5, 20};
+    constexpr double kConditions[] = {1e2, 1e4, 1e6, 1e8};
+    constexpr double kScales[] = {1.0, 1e-4};
+    constexpr Shape::Box kBoxes[] = {Shape::Box::None, Shape::Box::Capped};
     int optimal = 0;
-    for (std::size_t n : {5u, 20u})
+    // Every combination of the four lists above and seeds 1 to 3, one index each.
+    for (std::size_t k = 0; k < 2 * 4 * 2 * 2 * 3; ++k)
     {
-        for (double condition : {1e2, 1e4, 1e6, 1e8})
-        {
-            for (double scale : {1.0, 1e-4})
-            {
-                for (Shape::Box box : {Shape::Box::None, Shape::Box::Capped})
-                {
-                    for (std::uint64_t seed = 1; seed <= 3; ++seed)
-                    {
-                        Shape shape{n, condition, scale, Shape::Budget::Uneven, box, false, false, 211 + seed};
-                        SCOPED_TRACE(po::testing::describe(shape));
-                        po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
-                        generated.spec.risk_budget = extreme_budget(n);
-                        Result result = po::solve(generated.spec, generated.data).value();
-                        expect_never_silently_wrong(generated.spec, generated.data, result, condition);
-                        optimal += result.status == SolveStatus::Optimal;
-                    }
-                }
-            }
-        }
+        std::size_t n = kSizes[k / 48];
+        double condition = kConditions[k / 12 % 4];
+        Shape::Box box = kBoxes[k / 3 % 2];
+        Shape shape{n, condition, kScales[k / 6 % 2], Shape::Budget::Uneven, box, false, false, 212 + k % 3};
+        SCOPED_TRACE(po::testing::describe(shape));
+        po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+        generated.spec.risk_budget = extreme_budget(n);
+        Result result = po::solve(generated.spec, generated.data).value();
+        expect_never_silently_wrong(generated.spec, generated.data, result, condition);
+        optimal += result.status == SolveStatus::Optimal;
     }
     RecordProperty("optimal", optimal);
     EXPECT_EQ(optimal, 96);
@@ -261,7 +257,8 @@ TEST(RiskParityFuzz, DISABLED_ForwardErrorAtCondition1e8WithTargetVolatility)
             continue;
         }
         ++floor_limited;
-        po::testing::ForwardError forward = po::testing::forward_error(generated.spec, generated.data, result);
+        po::testing::ForwardError forward =
+            po::testing::forward_error(generated.spec, generated.data, result);
         EXPECT_LE(forward.weights, 1e-7) << "reference / floor " << forward.reference_over_floor
                                          << ", stationarity / floor " << stationarity.over_floor;
         EXPECT_LE(forward.reference_gap, 1e-7);
