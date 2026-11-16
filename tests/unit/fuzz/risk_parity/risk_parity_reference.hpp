@@ -665,17 +665,21 @@ inline void expect_risk_parity_equalities(const po::Spec& spec, const po::Data& 
     }
 }
 
-// w'grad f = 0, since the contributions are homogeneous of degree 0, relative to sum |w_i grad f_i|.
+// w'grad f = 0, since the contributions are homogeneous of degree 0, relative to sum |w_i| times the
+// largest term of grad f (the scale of the stationarity check). Not relative to sum |w_i grad f_i|: at a KKT
+// point with only the budget row and bounds active at w_i = 0, grad f_i = budget + beta_i and
+// beta_i w_i = 0, so that sum is |budget| sum |w_i|, and budget = -sum_i beta_i w_i is itself zero up to the
+// KKT residual.
 inline void expect_homogeneity_identity(std::span<const double> weights, const ObjectiveGradient& gradient,
                                         double tolerance)
 {
     double product = dot(weights, gradient.value);
-    double scale = 0.0;
-    for (std::size_t i = 0; i < weights.size(); ++i)
+    double gross = 0.0;
+    for (double weight : weights)
     {
-        scale += std::fabs(weights[i] * gradient.value[i]);
+        gross += std::fabs(weight);
     }
-    EXPECT_LE(relative_to(std::fabs(product), scale), tolerance);
+    EXPECT_LE(relative_to(std::fabs(product), gross * gradient.scale), tolerance);
 }
 
 // Every term of grad f is proportional to the gap c - b, so at a minimizer with f = 0 they all vanish together and

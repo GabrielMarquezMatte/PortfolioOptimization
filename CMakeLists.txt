@@ -111,6 +111,7 @@ if(PO_BUILD_TESTS)
         tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
         tests/unit/fuzz/ratio_fuzz_test.cpp
+        tests/unit/fuzz/risk_parity/risk_parity_descent_fuzz_test.cpp
         tests/unit/fuzz/risk_parity/risk_parity_reference_test.cpp
         tests/unit/problems/leverage_test.cpp
         tests/unit/problems/max_return_test.cpp

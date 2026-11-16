@@ -24,13 +24,21 @@ double dot(std::span<const double> a, std::span<const double> b)
     return total;
 }
 
+// Summed in long double: the entries of Sigma x cancel, by up to cond(Sigma), and an error of
+// eps cond(Sigma) in p = Sigma w passes into grad f at the same relative size, above the KKT bands.
 std::vector<double> covariance_times(const Data& data, std::span<const double> x)
 {
     std::size_t n = data.asset_count();
     std::vector<double> product(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        product[i] = dot(data.covariance().subspan(i * n, n), x);
+        long double total = 0.0L;
+        std::span<const double> row = data.covariance().subspan(i * n, n);
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            total += static_cast<long double>(row[j]) * x[j];
+        }
+        product[i] = static_cast<double>(total);
     }
     return product;
 }

@@ -529,12 +529,20 @@ weights with a short position, budgets in `[0.2, 1]` normalized):
 | Jacobian | central differences of `c`, step `1e-6` | 9.8e-10 of max abs J | 1e-6 |
 | Hessian | central differences of the reference gradient, step `1e-6` | 2.5e-9 of max abs H | 1e-6 |
 | `J w = 0` | homogeneity of degree 0 | 7.9e-16 of `sum_j abs(J_ij w_j)` | 1e-12 |
-| `value_change` | `g's + 1/2 s'Hs`, abs(s) from `1e-6` to `1e-15` | 9.1e-10 of `abs(g's)` | 1e-9 |
+| `value_change` | `g's + 1/2 s'Hs`, abs(s) from `1e-8` to `1e-15` (n = 7) | 2.2e-16 of `abs(g's)` | 1e-12 |
 
 `value_change` computes `f(w + s) - f(w)` from `s` (`dc_i = (dN_i v - N_i dv) / (v (v + dv))` with
-`dN_i = s_i p_i + w_i q_i + s_i q_i`, `q = Sigma s`), so it keeps its relative accuracy at any size of `s`; its
-largest error above is the cubic remainder of the expansion at `abs(s) = 1e-6`, not rounding. A difference of two
-values of `f` loses every digit below about `eps f`.
+`dN_i = s_i p_i + w_i q_i + s_i q_i`, `q = Sigma s`), so it keeps its relative accuracy at any size of `s`. A
+difference of two values of `f` loses every digit below about `eps f`. The steps of the test start at `1e-8`
+because at `abs(s) = 1e-6` the cubic remainder of the expansion was already `9.1e-10` of `abs(g's)`: the band
+would have measured truncation, not rounding.
+
+**`Sigma w` in long double.** `p = Sigma w` (and `Sigma s`) is summed in `long double` and rounded once. Its
+entries cancel by up to `cond(Sigma)`, and an error of `eps cond(Sigma)` in `p` reaches `grad f` at the same
+relative size: summed in `double`, converged descents at `cond(Sigma) = 1e6` and `1e8` (LongOnly, uneven budgets,
+`n = 10`) failed the stationarity of `expect_risk_parity_kkt` by `1.4e-8` and `1.1e-5` against bands of `1e-9`
+and `1e-7`, with the descent's own residual below them; summed in `long double`, none fails. `f` then differs from
+`metrics::risk_budget_residual`, which sums in `double`, by its rounding (`2.4e-15` relative measured).
 
 ### The polyhedral descent
 
@@ -563,55 +571,93 @@ QP solution. Three numerical decisions, each forced by a measurement:
 **Monotone `L`.** In exact arithmetic `L` decreases at every step. The computed `L` can still grow once the
 decrease is below the rounding of the iterate across the rows, which moves `L` by up to about
 `eps sum_k abs(u_k) sum_j abs(w_j)`. Measured over 60 runs (`n = 8`, box `[0, 0.15]`, uneven budget, `cond(Sigma)
-= 1e2`, seeds 1 to 30, with and without a volatility term): 1324 steps, 135 computed increases, the largest 0.21
+= 1e2`, seeds 1 to 30, with and without a volatility term): 1325 steps, 129 computed increases, the largest 0.20
 of that unit. `PolyhedralDescent.MonotoneDescent` allows exactly one unit.
 
-**The proximal weight.** `tau = 0.05 tr(Sigma) / (2n)`, the choice of the `riskParityPortfolio` package
-(`riskParityPortfolioSCA`). It is not invariant to the scale of `Sigma`: `J` does not change when `Sigma` is scaled
-(`c` is homogeneous of degree 0 in `Sigma`), so multiplying `Sigma` by `1e-4` divides `tau / norm(2 J'J)` by
-`1e4`. Sweep: every combination
-of `n` in {3, 5, 10, 20, 50}, `cond(Sigma)` in {1e2, 1e4, 1e6, 1e8}, scale {1, 1e-4}, equal and uneven budgets,
-box None, LongOnly and Capped, with and without `target_return`, seeds 1 to 5 (`risk_parity_shapes`' generator),
-2400 runs, started at the minimum-variance point of the polyhedron, tolerance `1e-12`, at most 2000 iterations:
+**The proximal weight.** `J` does not change when `Sigma` is scaled (`c` is homogeneous of degree 0 in
+`Sigma`), so the weight of the proximal term is set in the units of `2 J'J`, with the Levenberg-Marquardt update:
 
-| cond(Sigma), scale | converged | cap reached | no decrease | `qp::solve` threw | mean (max) iterations |
+- `tau_0 = proximal tr(2 J'J) / n` at the start, `proximal = 0.05`;
+- after an iteration whose full step (`gamma = 1`) Armijo accepts, `tau /= 3`; after one it shortens, `tau *= 4`;
+- at every iteration `tau >= 100 n eps max_i (2 J'J)_ii`, above the rounding of `2 J'J` (`linalg::cholesky`
+  rejects a pivot at or below `16 n eps a_jj`);
+- `Q` is factored by `linalg::cholesky` before the QP, which receives the factor; while it is rejected,
+  `tau *= 10`, at most 8 times, after which the descent stops with `NotPositiveDefinite` rather than throwing.
+
+Without a volatility term every decision depends on `Sigma` only through `J`, so daily and annual units give the
+same iterates (`PolyhedralDescent.ScalingSigmaLeavesIteratesUnchanged`, `Sigma` and `1e-4 Sigma`: same stop,
+same iteration count, weights within `1e-10`).
+
+The first rule measured, `tau = 0.05 tr(Sigma) / (2n)` (the `riskParityPortfolio` package,
+`riskParityPortfolioSCA`), is not in those units. On a sweep like the one below (2400 runs, Box None with
+`target_return` included, tolerance `1e-12`): at scale 1 and `cond(Sigma) = 1e8`, `tau` dominated `2 J'J`, every
+step was a short gradient step and 22 of 300 runs converged within 2000 iterations; at scale `1e-4` and
+`cond(Sigma) = 1e8`, `tau` fell below the rounding of `2 J'J` and `qp::solve` threw on 16 of 300 runs. In total
+1640 of 2400 converged. A fixed scale-free `tau = 0.05 tr(2 J'J) / n` converged on 1470 (1568 with 0.005): the
+adaptive update, not only the units, is what makes the descent converge.
+
+**Sweep** (`RiskParityDescentFuzz.DISABLED_MeasureSweep`, run with `--gtest_also_run_disabled_tests`; 27 s).
+Every combination of `cond(Sigma)` in {1e2, 1e4, 1e6, 1e8}, scale {1, 1e-4}, equal and uneven budgets, box None,
+LongOnly and Capped, with and without `target_return`, except Box None with `target_return`: that is an unbounded
+line on which `f` can decrease towards its value at infinity, the contributions of the direction of the line (on
+one `n = 3` case the iterates moved past `abs(w_i) = 1` while a scan over `abs(w_i) <= 5` found `f = 0.095`). `n`
+in {3, 5, 10, 20, 50}, seeds 1 to 5: 2000 runs, started at the minimum-variance point of the polyhedron, at most
+2000 iterations, tolerance a tenth of the band of `cond(Sigma)`, every converged run checked by
+`expect_risk_parity_kkt` at the band. The tenth: the descent's KKT residual and that of `expect_risk_parity_kkt`
+agree to a few percent, and a stop at the band itself landed at `1.03e-10` against `1e-10` on 4 runs.
+`proximal = 0.05`, with the converged count at `0.005` for comparison:
+
+| cond(Sigma) | scale | box | converged | cap reached | no decrease | KKT failed | mean (max) iterations | converged, 0.005 |
+|---|---|---|---|---|---|---|---|---|
+| 1e2 | 1 | None | 50 / 50 | 0 | 0 | 0 | 10.1 (14) | 50 |
+| 1e2 | 1 | LongOnly | 98 / 100 | 1 | 1 | 0 | 20.4 (288) | 98 |
+| 1e2 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 23.8 (166) | 100 |
+| 1e2 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 10.1 (14) | 50 |
+| 1e2 | 1e-4 | LongOnly | 99 / 100 | 1 | 0 | 0 | 18.1 (237) | 97 |
+| 1e2 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 23.8 (166) | 100 |
+| 1e4 | 1 | None | 50 / 50 | 0 | 0 | 0 | 16.7 (23) | 50 |
+| 1e4 | 1 | LongOnly | 94 / 100 | 3 | 3 | 0 | 16.0 (89) | 94 |
+| 1e4 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 17.3 (106) | 100 |
+| 1e4 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 16.7 (23) | 50 |
+| 1e4 | 1e-4 | LongOnly | 96 / 100 | 3 | 1 | 0 | 16.5 (89) | 94 |
+| 1e4 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 17.3 (106) | 100 |
+| 1e6 | 1 | None | 50 / 50 | 0 | 0 | 0 | 25.7 (60) | 50 |
+| 1e6 | 1 | LongOnly | 90 / 100 | 3 | 7 | 0 | 16.8 (60) | 91 |
+| 1e6 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 14.2 (80) | 100 |
+| 1e6 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 25.7 (60) | 50 |
+| 1e6 | 1e-4 | LongOnly | 90 / 100 | 2 | 8 | 0 | 17.2 (60) | 89 |
+| 1e6 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 14.2 (80) | 100 |
+| 1e8 | 1 | None | 42 / 50 | 8 | 0 | 0 | 296.8 (1521) | 42 |
+| 1e8 | 1 | LongOnly | 87 / 100 | 5 | 8 | 0 | 16.3 (95) | 89 |
+| 1e8 | 1 | Capped | 99 / 100 | 1 | 0 | 0 | 13.3 (116) | 99 |
+| 1e8 | 1e-4 | None | 42 / 50 | 8 | 0 | 0 | 296.8 (1521) | 42 |
+| 1e8 | 1e-4 | LongOnly | 87 / 100 | 3 | 10 | 0 | 16.3 (95) | 88 |
+| 1e8 | 1e-4 | Capped | 99 / 100 | 1 | 0 | 0 | 13.3 (116) | 99 |
+
+| n | converged | cap reached | no decrease | mean (max) iterations | converged, 0.005 |
 |---|---|---|---|---|---|
-| 1e2, 1 | 284 / 300 | 16 | 0 | 0 | 35.3 (1283) |
-| 1e2, 1e-4 | 284 / 300 | 16 | 0 | 0 | 20.0 (244) |
-| 1e4, 1 | 247 / 300 | 51 | 2 | 0 | 82.4 (1826) |
-| 1e4, 1e-4 | 251 / 300 | 40 | 9 | 0 | 15.1 (110) |
-| 1e6, 1 | 171 / 300 | 129 | 0 | 0 | 432.2 (1974) |
-| 1e6, 1e-4 | 210 / 300 | 72 | 18 | 0 | 33.9 (1150) |
-| 1e8, 1 | 22 / 300 | 278 | 0 | 0 | 516.4 (1691) |
-| 1e8, 1e-4 | 171 / 300 | 99 | 14 | 16 | 54.9 (1402) |
+| 3 | 400 / 400 | 0 | 0 | 8.3 (104) | 400 |
+| 5 | 400 / 400 | 0 | 0 | 20.9 (1329) | 400 |
+| 10 | 379 / 400 | 3 | 18 | 33.4 (1521) | 380 |
+| 20 | 391 / 400 | 6 | 3 | 32.9 (523) | 391 |
+| 50 | 353 / 400 | 30 | 17 | 55.0 (1429) | 351 |
 
-| n | converged | mean (max) iterations |
-|---|---|---|
-| 3 | 359 / 480 | 66.3 (1974) |
-| 5 | 358 / 480 | 60.6 (1880) |
-| 10 | 323 / 480 | 87.4 (1776) |
-| 20 | 322 / 480 | 114.9 (1862) |
-| 50 | 278 / 480 | 111.1 (1891) |
+In total 1923 of 2000 converge at `proximal = 0.05` and 1922 at `0.005`, so 0.05 is kept. No run failed to factor
+`Q` or to solve the QP, and no converged run fails `expect_risk_parity_kkt`. The other 77 stop at the cap (39) or
+with no decrease (38), all LongOnly or `cond(Sigma) = 1e8`; they are left to the Newton-KKT polish that follows
+the descent. The small differences between the scales on LongOnly are rounding: the two scales start from
+minimum-variance points that differ in their last digits. `RiskParityDescentFuzz.ConvergedRunsAreKkt` runs the
+same grid at `n` in {3, 5, 10, 20} and seeds 1 and 2 (640 runs, 0.2 s), checks every converged run with
+`expect_risk_parity_kkt` and requires the 624 converged runs measured there.
 
-| box, target_return | converged | mean iterations |
-|---|---|---|
-| None, no | 225 / 400 | 88.0 |
-| None, yes | 116 / 400 | 49.1 |
-| LongOnly, no | 258 / 400 | 122.7 |
-| LongOnly, yes | 322 / 400 | 89.7 |
-| Capped, no | 356 / 400 | 88.5 |
-| Capped, yes | 363 / 400 | 66.3 |
-
-At scale 1 and large `cond(Sigma)`, `tau` dominates `2 J'J` and the step is a short gradient step; at scale `1e-4`
-and `cond(Sigma) = 1e8`, `tau` falls below the rounding of `2 J'J` and the factorization of `Q` fails (16 runs).
-A scale-free weight measured for comparison, `tau = 0.05 tr(2 J'J) / n`, gave identical counts at both scales and
-no failure of the factorization, but fewer converged runs (1470 of 2400 with the factor 0.05, 1568 with 0.005,
-against 1640). Without bounds and with
-`target_return` the line is unbounded and `f` can decrease towards its limit at infinity, the contributions of the
-direction of the line: on one `n = 3` case the iterates moved past `abs(w_i) = 1` and kept going while the scan
-over `abs(w_i) <= 5` found `f = 0.095`. Of the converged runs, 6 fail `expect_risk_parity_kkt` at the band of
-their `cond(Sigma)`, all LongOnly without `target_return` and uneven budgets, on the identity `w'grad f = 0`
-(relative residual `4.8e-6` to `4.5e-4`). Windows, GCC 16.2 (MSYS2 UCRT64).
+**The identity `w'grad f = 0`** in `expect_risk_parity_kkt` is checked relative to `sum_i abs(w_i)` times the
+largest term of `grad f`, not to `sum_i abs(w_i grad f_i)`. At a KKT point where the active bounds are `w_i = 0`,
+`grad f_i = budget + beta_i` with `beta_i w_i = 0`, so that sum is `abs(budget) sum_i abs(w_i)`, and the identity
+itself makes `budget` vanish to the KKT residual. With the old scale, 6 converged runs of the first sweep failed
+on it (relative residual `4.8e-6` to `4.5e-4`, all LongOnly with uneven budgets); with the new one none does. A
+wrong gradient still fails: with the second of the three terms of the reference gradient scaled by 1.001, 394 of
+the 624 converged runs of `ConvergedRunsAreKkt` fail the identity (the rest sit at `f = 0`, where every term
+vanishes and an error proportional to the gap cannot be seen). Windows, GCC 16.2 (MSYS2 UCRT64).
 
 ## Fuzz battery
 

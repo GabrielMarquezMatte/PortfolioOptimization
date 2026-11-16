@@ -29,13 +29,28 @@ struct DescentProblem
     std::optional<VolatilityTerm> volatility;
 };
 
-// proximal is the factor of the proximal term tau = proximal tr(Sigma) / (2n), positive; tolerance bounds the
-// relative KKT residual.
+// proximal sets the first proximal weight, tau_0 = proximal tr(2 J'J) / n at the start, positive; tolerance
+// bounds the relative KKT residual.
 struct DescentOptions
 {
     double proximal;
     double tolerance;
     int max_iterations;
+};
+
+enum class DescentStop
+{
+    // The relative KKT residual is at most the tolerance.
+    Converged,
+    IterationCap,
+    // No step of the segment decreases L enough: the rounding floor of L.
+    NoDecrease,
+    // Q could not be factored after the bounded growth of tau; weights is the last iterate, the multipliers
+    // and the residual are NaN.
+    NotPositiveDefinite,
+    // The QP had no solution, which a feasible start rules out in exact arithmetic; multipliers and residual
+    // are NaN.
+    QpFailed
 };
 
 // The multipliers are those of the QP solved at weights. At a fixed point they satisfy
@@ -51,16 +66,17 @@ struct DescentResult
     // The relative KKT residual at weights: stationarity and complementarity.
     double stationarity;
     int iterations;
-    bool converged;
+    DescentStop stop;
 };
 
 // Minimizes L from a feasible start by proximal Gauss-Newton steps: each step solves the convex QP
-//   min 1/2 x'Qx + (grad L - Q w)'x over the polyhedron, Q = 2 J'J + tau I (+ penalty grad h3 grad h3'),
+//   min 1/2 d'Qd + grad L'd over the polyhedron shifted to w, Q = 2 J'J + tau I (+ penalty grad h3 grad h3'),
 // and moves along the segment to its solution by Armijo backtracking, so every iterate stays in the
-// polyhedron and L never increases (up to the rounding of the iterate across the rows). Stops when the
-// relative KKT residual is at most the tolerance (converged), after max_iterations steps, or when no step of
-// the segment decreases L enough (both not converged). A local method: a fixed point is a stationary point of
-// L. qp::solve throws when Q is not positive definite to working precision: tau below the rounding of 2 J'J.
+// polyhedron and L never increases (up to the rounding of the iterate across the rows). tau follows
+// Levenberg-Marquardt: divided by 3 after a full step, multiplied by 4 after a shortened one, never below
+// 100 n eps max_i (2 J'J)_ii, and multiplied by 10 while Q does not factor. Without a volatility term
+// everything depends on Sigma only through J, so the iterates do not change when Sigma is scaled. A local
+// method: a fixed point is a stationary point of L.
 DescentResult descend(const DescentProblem& problem, std::span<const double> start,
                       const DescentOptions& options);
 

@@ -5,6 +5,7 @@
 #include <limits>
 #include <utility>
 
+#include "linalg/cholesky.hpp"
 #include "problems/constraints.hpp"
 #include "problems/mean_variance.hpp"
 #include "qp/goldfarb_idnani.hpp"
@@ -18,6 +19,11 @@ namespace
 
 constexpr double kSufficientDecrease = 1e-4;
 constexpr int kMaxHalvings = 60;
+constexpr double kProximalDecrease = 3.0;
+constexpr double kProximalIncrease = 4.0;
+constexpr double kProximalFloor = 100.0;
+constexpr double kFactorGrowth = 10.0;
+constexpr int kFactorAttempts = 8;
 
 // L = f + L3 at weights. Without a volatility term, volatility_gradient is empty and gradient is grad f.
 struct Iterate
@@ -32,9 +38,9 @@ struct Iterate
     double volatility_slope = 0.0;
 };
 
-// The model as a QP in the step d = x - w, whose Hessian, linear term and right-hand sides are replaced at
-// every step: the rows of the polyhedron in w (rhs kept here) shifted to the iterate. tau is the weight of
-// the proximal term.
+// The model as a QP in the step d = x - w, whose Hessian, its factor, the linear term and the right-hand
+// sides are replaced at every step: the rows of the polyhedron in w (rhs kept here) shifted to the iterate.
+// tau is the weight of the proximal term.
 struct Descent
 {
     const DescentProblem& problem;
@@ -57,6 +63,13 @@ struct Step
     qp::Solution solution;
     NormalTerm normal;
     double curvature = 0.0;
+};
+
+// The iterate Armijo accepted (none when no step decreases enough) and the fraction of d it took.
+struct Advance
+{
+    std::optional<Iterate> next;
+    double length = 1.0;
 };
 
 double dot(std::span<const double> a, std::span<const double> b)
@@ -90,20 +103,28 @@ std::vector<double> matrix_times(std::span<const double> matrix, std::span<const
     return product;
 }
 
-Descent prepared(const DescentProblem& problem, const DescentOptions& options)
+Descent prepared(const DescentProblem& problem)
 {
-    std::size_t n = problem.data.asset_count();
-    double trace = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        trace += problem.data.covariance()[i * n + i];
-    }
     problems::MeanVariance rows_only{2.0, 0.0};
     Descent descent{problem, problems::mean_variance_problem(problem.spec, problem.data, rows_only), {}, {},
-                    options.proximal * trace / (2.0 * static_cast<double>(n))};
+                    0.0};
     descent.equality_rhs = descent.translation.problem.equality_rhs;
     descent.inequality_rhs = descent.translation.problem.inequality_rhs;
     return descent;
+}
+
+// proximal tr(2 J'J) / n: a weight in the units of the Gauss-Newton curvature, which J makes independent of
+// the scale of Sigma.
+double initial_proximal(const Iterate& iterate, double proximal)
+{
+    std::size_t n = iterate.weights.size();
+    std::vector<double> curvature = gauss_newton(iterate.linearization.jacobian, n);
+    double trace = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        trace += curvature[i * n + i];
+    }
+    return proximal * trace / static_cast<double>(n);
 }
 
 void add_volatility_term(const DescentProblem& problem, Iterate& iterate)
@@ -147,32 +168,68 @@ void shift_rows(std::span<const double> rows, std::span<const double> rhs, std::
     }
 }
 
-// min 1/2 d'Qd + grad L'd over the shifted rows, Q = 2 J'J + tau I (+ penalty grad h3 grad h3'): the QP
-// min 1/2 x'Qx + (grad L - Q w)'x over the polyhedron in x = w + d, posed in d so that d is not the rounding
-// of the difference of two points of the size of w. The solver factors Q, which tau makes positive definite:
-// J w = 0, so J'J is singular.
-void set_model(Descent& descent, const Iterate& iterate)
+// 2 J'J (+ penalty grad h3 grad h3'), the model curvature without the proximal term.
+std::vector<double> model_curvature(const Descent& descent, const Iterate& iterate)
 {
-    qp::Problem& model = descent.translation.problem;
-    std::size_t n = model.n;
-    model.hessian = gauss_newton(iterate.linearization.jacobian, n);
-    model.hessian_factor.clear();
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        model.hessian[i * n + i] += descent.tau;
-    }
+    std::size_t n = iterate.weights.size();
+    std::vector<double> curvature = gauss_newton(iterate.linearization.jacobian, n);
     if (descent.problem.volatility.has_value())
     {
         double penalty = descent.problem.volatility->penalty;
         std::span<const double> gradient = iterate.volatility_gradient;
         for (std::size_t k = 0; k < n * n; ++k)
         {
-            model.hessian[k] += penalty * gradient[k / n] * gradient[k % n];
+            curvature[k] += penalty * gradient[k / n] * gradient[k % n];
         }
     }
+    return curvature;
+}
+
+// Q = curvature + tau I and its Cholesky factor. J w = 0 makes J'J singular, so Q is positive definite only
+// through tau; tau is first raised to 100 n eps max_i (2 J'J)_ii, above the rounding of the curvature, and
+// multiplied by 10 while the factorization still rejects Q. False when it never factors.
+bool factor_model(Descent& descent, const std::vector<double>& curvature)
+{
+    qp::Problem& model = descent.translation.problem;
+    std::size_t n = model.n;
+    double largest_diagonal = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        largest_diagonal = std::fmax(largest_diagonal, curvature[i * n + i]);
+    }
+    double floor = kProximalFloor * static_cast<double>(n) * std::numeric_limits<double>::epsilon();
+    descent.tau = std::fmax(descent.tau, floor * largest_diagonal);
+    for (int attempt = 0; attempt < kFactorAttempts; ++attempt)
+    {
+        model.hessian = curvature;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            model.hessian[i * n + i] += descent.tau;
+        }
+        std::optional<std::vector<double>> factor = linalg::cholesky(model.hessian, n);
+        if (factor.has_value())
+        {
+            model.hessian_factor = std::move(*factor);
+            return true;
+        }
+        descent.tau *= kFactorGrowth;
+    }
+    return false;
+}
+
+// min 1/2 d'Qd + grad L'd over the shifted rows: the QP min 1/2 x'Qx + (grad L - Q w)'x over the polyhedron
+// in x = w + d, posed in d so that d is not the rounding of the difference of two points of the size of w.
+bool set_model(Descent& descent, const Iterate& iterate)
+{
+    if (!factor_model(descent, model_curvature(descent, iterate)))
+    {
+        return false;
+    }
+    qp::Problem& model = descent.translation.problem;
     model.linear = iterate.gradient;
     shift_rows(model.equality_rows, descent.equality_rhs, iterate.weights, model.equality_rhs);
     shift_rows(model.inequality_rows, descent.inequality_rhs, iterate.weights, model.inequality_rhs);
+    return true;
 }
 
 // Adds sum_k u_k row_k to normal.
@@ -190,9 +247,8 @@ void add_rows(std::span<const double> rows, std::span<const double> multipliers,
     }
 }
 
-Step step_at(Descent& descent, const Iterate& iterate)
+Step step_at(const Descent& descent)
 {
-    set_model(descent, iterate);
     const qp::Problem& model = descent.translation.problem;
     Step step{qp::solve(model), NormalTerm{std::vector<double>(model.n, 0.0)}, 0.0};
     add_rows(model.equality_rows, step.solution.equality_multipliers, step.normal);
@@ -302,27 +358,37 @@ std::vector<double> moved(std::span<const double> weights, std::span<const doubl
 // deciding near a stationary point: the rounding of the step across the rows moves L by u'N s, which there is
 // far larger than the decrease, and l does not see it. nullopt when d'Qd is not positive or no halving
 // decreases l enough.
-std::optional<Iterate> armijo(const DescentProblem& problem, const Iterate& iterate, const Step& step)
+Advance armijo(const DescentProblem& problem, const Iterate& iterate, const Step& step)
 {
-    std::optional<Iterate> next;
+    Advance advance;
     double slope = -step.curvature;
     if (!(slope < 0.0))
     {
-        return next;
+        return advance;
     }
-    double length = 1.0;
     for (int halving = 0; halving < kMaxHalvings; ++halving)
     {
-        std::vector<double> trial = scaled(step.solution.x, length);
+        std::vector<double> trial = scaled(step.solution.x, advance.length);
         double change = merit_change(problem, iterate, trial) - dot(step.normal.total, trial);
-        if (change <= kSufficientDecrease * length * slope)
+        if (change <= kSufficientDecrease * advance.length * slope)
         {
-            next.emplace(evaluate(problem, moved(iterate.weights, trial)));
-            return next;
+            advance.next.emplace(evaluate(problem, moved(iterate.weights, trial)));
+            return advance;
         }
-        length *= 0.5;
+        advance.length *= 0.5;
     }
-    return next;
+    return advance;
+}
+
+// Levenberg-Marquardt: a full step says the model is good, so trust it more; a shortened one, less.
+void adapt_proximal(Descent& descent, double length)
+{
+    if (length == 1.0)
+    {
+        descent.tau /= kProximalDecrease;
+        return;
+    }
+    descent.tau *= kProximalIncrease;
 }
 
 void record(const Descent& descent, const Iterate& iterate, const Step& step, double tolerance,
@@ -340,37 +406,70 @@ void record(const Descent& descent, const Iterate& iterate, const Step& step, do
     result.stationarity = std::fmax(stationarity_of(iterate, step, tolerance), complementarity);
 }
 
+void record_without_model(const Descent& descent, DescentResult& result)
+{
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    result.equality_multipliers.assign(descent.equality_rhs.size(), kNaN);
+    result.bound_multipliers.assign(descent.problem.data.weight_count(), kNaN);
+    result.stationarity = kNaN;
+}
+
+// The reason to stop at the iterate whose step was just solved and recorded, or nullopt to go on.
+std::optional<DescentStop> stop_of(const Step& step, const DescentResult& result,
+                                   const DescentOptions& options)
+{
+    std::optional<DescentStop> stop(std::in_place, DescentStop::QpFailed);
+    if (step.solution.status != qp::Status::Optimal)
+    {
+        return stop;
+    }
+    *stop = DescentStop::Converged;
+    if (result.stationarity <= options.tolerance)
+    {
+        return stop;
+    }
+    *stop = DescentStop::IterationCap;
+    if (result.iterations >= options.max_iterations)
+    {
+        return stop;
+    }
+    stop.reset();
+    return stop;
+}
+
 } // namespace
 
 DescentResult descend(const DescentProblem& problem, std::span<const double> start,
                       const DescentOptions& options)
 {
-    Descent descent = prepared(problem, options);
     Iterate iterate = evaluate(problem, std::vector<double>(start.begin(), start.end()));
-    DescentResult result{{}, {}, {}, std::numeric_limits<double>::quiet_NaN(), 0, false};
+    Descent descent = prepared(problem);
+    descent.tau = initial_proximal(iterate, options.proximal);
+    DescentResult result{{}, {}, {}, std::numeric_limits<double>::quiet_NaN(), 0, DescentStop::NoDecrease};
     while (true)
     {
-        Step step = step_at(descent, iterate);
+        if (!set_model(descent, iterate))
+        {
+            record_without_model(descent, result);
+            result.stop = DescentStop::NotPositiveDefinite;
+            break;
+        }
+        Step step = step_at(descent);
         record(descent, iterate, step, options.tolerance, result);
-        if (std::isnan(result.stationarity))
+        std::optional<DescentStop> stop = stop_of(step, result, options);
+        if (stop.has_value())
         {
+            result.stop = *stop;
             break;
         }
-        if (result.stationarity <= options.tolerance)
+        Advance advance = armijo(problem, iterate, step);
+        if (!advance.next.has_value())
         {
-            result.converged = true;
+            result.stop = DescentStop::NoDecrease;
             break;
         }
-        if (result.iterations >= options.max_iterations)
-        {
-            break;
-        }
-        std::optional<Iterate> next = armijo(problem, iterate, step);
-        if (!next.has_value())
-        {
-            break;
-        }
-        iterate = std::move(*next);
+        adapt_proximal(descent, advance.length);
+        iterate = std::move(*advance.next);
         ++result.iterations;
     }
     result.weights = std::move(iterate.weights);

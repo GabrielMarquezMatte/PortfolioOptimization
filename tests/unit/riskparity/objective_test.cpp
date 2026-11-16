@@ -86,6 +86,8 @@ TEST(RiskParityObjective, GradientMatchesIndependentReference)
     }
 }
 
+// The objective sums Sigma w in long double and the metric in double, so they agree to the rounding of the
+// metric.
 TEST(RiskParityObjective, ValueMatchesMetric)
 {
     for (std::size_t n : {2u, 7u, 30u})
@@ -94,8 +96,8 @@ TEST(RiskParityObjective, ValueMatchesMetric)
         Data data = sample_data(n, 3);
         std::vector<double> budget = sample_budget(n, 3);
         std::vector<double> weights = sample_weights(n, 3);
-        EXPECT_EQ(linearize(data, budget, weights, false).value,
-                  po::metrics::risk_budget_residual(data, weights, budget));
+        double metric = po::metrics::risk_budget_residual(data, weights, budget);
+        EXPECT_NEAR(linearize(data, budget, weights, false).value, metric, 1e-14 * metric);
     }
 }
 
@@ -170,7 +172,7 @@ TEST(RiskParityObjective, ValueChangeKeepsRelativeAccuracy)
     std::vector<double> weights = sample_weights(n, 17);
     Linearization linearization = linearize(data, budget, weights, true);
     std::vector<double> direction = random_vector(n, 900, -1.0, 1.0);
-    for (double length : {1e-6, 1e-9, 1e-12, 1e-15})
+    for (double length : {1e-8, 1e-10, 1e-12, 1e-15})
     {
         SCOPED_TRACE(testing::Message() << "length " << length);
         std::vector<double> step(n);
@@ -186,7 +188,7 @@ TEST(RiskParityObjective, ValueChangeKeepsRelativeAccuracy)
         }
         double expansion = slope + 0.5 * curvature;
         po::riskparity::Change change = po::riskparity::value_change(data, budget, weights, step);
-        EXPECT_LE(std::fabs(change.value - expansion), 1e-9 * std::fabs(slope));
+        EXPECT_LE(std::fabs(change.value - expansion), 1e-12 * std::fabs(slope));
         double variance_change = 2.0 * po::testing::dot(po::testing::covariance_times(data, weights), step) +
                                  po::testing::dot(po::testing::covariance_times(data, step), step);
         EXPECT_NEAR(change.variance, variance_change, 1e-14 * std::fabs(variance_change));
