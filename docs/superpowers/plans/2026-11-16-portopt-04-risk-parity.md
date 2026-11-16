@@ -2,12 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Entregar `RISK_PARITY` de ponta a ponta (núcleo → interface C → Python): Newton de Spinu para o caso sem restrições extras, Lagrangiano aumentado com bounds por L-BFGS projetado para `target_return`, `target_volatility` e bounds ativos, os setters `risk_budget` e `target_volatility`, o resíduo e a métrica `risk_contributions`, validados por KKT, formas fechadas e referências independentes por varredura.
+**Goal:** Entregar `RISK_PARITY` de ponta a ponta (núcleo → interface C → Python): Newton de Spinu para o caso sem restrições extras, uma sequência de QPs de Gauss-Newton sobre o poliedro (orçamento, `target_return`, bounds) resolvidos pelo Goldfarb-Idnani existente, com Lagrangiano aumentado só para `target_volatility` e polimento Newton-KKT, os setters `risk_budget` e `target_volatility`, o resíduo e a métrica `risk_contributions`, validados por KKT, formas fechadas e referências independentes por varredura.
 
 **Architecture:**
-- **Pasta nova `src/riskparity/`** (`spinu`, `objective`, `box_lbfgs`, `augmented_lagrangian`, `risk_parity`). `src/problems/` já tem 8 módulos (limite do STYLEGUIDE), então `solve.*` e `requirements.*` saem dela para `src/solve/`. Ordem das dependências: `core` ← `qp` ← `problems` ← `riskparity` ← `solve` ← `capi`.
+- **Pasta nova `src/riskparity/`** (`spinu`, `objective`, `polyhedral_descent`, `augmented_lagrangian`, `newton_polish`, `risk_parity`). `src/problems/` já tem 8 módulos (limite do STYLEGUIDE), então `solve.*` e `requirements.*` saem dela para `src/solve/`. Ordem das dependências: `core` ← `qp` ← `problems` ← `riskparity` ← `solve` ← `capi`.
 - **Caminho rápido:** sem `target_return`, sem `target_volatility` e com a solução de Spinu dentro dos bounds, o resultado é a de Spinu, `OPTIMAL`, todos os multiplicadores 0 e resíduo no piso do arredondamento.
-- **Caminho geral:** viabilidade e σ_min pela mínima variância (`problems::solve_mean_variance`), depois Lagrangiano aumentado partindo da solução de Spinu. As igualdades são orçamento, `target_return` e vol(w) = s. Os bounds ficam no subproblema, resolvido por L-BFGS projetado. A viabilidade das igualdades é restaurada por Gauss-Newton e os multiplicadores saem por mínimos quadrados (QR) no ponto final.
+- **Caminho geral:** viabilidade e σ_min pela mínima variância (`problems::solve_mean_variance`), depois, partindo da solução de Spinu, passos de Gauss-Newton com termo proximal sobre o poliedro Ω = {orçamento, `target_return`, bounds}, cada passo um QP do `qp::solve` com busca de Armijo (as linhas lineares valem exatamente em todo iterado e os multiplicadores saem do QP). Só vol(w) = s entra num Lagrangiano aumentado (regra de ρ do ALGENCAN). Um polimento Newton-KKT com a Hessiana exata leva a estacionaridade ao piso do arredondamento. Revisão por pesquisa: `docs/research/2026-11-16-risk-parity-and-numerics.md`.
 - **Local, não global:** o problema é não convexo. `OPTIMAL` significa ponto de KKT atingido (spec §3.3), partindo de Spinu; não se promete o mínimo global.
 
 **Tech Stack:** o dos planos 1–3. Nenhuma dependência nova.
@@ -48,8 +48,9 @@
   - c(w) = w ∘ (Σw) / (w'Σw) e f(w) = Σᵢ (cᵢ − bᵢ)², com Σbᵢ = 1.
   - ∇f = 2 J'(c − b), com J = (diag(Σw) + diag(w)Σ − 2 c (Σw)') / (w'Σw).
   - c é homogênea de grau 0, então w'∇f(w) = 0. Com as restrições, isso dá a identidade λ_orçamento = −λ_retorno·r − λ_vol·s − Σᵢ βᵢwᵢ.
-  - Spinu: F(y) = ½ y'Σy − b' log y, y > 0, ∇F = Σy − b/y e ∇²F = Σ + diag(b/y²), estritamente convexa e coerciva. O mínimo satisfaz yᵢ(Σy)ᵢ = bᵢ, logo c = b, e w = y/1'y. A busca em linha é Armijo com y > 0 mantido por fração até a fronteira (a barreira com bᵢ < 1 não é autoconcordante padrão, então não se usa o passo amortecido de Newton).
-  - Igualdades do Lagrangiano aumentado, nesta ordem e só as presentes: h₁ = 1'w − 1, h₂ = μ'w − r, h₃ = √(w'Σw) − s. Estacionaridade: ∇f(w) = Σₖ λₖ ∇hₖ + Σᵢ βᵢeᵢ, que é a convenção do header, com ∇h₃ = Σw/vol(w). O L-BFGS projetado minimiza L = f − λ'h + (ρ/2)‖h‖² no box, e o multiplicador é atualizado por λ ← λ − ρh.
+  - Spinu: F(y) = ½ y'Σy − b' log y, y > 0, ∇F = Σy − b/y e ∇²F = Σ + diag(b/y²), estritamente convexa e coerciva. O mínimo satisfaz yᵢ(Σy)ᵢ = bᵢ, logo c = b, e w = y/1'y. A busca em linha é Armijo com y > 0 mantido por fração até a fronteira (F não é autoconcordante padrão com bᵢ < 1; F/min bᵢ é, mas a cota de iterações escala com 1/min bᵢ). O critério de parada é testado **depois** de dar o passo completo, ou por ‖Δy/y‖∞ ≤ c·ε (a medição fixa o c), porque o decremento mede F − F*, não o erro do ponto (erro relativo do peso ~1e-7/√bᵢ se o iterado devolvido for o do teste).
+  - Igualdades, nesta ordem e só as presentes: h₁ = 1'w − 1, h₂ = μ'w − r (ambas lineares, no poliedro Ω com os bounds) e h₃ = √(w'Σw) − s (no Lagrangiano aumentado L = f − λh₃ + (ρ/2)h₃², atualização λ ← λ − ρh₃, ρ ×10 quando |h₃| não cai por 0.5, λ salvaguardado, tolerância interna decrescente: ABMS 2007, Alg. 3.1). Estacionaridade: ∇f(w) = Σₖ λₖ ∇hₖ + Σᵢ βᵢeᵢ, que é a convenção do header, com ∇h₃ = Σw/vol(w).
+  - Gauss-Newton: J tem Jw = 0 (c é homogênea de grau 0), então J'J é singular e o QP leva o termo proximal τI, τ = 0.05·tr(Σ)/(2n). A Hessiana exata de f é indefinida em geral (problema não convexo: Bai-Scheinberg-Tütüncü 2016, Ex. 3.1 e 3.2) e só entra no polimento final.
 - **Semântica do RISK_PARITY** (decisões deste plano, para conferir; as da spec estão em §3.3):
   - Sem caixa: `risk_free` nos dados é `INVALID_ARGUMENT`, `"risk_free does not apply to RISK_PARITY"`.
   - `leverage` é `INVALID_ARGUMENT`, `"leverage does not apply to RISK_PARITY"`.
@@ -58,10 +59,11 @@
   - `target_volatility`: s > 0 finito, só no RISK_PARITY.
   - `INFEASIBLE` só quando certificado: restrições lineares incompatíveis (a QP de mínima variância), `target_return` fora da faixa, ou s < σ_min.
     - s é comparado a σ_min com a constante 1e-12 relativa do MAX_RETURN, promovida a `problems::kMinimumVolatilityTolerance` (hoje `kMinimumTolerance` em `max_return.cpp`).
-    - Com |s − σ_min| dentro dela, o único ponto viável é a carteira de mínima variância: `OPTIMAL`, multiplicadores de mínima norma.
-    - Um s acima da volatilidade máxima de um conjunto viável limitado não é certificável de forma barata: o Lagrangiano aumentado estaciona com ‖h‖ > 0 e o status é `MAX_ITER`.
+    - A constante vira `qp::kRelativeTolerance` (a tolerância de viabilidade do QP, que é o que a sustenta; ver `docs/research/…` item 5).
+    - Com |s − σ_min| dentro dela, o único ponto viável é a carteira de mínima variância: `OPTIMAL`, com **λ_vol = −∞ e os demais multiplicadores NaN**, como o `MAX_RETURN` na fronteira vertical (aí a LICQ falha, em geral não existem multiplicadores de KKT e ∂f*/∂s = −∞; "multiplicadores de mínima norma" não existem).
+    - Um s acima da volatilidade máxima de um conjunto viável limitado não é certificável de forma barata: o Lagrangiano aumentado estaciona com |h₃| > 0 e o status é `MAX_ITER`.
   - **`MAX_ITER` sem ponto, para todo objetivo:** pesos, multiplicadores e resíduo são NaN. Isso fecha a pendência do header ("documentado quando o RISK_PARITY for acrescentado") e uniformiza a regra.
-  - `iterations` = iterações de Newton do Spinu + soma das internas do L-BFGS.
+  - `iterations` = iterações de Newton do Spinu + soma das iterações de `descend` + passos do polimento.
   - Multiplicadores: o de orçamento é finito (sem caixa); `target_return` e volatilidade são NaN quando o setter não foi chamado; leverage é NaN sempre.
   - `po_risk_contributions`: `out` tem n entradas (n = o número de pesos) e a do caixa é 0. Soma 1. É NaN quando a volatilidade é 0.
 - **Matriz objetivo × setter**, acréscimo:
@@ -72,9 +74,9 @@
 
 ## Review Focus
 
-1. **Conjunto viável de um ponto:** n = 2 com `target_return` e μ distintos fixa w; s = σ_min fixa a carteira de mínima variância. Os dois são `OPTIMAL`, sem laço infinito no Lagrangiano aumentado. Testes: `RiskParity.TwoAssetsWithTargetReturnIsThePoint` e `RiskParity.VolatilityEqualMinimumIsMinimumVariance` (Task 4).
+1. **Conjunto viável de um ponto, dois casos diferentes.** n = 2 com `target_return` e μ distintos fixa w, mas a LICQ vale e os multiplicadores existem. s = σ_min fixa a carteira de mínima variância, a LICQ falha e λ_vol = −∞ (resto NaN). Os dois são `OPTIMAL`, sem laço infinito no Lagrangiano aumentado. Testes: `RiskParity.TwoAssetsWithTargetReturnIsThePoint` e `RiskParity.VolatilityEqualMinimumIsMinimumVariance` (Task 4).
 2. **Médias iguais e `target_return` redundante ou inconsistente.** O redundante é `OPTIMAL` e igual à solução de Spinu. O inconsistente é `INFEASIBLE`. Testes: `RiskParity.EqualMeansRedundantTarget` e `RiskParity.EqualMeansInconsistentTarget` (Task 4).
-3. **Ortante.** Com `lower < 0` e a solução de Spinu dentro do box, o resultado é a de Spinu (pesos positivos), não outra solução por ortante. Teste: `RiskParity.NegativeLowerBoundKeepsPositiveOrthant` (Task 2).
+3. **Ortante.** A spec §3.3 ("uma solução por ortante") está errada em geral: há no máximo 2^(n−1) soluções normalizadas, uma por par de ortantes opostos, e nenhuma quando a soma dos pesos do raio é 0 (Bai-Scheinberg-Tütüncü 2016, Lema 2.2). A solução de pesos positivos existe e é única para Σ definida positiva (Bruder-Roncalli 2012, §2.3.3). Com `lower < 0` e a solução de Spinu dentro do box, o resultado é a de pesos positivos; um `OPTIMAL` com bounds pode perder uma solução exata de outro ortante. Teste: `RiskParity.NegativeLowerBoundKeepsPositiveOrthant` (Task 2).
 4. **Orçamentos muito desiguais (bᵢ de 1e-6 a 1) com cond(Σ) até 1e8.** Testes: `Spinu.UnevenBudgetsConditioningSweep` (Task 2) e a bateria `RiskParityFuzz` (Task 5).
 5. **Não convergência nunca vira `OPTIMAL` fora de KKT.** s inalcançável num conjunto limitado dá `MAX_ITER` com NaN, e a bateria checa KKT e viabilidade em todo `OPTIMAL`. Testes: `RiskParity.UnreachableVolatilityIsMaxIter` (Task 4) e `RiskParityFuzz.NeverSilentlyWrong` (Task 5).
 
@@ -219,107 +221,127 @@
 
 ---
 
-### Task 3: Objetivo, gradiente, igualdades e L-BFGS com bounds
+### Task 3: Objetivo, Jacobiano, Hessiana e a sequência de QPs sobre o poliedro
+
+Contexto da revisão (`docs/research/2026-11-16-risk-parity-and-numerics.md`, item 1 e 2): a Task 3 original (L-BFGS projetado, `box_lbfgs`) foi **substituída**. O subproblema é um mínimos quadrados não linear sobre o poliedro Ω = {1'w = 1, μ'w = r (se houver), lo ≤ w ≤ hi}, resolvido por passos de Gauss-Newton com termo proximal, cada um um QP convexo do `qp::solve` (Goldfarb-Idnani), como o `riskParityPortfolio` faz com `quadprog`. As igualdades lineares e os bounds valem exatamente em todo iterado, e não há módulo de L-BFGS para validar.
 
 **Files:**
-- Create: `src/riskparity/objective.hpp`, `src/riskparity/objective.cpp`, `src/riskparity/box_lbfgs.hpp`, `src/riskparity/box_lbfgs.cpp`
-- Test: `tests/unit/riskparity/objective_test.cpp`, `tests/unit/riskparity/box_lbfgs_test.cpp`
+- Create: `src/riskparity/objective.hpp`, `src/riskparity/objective.cpp`, `src/riskparity/polyhedral_descent.hpp`, `src/riskparity/polyhedral_descent.cpp`
+- Test: `tests/unit/riskparity/objective_test.cpp`, `tests/unit/riskparity/polyhedral_descent_test.cpp`
 - Modify: `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `Data`, `Spec`, `risk_budget_of` (Task 2).
+- Consumes: `Data`, `Spec`, `risk_budget_of` (Task 2), `problems::mean_variance_problem` (constrói as linhas de orçamento, retorno e bounds de `qp::Problem`), `qp::solve`.
 - Produces:
   ```cpp
   namespace po::riskparity {
-  // f(w) and, when gradient is non-empty, grad f(w) (formula of the plan header). w'Sigma w must be positive.
-  double risk_parity_objective(const Data& data, std::span<const double> budget, std::span<const double> w,
-                               std::span<double> gradient);
+  // r(w) = c(w) - b, f = |r|^2. Fills value, gradient (2 J'r), the Jacobian J (n x n, row-major) and, when
+  // hessian is non-empty, the exact Hessian of f: 2 J'J + 2 sum_i r_i hess(c_i). w'Sigma w must be positive.
+  struct Linearization { double value; std::vector<double> gradient; std::vector<double> jacobian; std::vector<double> hessian; };
+  Linearization linearize(const Data& data, std::span<const double> budget, std::span<const double> w, bool with_hessian);
 
-  // The equalities of the spec, in the order budget, target_return, volatility (those present).
-  class Equalities
+  // Minimizes f(w) + extra(w) over the polyhedron of the spec (budget, target_return, bounds) from a feasible start.
+  // extra is the augmented-Lagrangian term of the volatility row: value, gradient and the rank-one curvature
+  // rho * grad h3 grad h3' (Gauss-Newton), or null when there is no target_volatility.
+  struct VolatilityTerm { double multiplier; double penalty; double target; };   // L3 = -multiplier*h3 + penalty/2*h3^2
+  struct DescentOptions { double proximal; double tolerance; int max_iterations; };
+  struct DescentResult
   {
-  public:
-      static Equalities of(const Spec& spec, const Data& data);
-      std::size_t count() const;
-      // h (count) and jacobian (count x n, row-major) at w.
-      void evaluate(std::span<const double> w, std::span<double> h, std::span<double> jacobian) const;
-      // True for the volatility row; used to map multipliers to the named constraints.
-      enum class Kind { Budget, TargetReturn, Volatility };
-      std::span<const Kind> kinds() const;
+      std::vector<double> weights;
+      std::vector<double> equality_multipliers;      // of the QP rows at the fixed point: budget, target_return (those present)
+      std::vector<double> bound_multipliers;         // beta, convention of the header
+      double stationarity;                           // relative KKT residual at weights
+      int iterations;
+      bool converged;
   };
-
-  using SmoothFunction = std::function<double(std::span<const double> x, std::span<double> gradient)>;
-  struct BoxOptions { std::size_t memory; int max_iterations; double tolerance; };
-  struct BoxResult { std::vector<double> x; std::vector<double> gradient; double value; int iterations; bool converged; };
-  // L-BFGS on the free variables with projection onto [lower, upper] and a projected Armijo line search.
-  // converged: ||x - P(x - gradient)||_inf <= tolerance.
-  BoxResult minimize_box(const SmoothFunction& function, std::span<const double> lower, std::span<const double> upper,
-                         std::vector<double> start, const BoxOptions& options);
+  DescentResult descend(const Spec& spec, const Data& data, std::span<const double> budget,
+                        std::optional<VolatilityTerm> volatility, std::span<const double> start,
+                        const DescentOptions& options);
   }
   ```
+  Passo: com Q = 2J'J + τI (+ ρ ∇h₃∇h₃' quando há volatilidade), τ = `options.proximal`·tr(Σ)/(2n) (a escolha do pacote `riskParityPortfolio`, 0.05), resolver o QP min ½ŵ'Qŵ + (∇L − Qw)'ŵ sobre Ω com `qp::solve`, direção d = ŵ − w, Armijo em L ao longo de w + γd (sempre viável pela convexidade de Ω). No ponto fixo (d = 0), ∇L(w) = N'u, e os multiplicadores do QP são os da estacionaridade original (com λ₃ = multiplier − penalty·h₃). Parada por KKT relativo (não pela variação de w ou de f). O QP infeasible não ocorre porque a partida é viável (Task 4 só chama depois da checagem de mínima variância).
 
 - [ ] **Step 1: Testes**
-  - `RiskParityObjective.GradientMatchesIndependentReference`: contra `risk_parity_gradient` (Task 0) em 1e-12 relativo, n ∈ {2, 7, 30}.
-  - `RiskParityObjective.ValueMatchesMetric`: igual a `risk_budget_residual` (Task 1).
-  - `Equalities.JacobianByFiniteDifferences`: as três linhas, passo 1e-6, relativo 1e-6.
-  - `BoxLbfgs.AgainstQpSolver`: QPs convexos com bounds (G = Σ aleatória, g aleatório, `lower`/`upper` apertados, n ∈ {5, 30}, sementes 1..30), `converged`, e x concorda com `qp::solve` em 1e-8 relativo.
-  - `BoxLbfgs.ReturnsExactBoundValues`: nos pesos ativos, x é exatamente o bound (a projeção, não um arredondamento).
-  - `BoxLbfgs.StartOutsideBoxIsProjected`.
-  - `BoxLbfgs.IterationCapIsReported`: com `max_iterations = 1`, `converged = false`.
-- [ ] **Step 2:** Rodar, ver falhar. **Step 3:** Implementar. **Step 4:** PASS. Registrar em `validation.md` a concordância com o QP.
-- [ ] **Step 5: Commit** — `feat: risk parity objective, equalities and projected L-BFGS`
+  - `RiskParityObjective.GradientMatchesIndependentReference`: contra `risk_parity_gradient` (`fuzz/risk_parity/risk_parity_reference.hpp`) em 1e-12 relativo, n ∈ {2, 7, 30}.
+  - `RiskParityObjective.ValueMatchesMetric`: igual a `metrics::risk_budget_residual`.
+  - `RiskParityObjective.JacobianByCentralDifferences` e `RiskParityObjective.HessianByCentralDifferencesOfGradient`: passo 1e-6, relativo 1e-6 (n ∈ {3, 10}); `Jw = 0` (homogeneidade) em 1e-12.
+  - `PolyhedralDescent.AtSpinuPointStaysPut`: partindo do ponto de Spinu (f = 0) com box folgado, devolve o mesmo ponto, `converged`, multiplicadores 0.
+  - `PolyhedralDescent.TargetReturnLineAgainstScan`: n = 3, `target_return`, partida viável arbitrária, resíduo ≤ varredura·(1 + 1e-9) (ou outro KKT, caso mínimo local) e `expect_risk_parity_kkt`.
+  - `PolyhedralDescent.ActiveBoundsKkt`: box `Capped` com um peso no teto, sinais e complementaridade de β.
+  - `PolyhedralDescent.MonotoneDescent`: f + extra nunca cresce de uma iteração para a seguinte (`iterations` e o valor final ≤ o inicial).
+  - `PolyhedralDescent.IterationCapIsReported`: `max_iterations = 1` dá `converged = false`.
+- [ ] **Step 2:** Rodar, ver falhar. **Step 3:** Implementar. **Step 4:** PASS em `gcc-release`. Registrar em `validation.md` o número de iterações por n e o valor de `proximal` usado.
+- [ ] **Step 5: Commit** — `feat: risk parity objective derivatives and polyhedral Gauss-Newton descent`
 
 ---
 
-### Task 4: Lagrangiano aumentado, viabilidade, multiplicadores e status
+### Task 4: Volatilidade-alvo por Lagrangiano aumentado, polimento, viabilidade e status
+
+Contexto da revisão (`docs/research/…`, itens 1 e 5). O Lagrangiano aumentado entra **só** para h₃ = √(w'Σw) − s (as demais igualdades e os bounds estão em Ω). Sem `target_volatility` não há laço externo: é `descend` puro.
 
 **Files:**
-- Create: `src/riskparity/augmented_lagrangian.hpp`, `src/riskparity/augmented_lagrangian.cpp`
-- Modify: `src/riskparity/risk_parity.cpp`, `src/problems/max_return.cpp` e `src/problems/constraints.hpp` (a constante compartilhada), `CMakeLists.txt`
-- Test: `tests/unit/riskparity/augmented_lagrangian_test.cpp`, `tests/unit/riskparity/risk_parity_test.cpp`
+- Create: `src/riskparity/augmented_lagrangian.hpp`, `src/riskparity/augmented_lagrangian.cpp`, `src/riskparity/newton_polish.hpp`, `src/riskparity/newton_polish.cpp`
+- Modify: `src/riskparity/risk_parity.cpp`, `src/problems/max_return.cpp` e `src/problems/constraints.hpp` (a constante compartilhada), `tests/unit/user_kkt.hpp` ou o `expect_risk_parity_kkt` (o caso s = σ_min), `CMakeLists.txt`
+- Test: `tests/unit/riskparity/augmented_lagrangian_test.cpp`, `tests/unit/riskparity/newton_polish_test.cpp`, `tests/unit/riskparity/risk_parity_test.cpp`
 
 **Interfaces:**
-- Consumes: `spinu`, `risk_parity_objective`, `Equalities`, `minimize_box` (Tasks 2–3), `problems::solve_mean_variance`, `linalg::qr`.
+- Consumes: `spinu`, `linearize`, `descend` (Tasks 2–3), `problems::solve_mean_variance`, `linalg::qr`, `linalg::cholesky`.
 - Produces:
   ```cpp
-  namespace problems { inline constexpr double kMinimumVolatilityTolerance = 1e-12; }   // was kMinimumTolerance in max_return.cpp
-
+  namespace po::problems {
+  // Relative tolerance of the QP feasibility (qp kRelativeTolerance, 1e-12), shared with MAX_RETURN; replaces
+  // kMinimumTolerance in max_return.cpp.
+  inline constexpr double kMinimumVolatilityTolerance = qp::kRelativeTolerance;
+  }
   namespace po::riskparity {
   struct AugmentedResult
   {
       std::vector<double> weights;
-      std::vector<double> multipliers;          // one per Equalities row, convention of the header
+      std::vector<double> equality_multipliers;   // budget, target_return, volatility (those present), header convention
+      std::vector<double> bound_multipliers;
       int outer_iterations;
       int inner_iterations;
-      bool converged;                           // KKT residual and ||h|| under tolerance after restoration
+      bool converged;
   };
+  // ABMS 2007 Algorithm 3.1: rho grows by 10 when |h3| does not fall by a factor 0.5, lambda is safeguarded in
+  // [-lambda_max, lambda_max], the inner tolerance decreases (epsilon_{k+1} = max(epsilon_final, 0.1 epsilon_k)).
   AugmentedResult augmented_lagrangian(const Spec& spec, const Data& data, std::span<const double> budget,
                                        std::span<const double> start);
+  // Newton on the KKT system with the exact Hessian of the Lagrangian, active rows as equalities; accepts the step
+  // only when the feasibility and the KKT residual decrease. Returns the polished point and multipliers.
+  struct PolishResult { std::vector<double> weights; std::vector<double> multipliers; bool improved; };
+  PolishResult newton_polish(const Spec& spec, const Data& data, std::span<const double> budget,
+                             std::span<const double> weights, std::span<const double> active_rows_info);
   }
   ```
+  (a assinatura exata de `newton_polish` é do implementador; ela recebe o conjunto ativo do último QP.)
+
   Política em `solve_risk_parity` (a ordem é o contrato):
   1. Spinu; sem convergência → `MAX_ITER`.
   2. Caminho rápido (Task 2).
-  3. A QP de mínima variância com os bounds e o `target_return` do spec (`problems::solve_mean_variance` sobre uma cópia com `objective = MinVariance`): `Infeasible` → `INFEASIBLE`. Com `target_volatility`: s < σ_min·(1 − kMinimumVolatilityTolerance) → `INFEASIBLE`, e |s − σ_min| ≤ kMinimumVolatilityTolerance·s → esse ponto.
-  4. `augmented_lagrangian` partindo da solução de Spinu. As iterações externas aumentam ρ ×10 quando ‖h‖ não cai por um fator 4 (Nocedal-Wright §17.4). O subproblema é `minimize_box`. No fim, restauração por Gauss-Newton em h sobre as variáveis livres, e os multiplicadores (igualdades e β dos bounds ativos, por QR) vêm do gradiente.
-  5. Verificação final de KKT e viabilidade, relativa ao ruído do problema. Se falhar, o status é `MAX_ITER`.
-  6. Um β de sinal errado tira o bound do conjunto ativo e continua o Lagrangiano aumentado.
-  7. `MAX_ITER` devolve pesos, multiplicadores e resíduo NaN.
+  3. A QP de mínima variância com os bounds e o `target_return` do spec (`problems::solve_mean_variance` sobre uma cópia com `objective = MinVariance`): `Infeasible` → `INFEASIBLE`. Com `target_volatility`:
+     - s < σ_min·(1 − kMinimumVolatilityTolerance) → `INFEASIBLE`.
+     - |s − σ_min| ≤ kMinimumVolatilityTolerance·s → o ponto de mínima variância, `OPTIMAL`, **λ_vol = −∞ e os demais multiplicadores NaN** (nesse ponto a LICQ falha e em geral não há multiplicadores de KKT, e ∂f*/∂s = −∞; é a mesma convenção do `MAX_RETURN` na fronteira vertical, `math.md`). Sem laço externo.
+  4. Sem `target_volatility`: `descend` a partir de Spinu, projetado em Ω quando a partida de Spinu viola um bound (um QP de projeção sobre Ω). Com `target_volatility`: `augmented_lagrangian`.
+  5. Polimento: `newton_polish` com o conjunto ativo do último QP; aceita só se a viabilidade e o resíduo KKT caem.
+  6. Verificação final de KKT e viabilidade, relativa ao ruído do problema. Se falhar, `MAX_ITER`.
+  7. Um β de sinal errado tira o bound do conjunto ativo e continua.
+  8. `MAX_ITER` devolve pesos, multiplicadores e resíduo NaN.
+  `iterations` = Newton do Spinu + iterações de `descend` (soma de todas as externas) + passos do polimento.
 
-- [ ] **Step 1: Testes** (todo `OPTIMAL` chama `expect_risk_parity_kkt`)
-  - `RiskParity.TwoAssetsWithTargetReturnIsThePoint`: n = 2, μ distintos, w vem do sistema 2×2 (orçamento e retorno), resíduo igual a `risk_parity_value`.
-  - `RiskParity.TargetReturnLineAgainstScan`: n = 3, `target_return` entre os μ, resíduo ≤ varredura·(1 + 1e-9) e pesos a 1e-6 quando o mínimo é único.
-  - `RiskParity.TargetVolatilityEllipseAgainstScan`: n = 3, s entre σ_min e 1.5σ_min.
-  - `RiskParity.VolatilityEqualMinimumIsMinimumVariance`: s = σ_min, w igual ao de `MIN_VARIANCE`, e o `expect_risk_parity_kkt` aceita multiplicadores de mínima norma.
+- [ ] **Step 1: Testes** (todo `OPTIMAL` com multiplicadores finitos chama `expect_risk_parity_kkt`; o caso s = σ_min tem o ramo próprio, abaixo)
+  - `RiskParity.TwoAssetsWithTargetReturnIsThePoint`: n = 2, μ distintos. A LICQ vale e o ponto é isolado mas regular: w vem do sistema 2×2, os multiplicadores existem e são únicos, o resíduo é igual a `risk_parity_value`.
+  - `RiskParity.TargetReturnLineAgainstScan`, `RiskParity.TargetVolatilityEllipseAgainstScan`: n = 3, na varredura de referência.
+  - `RiskParity.VolatilityEqualMinimumIsMinimumVariance`: s = σ_min do `MIN_VARIANCE` → w igual ao do `MIN_VARIANCE`, `OPTIMAL`, λ_vol = −∞ e o resto NaN; s = σ_min·(1 + 1e-9) → resultado regular com multiplicadores finitos e λ_vol muito negativo.
   - `RiskParity.VolatilityBelowMinimumInfeasible`, `RiskParity.TargetReturnOutOfRangeInfeasible` e `RiskParity.BoundsInfeasible` (lower·n > 1): `INFEASIBLE` com NaN.
   - `RiskParity.UnreachableVolatilityIsMaxIter`: Σ = diag(0.04, 0.09), long-only, s = 0.5 → `MAX_ITER`, NaN.
   - `RiskParity.EqualMeansRedundantTarget` (target = média comum → `OPTIMAL`, igual a Spinu) e `RiskParity.EqualMeansInconsistentTarget` (→ `INFEASIBLE`).
-  - `RiskParity.ActiveBoundsKkt`: box `Capped` com um peso no teto, sinais de β e complementaridade.
-  - `RiskParity.HomogeneityIdentity`: λ_orçamento = −λ_retorno·r − λ_vol·s − Σβᵢwᵢ em 1e-9 relativo.
-  - `RiskParity.MultipliersAreDerivatives`: diferença central do f ótimo em r e em s (passo 1e-6 relativo, tolerância relativa 1e-5), em casos com mínimo local único.
-  - `RiskParity.ScaleInvariance`: Σ → tΣ com s → √t·s e os mesmos pesos.
-  - `AugmentedLagrangian.AgreesWithSpinuWhenBothApply`: só o orçamento como igualdade, partida perturbada, pesos concordam em 1e-8 (spec §9).
+  - `RiskParity.ActiveBoundsKkt`, `RiskParity.HomogeneityIdentity` (λ_orçamento = −λ_retorno·r − λ_vol·s − Σβᵢwᵢ em 1e-9 relativo), `RiskParity.ScaleInvariance` (Σ → tΣ, s → √t·s, mesmos pesos).
+  - `RiskParity.MultipliersAreDerivatives`: diferença central do f ótimo em r e em s (passo 1e-6 relativo, tolerância 1e-5), em casos com mínimo local único.
+  - `AugmentedLagrangian.SafeguardedMultiplierStaysBounded`: com s = σ_min·(1 + 1e-6) λ não explode e ρ cresce de forma finita.
   - `AugmentedLagrangian.IterationCapsAreReported`.
+  - `NewtonPolish.ReachesRoundingFloor`: partindo de um ponto KKT a 1e-6, a estacionaridade cai para a faixa do cond em 1 a 2 passos; um passo que piora é recusado (`improved = false`).
+  - `expect_risk_parity_kkt`: acrescentar os casos de rejeição apontados na revisão da Task 0 (λ_orçamento perturbado, β de sinal errado, β NaN num bound infinito) e uma variante com `target_return`.
   - `RiskParity.ActiveConstraintsUnsupportedForNow` (Task 2) sai.
 - [ ] **Step 2:** Rodar, ver falhar. **Step 3:** Implementar. **Step 4:** PASS em `gcc-release`.
 - [ ] **Step 5: Commit** — `feat: RISK_PARITY with target return, target volatility and active bounds`
@@ -354,8 +376,10 @@
 - [ ] **Step 2:** Rodar. Falhas viram análise, não afrouxamento de faixa.
 - [ ] **Step 3:** Medir e fixar, com cada valor em `validation.md` junto da medição:
   - o fator de parada do Spinu;
-  - o fator de KKT do Lagrangiano aumentado;
-  - os tetos `kMaxOuter` e `kMaxInner` (10× o maior valor observado nos casos que convergem; partida 50 e 1000).
+  - o termo proximal e a tolerância de `descend` (Task 3) e o fator de KKT final;
+  - os tetos de iteração externas e internas do `augmented_lagrangian` e de `descend` (10× o maior valor observado nos casos que convergem; partida 50 e 1000);
+  - a aceitação do `newton_polish`;
+  - **s ≈ σ_min por duas rotas:** medir em quantos casos o σ_min de `MIN_VARIANCE` difere em mais de `kMinimumVolatilityTolerance` do σ_min da QP interna (o `validation.md` do plano 3 registra 17 de 320 no `MAX_RETURN`). Um usuário que passa o s vindo de `MIN_VARIANCE` recebe `INFEASIBLE` nesses casos; registrar a taxa e, se for relevante, decidir com o autor.
 - [ ] **Step 4:** PASS em `gcc-release`.
 - [ ] **Step 5: Commit** — `test: risk parity fuzz battery; measured tolerances`
 
@@ -427,7 +451,9 @@
   - `test_spec_with_risk_budget_array_hashes`.
 - [ ] **Step 2:** Rodar, ver falhar. **Step 3:** Implementar.
 - [ ] **Step 4:** Documentação:
-  - `math.md`: seção RISK_PARITY com c, f, ∇f (derivação de J), Spinu, o Lagrangiano aumentado, a restauração e os multiplicadores, a identidade de homogeneidade, o caráter local e o `MAX_ITER`; a tabela "Which setters and data each objective takes" ganha a linha nova.
+  - `math.md`: seção RISK_PARITY com c, f, ∇f (derivação de J), Spinu (o critério de parada pós-passo e a autoconcordância de F/min bᵢ), o Gauss-Newton proximal sobre o poliedro, o Lagrangiano aumentado de vol(w) = s, o polimento, os multiplicadores, a identidade de homogeneidade, o caso s = σ_min (λ_vol = −∞), o caráter local e o `MAX_ITER`;
+  - **corrigir a spec** §3.3 (a frase "uma solução por ortante") e §4.2 (a linha do RISK_PARITY com restrições: sequência de QPs sobre o poliedro mais Lagrangiano aumentado só para a volatilidade);
+  - citar nas docs as fontes verificadas da pesquisa: Tibshirani 1996 §6 (a família do leverage no Goldfarb-Idnani), Niedermayer & Niedermayer 2007 Prop. 1/Cor. 1 (o caminho do `MAX_RETURN`), a prova da homogeneização com leverage (κ ≥ 1/(L‖v‖∞), o que exclui `UNBOUNDED`), a diferença |Σ| × |Rᵀ||R| na guarda do κ, e as referências do plano 4; a tabela "Which setters and data each objective takes" ganha a linha nova.
   - `validation.md`: a seção "Numerical decisions of RISK_PARITY" (medições das Tasks 2, 3 e 5), as referências por varredura e as faixas por cond.
   - `ARCHITECTURE.md`: `riskparity`, `solve`, o diagrama de camadas, a contagem de módulos e `risk_parity_reference.hpp`.
   - `README.md`: um exemplo de RISK_PARITY com `target_volatility`.
