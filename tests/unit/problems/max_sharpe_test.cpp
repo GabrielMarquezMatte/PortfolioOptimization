@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <random>
 #include <span>
 #include <vector>
@@ -463,6 +464,220 @@ TEST(MaxSharpe, RiskFreeAtMinimumVarianceReturn)
     }
 }
 
+// The boundary with some weights bounded: F, the first nf assets, without bounds, and B, the last 3, in the box
+// [0, 1]. Two free assets keep the homogeneous cone unbounded, so the noise of kappa decides. mu_F is that of
+// boundary_problem over F (direction y0 on F, 0 on B) and mu~_B = (Sigma y0)_B - rf, so that at kappa = 0 the
+// lower rows of B are active with multiplier nu rf > 0 and what is left is the boundary
+// 1' Sigma_FF^-1 mu~_F = 0 of the problem over F.
+struct PartialBoundary
+{
+    Data data;
+    Data free_block;
+    std::vector<double> direction;
+};
+
+constexpr std::size_t kBoundedAssets = 3;
+
+// The leading nf x nf block of Sigma, with the means of F.
+Data free_block(const Data& data, std::size_t nf)
+{
+    std::size_t n = data.asset_count();
+    std::vector<double> block(nf * nf);
+    for (std::size_t k = 0; k < nf * nf; ++k)
+    {
+        block[k] = data.covariance()[(k / nf) * n + k % nf];
+    }
+    std::vector<double> mu(data.mu().begin(), data.mu().begin() + static_cast<std::ptrdiff_t>(nf));
+    return Data::create(nf, mu, block).value();
+}
+
+PartialBoundary partial_boundary_problem(std::size_t nf, std::uint64_t seed, double condition, bool daily)
+{
+    std::size_t n = nf + kBoundedAssets;
+    DyadicCovariance dyadic = dyadic_covariance(n, seed, condition, daily ? -14 : 0);
+    std::vector<std::int64_t> direction = zero_sum_direction(nf, seed + 100, daily ? 7 : 0);
+    direction.resize(n, 0);
+    double rate = std::ldexp(1.0, daily ? -13 : -6);
+    std::int64_t rate_units = std::llround(std::ldexp(rate, -dyadic.exponent));
+    std::vector<double> covariance(n * n);
+    std::vector<double> mu(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        std::int64_t mean = i < nf ? rate_units : 0;
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            covariance[i * n + j] = std::ldexp(static_cast<double>(dyadic.entries[i * n + j]), dyadic.exponent);
+            mean += dyadic.entries[i * n + j] * direction[j];
+        }
+        EXPECT_LT(std::llabs(mean), kExact);
+        mu[i] = std::ldexp(static_cast<double>(mean), dyadic.exponent);
+    }
+    Data data = Data::create(n, mu, covariance).value();
+    data.set_risk_free(rate);
+    return PartialBoundary{data, free_block(data, nf), std::vector<double>(direction.begin(), direction.end())};
+}
+
+// The free weights unbounded, those of B in [0, 1], cash unbounded.
+Spec partial_spec(std::size_t n)
+{
+    constexpr double kInfinity = std::numeric_limits<double>::infinity();
+    Spec spec = unbounded_spec(Objective::MaxSharpe);
+    spec.asset_lower.assign(n + 1, -kInfinity);
+    spec.asset_upper.assign(n + 1, kInfinity);
+    for (std::size_t i = n - kBoundedAssets; i < n; ++i)
+    {
+        spec.asset_lower[i] = 0.0;
+        spec.asset_upper[i] = 1.0;
+    }
+    return spec;
+}
+
+// The exact optimum at rf moved down by d > 0, in long double: y = (y0 + d z_F) / (y0' Sigma_FF y0 + d^2 1'z_F) on F
+// and 0 on B, with z_F = Sigma_FF^-1 1 (v_F = Sigma_FF y0 + d 1 and 1'y0 = 0 leave no cancellation).
+std::vector<double> partial_exact_y(const PartialBoundary& boundary, double distance)
+{
+    std::size_t nf = boundary.free_block.asset_count();
+    std::vector<long double> z = extended_inverse_times_ones(boundary.free_block);
+    long double curvature = 0.0L;
+    long double total = 0.0L;
+    for (std::size_t i = 0; i < nf; ++i)
+    {
+        total += z[i];
+        for (std::size_t j = 0; j < nf; ++j)
+        {
+            curvature += boundary.direction[i] *
+                         static_cast<long double>(boundary.free_block.covariance()[i * nf + j]) *
+                         boundary.direction[j];
+        }
+    }
+    long double denominator = curvature + static_cast<long double>(distance) * distance * total;
+    std::vector<double> y(boundary.data.asset_count(), 0.0);
+    for (std::size_t i = 0; i < nf; ++i)
+    {
+        y[i] = static_cast<double>((boundary.direction[i] + distance * z[i]) / denominator);
+    }
+    return y;
+}
+
+// The noise model of src/problems/homogeneous.cpp evaluated at a given y, written again here:
+// n eps (|z|'|Sigma||y| + sigma_y^2 |z|'m), z = Sigma^-1 1 of the whole covariance, m = |mu| + |rf|.
+double kappa_noise_at(const Data& data, std::span<const double> y)
+{
+    std::size_t n = data.asset_count();
+    std::vector<double> z = covariance_solve(data, std::vector<double>(n, 1.0));
+    double variance = 0.0;
+    double curvature = 0.0;
+    double rounding = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        double magnitude = 0.0;
+        double product = 0.0;
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            magnitude += std::fabs(data.covariance()[i * n + j] * y[j]);
+            product += data.covariance()[i * n + j] * y[j];
+        }
+        variance += y[i] * product;
+        curvature += std::fabs(z[i]) * magnitude;
+        rounding += std::fabs(z[i]) * (std::fabs(data.mu()[i]) + std::fabs(*data.risk_free()));
+    }
+    return static_cast<double>(n) * std::numeric_limits<double>::epsilon() * (curvature + variance * rounding);
+}
+
+struct PartialCounts
+{
+    std::size_t optimal = 0;
+    std::size_t unbounded = 0;
+};
+
+// An OPTIMAL point: the budget within the band relative to the largest weight (the weights near the boundary are
+// far from order 1), the bounds within the band, and the lower rows of B active.
+void expect_partial_point(const Spec& spec, const Data& data, const Result& result, double tolerance)
+{
+    double total = 0.0;
+    for (double weight : result.weights)
+    {
+        total += weight;
+    }
+    EXPECT_NEAR(total, 1.0, tolerance * largest_magnitude(result.weights));
+    po::testing::expect_user_bounds(spec, result, tolerance);
+    for (std::size_t i = data.asset_count() - kBoundedAssets; i < data.asset_count(); ++i)
+    {
+        EXPECT_GT(result.bound_multipliers[i], 0.0);
+    }
+}
+
+// Twice the threshold of 16 kappa_noise. The measured error of the computed kappa is at most 0.040 kappa_noise
+// (docs/guide/validation.md), so an exact kappa above this cannot fall below the threshold: such a problem is
+// decided by the data and must be OPTIMAL.
+constexpr double kDecidedKappa = 32.0;
+
+void check_partial_rate(const PartialBoundary& boundary, double moved, double tolerance, PartialCounts& counts)
+{
+    PartialBoundary problem = boundary;
+    problem.data.set_risk_free(moved);
+    Spec spec = partial_spec(problem.data.asset_count());
+    Result result = po::solve(spec, problem.data).value();
+    counts.optimal += result.status == SolveStatus::Optimal ? 1 : 0;
+    counts.unbounded += result.status == SolveStatus::Unbounded ? 1 : 0;
+    double distance = *boundary.data.risk_free() - moved;
+    if (distance <= 0.0)
+    {
+        expect_no_point(result, SolveStatus::Unbounded);
+        return;
+    }
+    std::vector<double> y = partial_exact_y(boundary, distance);
+    double kappa = sum(y);
+    if (kappa > kDecidedKappa * kappa_noise_at(problem.data, y))
+    {
+        ASSERT_EQ(result.status, SolveStatus::Optimal) << "kappa " << kappa;
+    }
+    if (result.status == SolveStatus::Optimal)
+    {
+        expect_partial_point(po::testing::with_cash_fixed(spec, problem.data), problem.data, result, tolerance);
+        return;
+    }
+    expect_no_point(result, SolveStatus::Unbounded);
+}
+
+// rf at the return of the global minimum-variance portfolio of F, k ulps away (k in {0, +-1, +-3, +-16}), and
+// moved down by 3 to 3e4 times cond(Sigma) eps relative, over cond(Sigma) 1e2 to 1e8 at both scales. No exact
+// kappa <= 0 is OPTIMAL, and no exact kappa above twice the threshold is UNBOUNDED. Of the 192 solves, 70 are
+// OPTIMAL (exact kappa from 19 kappa_noise) and 122 UNBOUNDED, 58 of them with an exact kappa > 0 of at most
+// 8.0 kappa_noise (docs/guide/validation.md).
+TEST(MaxSharpe, PartiallyBoundedAtMinimumVarianceReturn)
+{
+    constexpr std::array kConditions = {1e2, 1e4, 1e6, 1e8};
+    constexpr std::array kUlps = {0, 1, -1, 3, -3, 16, -16};
+    constexpr std::array kMoves = {3.0, 30.0, 300.0, 3e3, 3e4};
+    PartialCounts counts;
+    for (double condition : kConditions)
+    {
+        for (std::uint64_t seed = 1; seed <= 4; ++seed)
+        {
+            SCOPED_TRACE(testing::Message() << "cond " << condition << " seed " << seed);
+            PartialBoundary boundary = partial_boundary_problem(3 + 3 * seed, seed, condition, seed % 2 == 0);
+            double rate = *boundary.data.risk_free();
+            std::vector<double> rates;
+            for (int ulps : kUlps)
+            {
+                rates.push_back(moved_rate(rate, ulps));
+            }
+            for (double move : kMoves)
+            {
+                rates.push_back(rate * (1.0 - move * condition * std::numeric_limits<double>::epsilon()));
+            }
+            for (double moved : rates)
+            {
+                SCOPED_TRACE(moved);
+                check_partial_rate(boundary, moved, po::testing::condition_tolerance(condition), counts);
+            }
+        }
+    }
+    EXPECT_GE(counts.optimal, 60u);
+    EXPECT_GE(counts.unbounded, 100u);
+}
+
 // The diversification ratio at 1' Sigma^-1 sigma = 0, exact in the data. With Sigma = D C D, D = diag(sigma),
 // Sigma^-1 sigma = D^-1 C^-1 1. The correlation C = [[1, q e, e], [q e, 1, e], [e, e, 1]], e = (1 + q) / 2, has
 // C^-1 1 = (1, 1, -q), so 1' Sigma^-1 sigma = 2 / s - q / sigma_3, which is 0 at sigma = s (1, 1, q / 2). With
@@ -553,6 +768,100 @@ TEST(MaxDiversification, CashWeightZero)
     }
     EXPECT_EQ(with_cash.bound_multipliers.back(), -without_cash.budget_multiplier);
     EXPECT_NE(with_cash.bound_multipliers.back(), 0.0);
+}
+
+// The covariance of random_covariance(n, seed, condition) rescaled to eigenvalues in [scale / condition, scale],
+// and means N(0.05 scale, 0.3 sqrt(scale)) of either sign.
+Data large_condition_data(std::size_t n, std::uint64_t seed, double condition, double scale)
+{
+    std::vector<double> covariance = po::testing::random_covariance(n, seed, condition);
+    for (double& entry : covariance)
+    {
+        entry *= scale / (0.04 * condition);
+    }
+    std::mt19937_64 engine(seed + 900);
+    std::vector<double> mu(n);
+    for (double& mean : mu)
+    {
+        mean = 0.3 * std::sqrt(scale) * po::testing::standard_normal(engine) + 0.05 * scale;
+    }
+    return Data::create(n, mu, covariance).value();
+}
+
+Spec leveraged_spec(Objective objective, double lower, double upper, double leverage)
+{
+    Spec spec = ratio_spec(objective, lower, upper);
+    spec.leverage = leverage;
+    return spec;
+}
+
+// Above cond(Sigma) = 1e8 the stationarity is not checked: where many weights are interior its residual is about
+// 0.1 cond(Sigma) eps relative, the limit of a backward-stable solve in double (docs/guide/validation.md). The
+// status, the budget, the bounds and the leverage are.
+void expect_feasible_optimum(const Spec& spec, const Data& data, const Result& result, double tolerance)
+{
+    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    Spec problem = po::testing::with_cash_fixed(spec, data);
+    po::testing::expect_user_equalities(problem, data, result, tolerance);
+    po::testing::expect_user_bounds(problem, result, tolerance);
+    po::testing::expect_user_leverage(problem, data, result, tolerance);
+}
+
+// Long-only passes the whole KKT check at cond(Sigma) = 1e12 with a margin of 74 below the band (the worst
+// stationarity 1.4e-9 at n = 150, 5.4e-9 at n = 50); at 1e13 the margin is 2.6, so it is not checked there.
+constexpr double kLongOnlyKktCondition = 1e12;
+
+void check_bounded_cones(Objective objective, const Data& data, double condition)
+{
+    constexpr double kInfinity = std::numeric_limits<double>::infinity();
+    std::array specs = {ratio_spec(objective, -1.0, 1.0), ratio_spec(objective, 0.0, 1.0),
+                        ratio_spec(objective, 0.0, kInfinity), leveraged_spec(objective, -kInfinity, kInfinity, 2.0),
+                        leveraged_spec(objective, -0.5, 1.0, 1.5)};
+    double tolerance = po::testing::condition_tolerance(condition);
+    std::vector<double> v = ratio_vector(data, objective);
+    for (std::size_t k = 0; k < specs.size(); ++k)
+    {
+        SCOPED_TRACE(k);
+        Result result = po::solve(specs[k], data).value();
+        expect_feasible_optimum(specs[k], data, result, tolerance);
+        bool long_only = specs[k].lower == 0.0 && !specs[k].leverage.has_value();
+        if (long_only && condition == kLongOnlyKktCondition)
+        {
+            po::testing::expect_user_kkt(specs[k], data, result, po::testing::ratio_gradient(data, v, result),
+                                         tolerance);
+        }
+    }
+}
+
+// Bounded feasible sets, where UNBOUNDED is impossible (a leverage, or no pair i != j with upper_i = +inf and
+// lower_j = -inf): a box, long-only with and without a cap, a leverage alone and a leverage with a box, n = 150,
+// cond(Sigma) 1e12 and 1e14, both scales. Each is OPTIMAL; before the noise threshold was limited to unbounded
+// cones, the box at 1e12 and every case at 1e14 were UNBOUNDED.
+void expect_bounded_cones_optimal(Objective objective)
+{
+    constexpr std::array kConditions = {1e12, 1e14};
+    constexpr std::array kScales = {1.0, 1.0 / 252.0};
+    for (double condition : kConditions)
+    {
+        for (std::uint64_t seed = 1; seed <= 3; ++seed)
+        {
+            for (double scale : kScales)
+            {
+                SCOPED_TRACE(testing::Message() << "cond " << condition << " seed " << seed << " scale " << scale);
+                check_bounded_cones(objective, large_condition_data(150, seed, condition, scale), condition);
+            }
+        }
+    }
+}
+
+TEST(MaxSharpe, BoundedConeAtLargeCondition)
+{
+    expect_bounded_cones_optimal(Objective::MaxSharpe);
+}
+
+TEST(MaxDiversification, BoundedConeAtLargeCondition)
+{
+    expect_bounded_cones_optimal(Objective::MaxDiversification);
 }
 
 } // namespace

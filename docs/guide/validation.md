@@ -357,9 +357,41 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
     `z = Sigma^-1 1`. A backward error `|dSigma| <= n eps |Sigma|` of the solve and the rounding `|dv| <= eps m` of `v`
     (`m = |mu| + |rf|` for `MAX_SHARPE`, `sigma` for `MAX_DIVERSIFICATION`) move it to first order by at most
     `kappa_noise = n eps (|z|'|Sigma||y| + sigma_y^2 |z|'m)`, with `z` from two triangular solves on the factor of
-    `Data` (`kappa_noise` in `src/problems/homogeneous.cpp`). `kappa <= 16 kappa_noise` (`kKappaNoiseFactor`) with the
-    row inactive is the closure point `kappa = 0`: `UNBOUNDED`. It replaces the former rule `kappa <= 0`, which it
-    contains.
+    `Data` (`kappa_noise` in `src/problems/homogeneous.cpp`). On an unbounded cone, `kappa <= 16 kappa_noise`
+    (`kKappaNoiseFactor`) with the row inactive is the closure point `kappa = 0`: `UNBOUNDED`. It replaces the former
+    rule `kappa <= 0`, which it contains.
+  - **Only on unbounded cones.** `kappa_noise` grows like `n^2 eps cond(Sigma) kappa`. For box-feasible points
+    (`n = 150`), `16 kappa_noise / kappa` has a median of 2e-4 at `cond(Sigma) = 1e8`, 1.5e-2 at 1e10 and 2.0 at 1e12.
+    Applied everywhere, the threshold returned `UNBOUNDED` on bounded feasible sets, where it is impossible:
+    - at 1e12 and `n = 150`, 5 of 6 boxes [-1, 1];
+    - at 1e13, some long-only and leveraged problems;
+    - at 1e14, every bounded type.
+
+    At `kappa = 0` the rows read `y_i >= 0` (finite lower), `y_i <= 0` (finite upper), `1'y = 0` and, with a leverage,
+    `||y||_1 <= 0`. So the cone is bounded, and `kappa` stays away from 0, exactly when one of two things holds:
+    - a leverage is set;
+    - no pair `i != j` has `upper_i = +inf` and `lower_j = -inf` (`cone_bounded`).
+
+    There only the row and `kappa <= 0` decide. On the reviewer's construction, with means of either sign, `n` 50 and
+    150, `cond(Sigma)` 1e10 to 1e14 and both scales, 240 bounded solves are all `OPTIMAL`:
+    - a box, long-only with and without a cap, a leverage alone and with a box;
+    - the worst bound violation is 1.1e-15 and the worst `||w||_1 / L - 1` is 8.9e-16.
+
+    The battery and the boundary tests have no bounded cone near `kappa = 0`, and their statuses do not change.
+  - **A partially bounded boundary.** Some weights are bounded and the cone is still unbounded
+    (`MaxSharpe.PartiallyBoundedAtMinimumVarianceReturn`):
+    - free assets at `rf = r_gmv` of their block, with three assets in [0, 1] whose lower rows are active as
+      `kappa -> 0`;
+    - `cond(Sigma)` 1e2 to 1e8 and both scales;
+    - `rf` 0 to 16 ulps away and moved down by 3 to 3e4 `cond(Sigma) eps`;
+    - 192 solves against a long double reference.
+
+    The model uses `z = Sigma^-1 1` of the whole covariance, not of the free block, and still holds:
+    - every exact `kappa <= 0` is `UNBOUNDED`;
+    - every `OPTIMAL` result has an exact `kappa` of at least 19 `kappa_noise`, the lower rows of the bounded assets
+      active, and weights whose relative error bounds the error of `kappa` by 5.8e-3 `kappa_noise`;
+    - the 58 `UNBOUNDED` results with an exact `kappa > 0` have at most 8.0 `kappa_noise`;
+    - none above the threshold is `UNBOUNDED`.
   - **The boundary side.** The error of the computed `kappa` against its exact value, in units of `kappa_noise`, is at
     most 0.040: on `MaxSharpe.RiskFreeAtMinimumVarianceReturn` at `rf = r_gmv`, where the data make `kappa` exactly 0
     (16 problems, `cond(Sigma)` 1e2 to 1e8, both scales; at most 0.040), on
@@ -368,14 +400,29 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
     floating point, at 0 and 1 ulp from it and moved by 3 to 3e4 times `cond(Sigma) eps` relative, 312 solves against an
     exact rational `kappa`; 187 with the row inactive, at most 0.029). The factor 16 is 400 times the largest error.
   - **The battery side.** The 1039 `OPTIMAL` solves of `RatioFuzz` have `kappa` at least 2.5e6 `kappa_noise`, 1.6e5
-    times the threshold, and the factor changes no status of the battery; the unit suites of `MAX_SHARPE` and
-    `MAX_DIVERSIFICATION` are at least 1.1e11.
+    times the threshold, and the factor changes no status of the battery. Outside the boundary tests, the unbounded
+    cones of the unit suites of `MAX_SHARPE` and `MAX_DIVERSIFICATION` are at least 1.1e11.
   - **What it gives.** On the probes no result is `OPTIMAL` with an exact `kappa <= 0` (several were before). The 99
     `OPTIMAL` results have an exact `kappa` of at least 23 `kappa_noise`, weights from 11 to 1.3e12 and a relative error
     of the weights of at most 6.5e-4, consistent with an error of `kappa` of at most 0.029 `kappa_noise` over a `kappa`
     above 16: backward-stable results whose band is relative to weights far from order 1 (see "Tolerances"). The other
     side of the same honesty: 54 problems whose exact `kappa` is positive but at most 16 `kappa_noise` are
     `UNBOUNDED`, with exact weights of at least 3.2e6, since their sign is within the rounding of the data.
+- **Stationarity above `cond(Sigma)` = 1e8: a conditioning limit.** Where many weights are interior, the relative
+  stationarity residual of `expect_user_stationarity` grows about as 0.1 `cond(Sigma) eps`:
+  - the box [-1, 1] at `n = 150`: 1.5e-9 to 3e-9 at 1e8, 1.2e-7 to 2.5e-7 at 1e10, 9e-6 to 2e-5 at 1e12 and 7e-4 to
+    1.7e-3 at 1e14;
+  - the tangency without bounds, the same values, 1.1e-5 to 1.9e-5 at 1e12;
+  - a leverage alone: 1.4e-6 to 4.5e-6 at 1e12.
+
+  It is not along `v`, so it does not come from the mapping `nu = 2 sigma_y^2`. It does not depend on the noise
+  threshold. It is the limit of a backward-stable solve in double: `(Sigma + dSigma) w = c v` with
+  `|dSigma| <= n eps |Sigma|` leaves a residual of up to `n eps |Sigma||w| / |Sigma w|` relative to `|Sigma w|`, and
+  that quotient reaches `cond(Sigma)` along the eigenvectors of small eigenvalues. The 1e-7 band holds such problems at 1e8
+  and not at 1e10. Long-only problems, whose active bounds dominate the scale, stay at most 5.4e-9 at
+  1e12 and 8.3e-8 at 1e14. So above 1e8 the bounded-cone tests (`BoundedConeAtLargeCondition`) check the status, the
+  budget, the bounds and the leverage at the 1e-7 band, and the whole KKT only for long-only at 1e12 (margin 74 at `n = 150`; 3.9e-8 at 1e13 would leave 2.6). No
+  band is added for the stationarity there.
 - **Cash bounds.** With cash the cash weight is held at exactly 0, and the request is `INFEASIBLE` when the cash bounds
   exclude 0: `lower_0 > 0` or `upper_0 < 0`, compared with 0 exactly.
 - **The multipliers.** The mapping uses `nu = 2 sigma_y^2`, which complementarity gives in exact arithmetic, rather
@@ -424,7 +471,9 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
   are at most 3.2.
 - **Bands.** KKT residuals (`expect_user_kkt`) and the agreement of the return (relative to the larger of the
   reference and `|mu|max`) are held to 1e-10 for `cond(Sigma) <= 1e4`, 1e-9 up to 1e6 and 1e-7 up to 1e8, by the
-  condition number of the covariance actually solved; above 1e8 the 1e-7 band applies.
+  condition number of the covariance actually solved; above 1e8 the 1e-7 band applies, except to the stationarity of
+  problems with many interior weights, which is a conditioning limit and is not checked there (see
+  [the numerical decisions](#numerical-decisions-of-max_sharpe-and-max_diversification)).
 - **`MaxReturnFuzz.AgainstFrontierReference`**: `fuzz_shapes(400, 1)` without the fixed box (304 shapes), caps at 0.1,
   0.3, 0.5, 0.7 and 0.9 of the way from `sigma_min` to the largest asset volatility: `OPTIMAL` (or `INFEASIBLE` exactly
   when the reference is NaN), the return of the reference, `expect_user_kkt` and `vol <= s (1 + tol)`, all within the
@@ -527,7 +576,7 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, an ill-conditioned one (`cond(R) = 1e8`) accepted with the objective of an independent least squares, no covariance needed |
 | `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems, a conditioning sweep (`cond(Sigma)` 1e2 to 1e7), a risk-free rate above every mean (all cash), equal means with tight upper bounds or with cash, the budget multiplier under a common shift of the means, the leverage along the path (the vertex of the leverage in closed form, both caps binding against finite differences in s and L), and the multipliers mapped back from the shift along the leverage and the cash bound in closed form |
 | `tests/unit/problems/leverage_test.cpp` | The leverage in `MIN_VARIANCE` and `UTILITY`: KKT with the subgradient term, a weight held at 0 by a subgradient inside [-1, 1], `L < 1` without cash infeasible, cash not counted, the multiplier against a finite difference, NaN without a leverage and 0 when inactive |
-| `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, the boundary `1' Sigma^-1 v = 0` exact in the data (`rf` at the minimum-variance return and a few ulps away for `MAX_SHARPE`, a covariance with `1' Sigma^-1 sigma = 0` for `MAX_DIVERSIFICATION`, over `cond(Sigma)` 1e2 to 1e8 and both scales: `UNBOUNDED`, or `OPTIMAL` against an extended-precision reference), long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
+| `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, the boundary `1' Sigma^-1 v = 0` exact in the data (`rf` at the minimum-variance return and a few ulps away for `MAX_SHARPE`, a covariance with `1' Sigma^-1 sigma = 0` for `MAX_DIVERSIFICATION`, over `cond(Sigma)` 1e2 to 1e8 and both scales: `UNBOUNDED`, or `OPTIMAL` against an extended-precision reference), the same boundary with three assets bounded and their lower rows active (no exact `kappa <= 0` missed, none decided by the data `UNBOUNDED`), bounded cones at `cond(Sigma)` 1e12 and 1e14 always `OPTIMAL` (status, budget, bounds and leverage; the whole KKT for long-only at 1e12), long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
 | `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |

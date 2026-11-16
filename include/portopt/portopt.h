@@ -81,7 +81,9 @@ typedef struct po_result po_result;
    supremum exists but is not attained (for example MAX_SHARPE with unbounded short selling and
    1' Sigma^-1 mu~ <= 0) is PO_SOLVE_UNBOUNDED. Near that boundary, a problem whose 1' Sigma^-1 mu~ is positive
    but within the rounding of the data, so that its exact weights are of the order of the inverse of that
-   rounding, is PO_SOLVE_UNBOUNDED too: its sign is not decided by the data.
+   rounding, is PO_SOLVE_UNBOUNDED too: its sign is not decided by the data. This applies only when the feasible
+   set is unbounded; with a leverage, or when no two distinct weights have one an infinite upper and the other an
+   infinite lower bound, the result is never PO_SOLVE_UNBOUNDED.
    Which setters and data each objective takes (a setter outside its row makes po_solve return
    PO_INVALID_ARGUMENT, "<setter> does not apply to <OBJECTIVE>"; a missing input, "<OBJECTIVE> requires
    <item>"):

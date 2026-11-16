@@ -271,15 +271,62 @@ Result at_point(const Spec& spec, const Data& data, const Homogeneous& homogeneo
     return result;
 }
 
+// Whether kappa = 1'y is bounded away from 0 on the homogeneous cone. At kappa = 0 the rows read y_i >= 0 (finite
+// lower), y_i <= 0 (finite upper), 1'y = 0 and, with a leverage, ||y||_1 <= 0, and v'y = 1 needs y != 0 there. So
+// the cone is bounded exactly when a leverage is set or no pair i != j has upper_i = +inf and lower_j = -inf (a
+// direction with 1'd = 0 needs some d_i > 0 and some d_j < 0, j != i); a Fixed box is finite on both sides. Then
+// UNBOUNDED is impossible.
+bool cone_bounded(const Spec& spec, std::size_t n)
+{
+    if (spec.leverage.has_value())
+    {
+        return true;
+    }
+    std::vector<std::size_t> rising;
+    std::vector<std::size_t> falling;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!std::isfinite(upper_of(spec, i)))
+        {
+            rising.push_back(i);
+        }
+        if (!std::isfinite(lower_of(spec, i)))
+        {
+            falling.push_back(i);
+        }
+    }
+    if (rising.empty() || falling.empty())
+    {
+        return true;
+    }
+    return rising.size() == 1 && falling.size() == 1 && rising.front() == falling.front();
+}
+
+// The closure point kappa = 0: the row 1'y >= 0 active, or kappa <= 0. On an unbounded cone also a kappa within
+// kKappaNoiseFactor times its rounding (kappa_noise) with the row inactive, held by the solver within its
+// feasibility tolerance: its sign, and with it w = y / kappa, is not decided by the data.
+bool at_closure(const Spec& spec, const Data& data, const qp::Solution& solution, bool kappa_active,
+                std::span<const double> magnitude)
+{
+    double kappa = sum_of(solution.x);
+    if (kappa_active || !(kappa > 0.0))
+    {
+        return true;
+    }
+    if (cone_bounded(spec, data.asset_count()))
+    {
+        return false;
+    }
+    return !(kappa > kKappaNoiseFactor * kappa_noise(data, solution.x, magnitude));
+}
+
 bool cash_can_be_zero(const Spec& spec, const Data& data)
 {
     std::size_t n = data.asset_count();
     return !data.risk_free().has_value() || (lower_of(spec, n) <= 0.0 && upper_of(spec, n) >= 0.0);
 }
 
-// The row 1'y >= 0 in the active set is the supremum at kappa = 0. A kappa within kKappaNoiseFactor times its
-// rounding (kappa_noise) with the row inactive is the same closure point, held by the solver within its
-// feasibility tolerance: its sign, and with it w = y / kappa, is not decided by the data.
+// The supremum at kappa = 0 (at_closure) is UNBOUNDED.
 Result solve_homogeneous(const Spec& spec, const Data& data, std::span<const double> v,
                          std::span<const double> magnitude)
 {
@@ -294,8 +341,7 @@ Result solve_homogeneous(const Spec& spec, const Data& data, std::span<const dou
         return without_point(data, solution.status, solution.iterations);
     }
     bool kappa_active = std::ranges::binary_search(solution.active_inequalities, homogeneous.kappa_row);
-    double kappa = sum_of(solution.x);
-    if (kappa_active || !(kappa > kKappaNoiseFactor * kappa_noise(data, solution.x, magnitude)))
+    if (at_closure(spec, data, solution, kappa_active, magnitude))
     {
         return unbounded(data, solution.iterations);
     }

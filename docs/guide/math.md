@@ -269,12 +269,15 @@ rows in this order: the bound rows of each risky asset (lower then upper), then 
 - The QP `Infeasible`: no feasible `w` has `v'w > 0` (`v'y = 1` cannot be met). `PO_SOLVE_INFEASIBLE`.
 - The row `1'y >= 0` in the active set of the optimum: the optimum is at `kappa = 0`, a limit of feasible portfolios
   whose weights grow without bound. The supremum of the ratio exists but is not attained: `PO_SOLVE_UNBOUNDED`, with
-  NaN weights and multipliers. It needs an unbounded feasible set: with every weight bounded on both sides, or with a
-  leverage, `kappa = 0` forces `y = 0`, which contradicts `v'y = 1`. Without bounds it happens when
-  `1' Sigma^-1 v <= 0`. At `1' Sigma^-1 v` of order rounding the sign of `kappa` is not decided by the data, so a
-  `kappa = 1'y` at most 16 times its rounding (the row inactive) is `PO_SOLVE_UNBOUNDED` too, even where the exact
-  `1' Sigma^-1 v` is positive and tiny and the exact weights are of the order of the inverse of that rounding; see
-  [the boundary](validation.md#numerical-decisions-of-max_sharpe-and-max_diversification) in `validation.md`.
+  NaN weights and multipliers. It needs an unbounded feasible set. At `kappa = 0` the rows read `y_i >= 0` (finite
+  lower), `y_i <= 0` (finite upper), `1'y = 0` and, with a leverage, `||y||_1 <= 0`. So `kappa = 0` forces `y = 0`,
+  which contradicts `v'y = 1`, exactly when a leverage is set or no pair `i != j` has `upper_i = +inf` and
+  `lower_j = -inf` (long-only without a cap included). Without bounds it happens when `1' Sigma^-1 v <= 0`.
+- On an unbounded feasible set only: at `1' Sigma^-1 v` of order rounding the sign of `kappa` is not decided by the
+  data, so a `kappa = 1'y` at most 16 times its rounding (the row inactive) is `PO_SOLVE_UNBOUNDED` too, even where the
+  exact `1' Sigma^-1 v` is positive and tiny and the exact weights are of the order of the inverse of that rounding;
+  see [the boundary](validation.md#numerical-decisions-of-max_sharpe-and-max_diversification) in `validation.md`. On a
+  bounded one `kappa` stays away from 0 and only `kappa <= 0` counts.
 - Otherwise `PO_SOLVE_OPTIMAL` with `w = y / kappa` (and cash exactly 0).
 
 Without bounds or a leverage, the optimum is `y = Sigma^-1 v / (v' Sigma^-1 v)`, so `w = Sigma^-1 v / (1' Sigma^-1 v)`
