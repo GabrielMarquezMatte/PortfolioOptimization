@@ -1,7 +1,9 @@
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <span>
 #include <string>
+#include <vector>
 
 #include "capi/error.hpp"
 #include "capi/handles.hpp"
@@ -198,6 +200,35 @@ extern "C" po_status po_diversification_ratio(const po_data* d, const double* w,
                 return set_error(PO_INVALID_ARGUMENT, "the diversification ratio needs the covariance");
             }
             value = po::metrics::diversification_ratio(data, weights);
+            return PO_OK;
+        });
+}
+
+extern "C" po_status po_risk_contributions(const po_data* d, const double* w, size_t n, double* out)
+{
+    return guard(
+        [&]
+        {
+            if (d == nullptr)
+            {
+                return null_handle("d");
+            }
+            if (out == nullptr)
+            {
+                return null_argument("out");
+            }
+            po_status status = check_weights(d->data, w, n);
+            if (status != PO_OK)
+            {
+                return status;
+            }
+            if (!d->data.has_covariance())
+            {
+                return set_error(PO_INVALID_ARGUMENT, "the risk contributions need the covariance");
+            }
+            std::vector<double> contributions =
+                po::metrics::risk_contributions(d->data, std::span<const double>(w, n));
+            std::ranges::copy(contributions, out);
             return PO_OK;
         });
 }

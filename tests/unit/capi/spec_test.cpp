@@ -176,4 +176,60 @@ TEST(CapiSpec, LeverageDomain)
     EXPECT_EQ(po_spec_set_leverage(nullptr, 2.0), PO_INVALID_HANDLE);
 }
 
+std::vector<double> risk_parity_weights(const po_spec* spec, const po_data* data)
+{
+    return po::testing::weights_of(po::testing::solve_ok(spec, data).get());
+}
+
+TEST(CapiSpec, RiskBudgetDomain)
+{
+    constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
+    DataPtr data = three_asset_data();
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    const double valid[kAssets] = {0.5, 0.3, 0.2};
+    ASSERT_EQ(po_spec_set_risk_budget(spec.get(), valid, kAssets), PO_OK);
+    std::vector<double> expected = risk_parity_weights(spec.get(), data.get());
+
+    const double zero[kAssets] = {0.5, 0.5, 0.0};
+    const double negative[kAssets] = {0.6, 0.6, -0.2};
+    const double with_nan[kAssets] = {0.5, kNaN, 0.5};
+    const double with_inf[kAssets] = {kInfinity, 0.5, 0.5};
+    const double too_big[kAssets] = {0.5, 0.4, 0.2};
+    const double slightly_off[kAssets] = {0.5, 0.3, 0.2 + 12.0 * kEpsilon};
+    for (const double* invalid : {zero, negative, with_nan, with_inf, too_big, slightly_off})
+    {
+        EXPECT_EQ(po_spec_set_risk_budget(spec.get(), invalid, kAssets), PO_INVALID_ARGUMENT);
+        EXPECT_EQ(risk_parity_weights(spec.get(), data.get()), expected);
+    }
+    EXPECT_EQ(po_spec_set_risk_budget(spec.get(), valid, 0), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "n must be positive");
+    EXPECT_EQ(po_spec_set_risk_budget(spec.get(), nullptr, kAssets), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_risk_budget(nullptr, valid, kAssets), PO_INVALID_HANDLE);
+    EXPECT_EQ(risk_parity_weights(spec.get(), data.get()), expected);
+
+    const double near_one[2] = {0.5, 0.5 + 2.0 * kEpsilon};
+    const double near_less[2] = {0.5, 0.5 - kEpsilon};
+    EXPECT_EQ(po_spec_set_risk_budget(spec.get(), near_one, 2), PO_OK);
+    EXPECT_EQ(po_spec_set_risk_budget(spec.get(), near_less, 2), PO_OK);
+}
+
+TEST(CapiSpec, TargetVolatilityDomain)
+{
+    DataPtr data = three_asset_data();
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    std::vector<double> spinu = risk_parity_weights(spec.get(), data.get());
+    double volatility = 0.0;
+    ASSERT_EQ(po_portfolio_volatility(data.get(), spinu.data(), kAssets, &volatility), PO_OK);
+    ASSERT_EQ(po_spec_set_target_volatility(spec.get(), volatility), PO_OK);
+    std::vector<double> expected = risk_parity_weights(spec.get(), data.get());
+    for (double value : {0.0, -0.1, kNaN, kInfinity, -kInfinity})
+    {
+        SCOPED_TRACE(value);
+        EXPECT_EQ(po_spec_set_target_volatility(spec.get(), value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), "sigma must be positive and finite");
+        EXPECT_EQ(risk_parity_weights(spec.get(), data.get()), expected);
+    }
+    EXPECT_EQ(po_spec_set_target_volatility(nullptr, 1.0), PO_INVALID_HANDLE);
+}
+
 } // namespace

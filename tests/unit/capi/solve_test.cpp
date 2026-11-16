@@ -8,7 +8,10 @@
 #include <vector>
 
 #include "capi_scope.hpp"
+#include "metrics/portfolio.hpp"
+#include "problems/constraints.hpp"
 #include "random_covariance.hpp"
+#include "qp/problem.hpp"
 #include "solve/solve.hpp"
 
 namespace
@@ -416,6 +419,182 @@ TEST(CapiSolve, RiskParityIsSolved)
     EXPECT_NEAR(total, 1.0, 1e-12);
 }
 
+DataPair risk_parity_pair()
+{
+    return DataPair{sample_data(), po::Data::create(kAssets, sample_mu(), sample_covariance()).value()};
+}
+
+double residual_of(const po_result* result)
+{
+    double residual = -1.0;
+    EXPECT_EQ(po_result_residual(result, &residual), PO_OK);
+    return residual;
+}
+
+void expect_identical_to_core(const po_spec* spec, const po::Spec& core_spec, const DataPair& pair)
+{
+    expect_same_as_core(spec, core_spec, pair);
+    ResultPtr result = po::testing::solve_ok(spec, pair.handle.get());
+    po::Result expected = po::solve(core_spec, pair.core).value();
+    EXPECT_EQ(po::testing::status_of(result.get()), PO_SOLVE_OPTIMAL);
+    EXPECT_TRUE(same_value(residual_of(result.get()), expected.residual));
+    int32_t iterations = -1;
+    ASSERT_EQ(po_result_iterations(result.get(), &iterations), PO_OK);
+    EXPECT_EQ(iterations, expected.iterations);
+}
+
+po::Spec core_risk_parity()
+{
+    po::Spec spec;
+    spec.objective = po::Objective::RiskParity;
+    return spec;
+}
+
+TEST(CapiSolve, RiskParityEndToEnd)
+{
+    DataPair pair = risk_parity_pair();
+    constexpr double kTargetReturn = 0.09;
+
+    SpecPtr budget_only = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    expect_identical_to_core(budget_only.get(), core_risk_parity(), pair);
+
+    SpecPtr with_return = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_bounds(with_return.get(), 0.0, 1.0), PO_OK);
+    ASSERT_EQ(po_spec_set_target_return(with_return.get(), kTargetReturn), PO_OK);
+    po::Spec core_return = core_risk_parity();
+    core_return.lower = 0.0;
+    core_return.upper = 1.0;
+    core_return.target_return = kTargetReturn;
+    expect_identical_to_core(with_return.get(), core_return, pair);
+
+    ResultPtr spinu_result = po::testing::solve_ok(budget_only.get(), pair.handle.get());
+    std::vector<double> spinu = po::testing::weights_of(spinu_result.get());
+    double volatility = po::metrics::portfolio_volatility(pair.core, spinu);
+    SpecPtr with_volatility = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_target_volatility(with_volatility.get(), 1.1 * volatility), PO_OK);
+    po::Spec core_volatility = core_risk_parity();
+    core_volatility.target_volatility = 1.1 * volatility;
+    expect_identical_to_core(with_volatility.get(), core_volatility, pair);
+
+    SpecPtr capped = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_bounds(capped.get(), 0.0, 0.3), PO_OK);
+    const double budget[kAssets] = {0.4, 0.3, 0.2, 0.1};
+    ASSERT_EQ(po_spec_set_risk_budget(capped.get(), budget, kAssets), PO_OK);
+    po::Spec core_capped = core_risk_parity();
+    core_capped.lower = 0.0;
+    core_capped.upper = 0.3;
+    core_capped.risk_budget.assign(budget, budget + kAssets);
+    expect_identical_to_core(capped.get(), core_capped, pair);
+}
+
+TEST(CapiSolve, RiskParityRejectsCashAndLeverage)
+{
+    DataPair pair = risk_parity_pair();
+    po_result* raw = nullptr;
+
+    SpecPtr leverage = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_leverage(leverage.get(), 2.0), PO_OK);
+    EXPECT_EQ(po_solve(leverage.get(), pair.handle.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "leverage does not apply to RISK_PARITY");
+    EXPECT_EQ(raw, nullptr);
+
+    SpecPtr plain = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_data_set_risk_free(pair.handle.get(), kRiskFree), PO_OK);
+    EXPECT_EQ(po_solve(plain.get(), pair.handle.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "risk_free does not apply to RISK_PARITY");
+    EXPECT_EQ(raw, nullptr);
+}
+
+TEST(CapiSolve, RiskParitySetterMatrix)
+{
+    DataPair pair = risk_parity_pair();
+    po_result* raw = nullptr;
+    SpecPtr volatility = po::testing::make_spec(PO_OBJECTIVE_UTILITY);
+    ASSERT_EQ(po_spec_set_target_volatility(volatility.get(), 0.2), PO_OK);
+    EXPECT_EQ(po_solve(volatility.get(), pair.handle.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "target_volatility does not apply to UTILITY");
+
+    SpecPtr budget = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    const double three[3] = {0.5, 0.3, 0.2};
+    ASSERT_EQ(po_spec_set_risk_budget(budget.get(), three, 3), PO_OK);
+    EXPECT_EQ(po_solve(budget.get(), pair.handle.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "risk_budget has 3 entries; expected 4");
+
+    SpecPtr other = po::testing::make_spec(PO_OBJECTIVE_MIN_VARIANCE);
+    ASSERT_EQ(po_spec_set_risk_budget(other.get(), three, 3), PO_OK);
+    EXPECT_EQ(po_solve(other.get(), pair.handle.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "risk_budget does not apply to MIN_VARIANCE");
+
+    SpecPtr target = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_target_return(target.get(), 0.09), PO_OK);
+    DataPtr without_mu = po::testing::make_data(kAssets, {}, sample_covariance());
+    EXPECT_EQ(po_solve(target.get(), without_mu.get(), &raw), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "RISK_PARITY requires mu");
+}
+
+TEST(CapiSolve, RiskParityResidualAndMultipliers)
+{
+    DataPair pair = risk_parity_pair();
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    const double budget[kAssets] = {0.4, 0.3, 0.2, 0.1};
+    ASSERT_EQ(po_spec_set_risk_budget(spec.get(), budget, kAssets), PO_OK);
+    ResultPtr result = po::testing::solve_ok(spec.get(), pair.handle.get());
+    ASSERT_EQ(po::testing::status_of(result.get()), PO_SOLVE_OPTIMAL);
+    std::vector<double> weights = po::testing::weights_of(result.get());
+    EXPECT_EQ(residual_of(result.get()), po::metrics::risk_budget_residual(pair.core, weights, budget));
+    EXPECT_LE(residual_of(result.get()), 1e-18);
+    EXPECT_TRUE(std::isfinite(multiplier_of(result.get(), PO_CONSTRAINT_BUDGET)));
+    EXPECT_TRUE(std::isnan(multiplier_of(result.get(), PO_CONSTRAINT_TARGET_RETURN)));
+    EXPECT_TRUE(std::isnan(multiplier_of(result.get(), PO_CONSTRAINT_VOLATILITY)));
+    EXPECT_TRUE(std::isnan(multiplier_of(result.get(), PO_CONSTRAINT_LEVERAGE)));
+    for (double multiplier : bound_multipliers_of(result.get(), kAssets))
+    {
+        EXPECT_EQ(multiplier, 0.0);
+    }
+
+    double volatility = po::metrics::portfolio_volatility(pair.core, weights);
+    ASSERT_EQ(po_spec_set_target_volatility(spec.get(), 1.1 * volatility), PO_OK);
+    ResultPtr targeted = po::testing::solve_ok(spec.get(), pair.handle.get());
+    ASSERT_EQ(po::testing::status_of(targeted.get()), PO_SOLVE_OPTIMAL);
+    EXPECT_TRUE(std::isfinite(multiplier_of(targeted.get(), PO_CONSTRAINT_VOLATILITY)));
+    EXPECT_TRUE(std::isnan(multiplier_of(targeted.get(), PO_CONSTRAINT_TARGET_RETURN)));
+    EXPECT_GT(residual_of(targeted.get()), 0.0);
+    std::vector<double> moved = po::testing::weights_of(targeted.get());
+    EXPECT_EQ(residual_of(targeted.get()), po::metrics::risk_budget_residual(pair.core, moved, budget));
+    EXPECT_NEAR(po::metrics::portfolio_volatility(pair.core, moved), 1.1 * volatility, 1e-9 * volatility);
+}
+
+void expect_no_point(const po_result* result, std::size_t count)
+{
+    EXPECT_EQ(po::testing::status_of(result), PO_SOLVE_MAX_ITER);
+    for (double weight : po::testing::weights_of(result))
+    {
+        EXPECT_TRUE(std::isnan(weight));
+    }
+    for (double multiplier : bound_multipliers_of(result, count))
+    {
+        EXPECT_TRUE(std::isnan(multiplier));
+    }
+    for (int32_t constraint : {PO_CONSTRAINT_BUDGET, PO_CONSTRAINT_TARGET_RETURN, PO_CONSTRAINT_VOLATILITY,
+                               PO_CONSTRAINT_LEVERAGE})
+    {
+        EXPECT_TRUE(std::isnan(multiplier_of(result, constraint)));
+    }
+    EXPECT_TRUE(std::isnan(residual_of(result)));
+}
+
+// Sigma = diag(0.04, 0.09), long only: no portfolio has a volatility above 0.3, so s = 0.5 is out of reach.
+TEST(CapiSolve, MaxIterHasNoPoint)
+{
+    const std::vector<double> covariance = {0.04, 0.0, 0.0, 0.09};
+    DataPtr data = po::testing::make_data(2, {}, covariance);
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ASSERT_EQ(po_spec_set_bounds(spec.get(), 0.0, 1.0), PO_OK);
+    ASSERT_EQ(po_spec_set_target_volatility(spec.get(), 0.5), PO_OK);
+    ResultPtr result = po::testing::solve_ok(spec.get(), data.get());
+    expect_no_point(result.get(), 2);
+}
+
 TEST(CapiSolve, ResultOutlivesSpecAndData)
 {
     DataPtr data = sample_data();
@@ -543,6 +722,40 @@ TEST(CapiSolve, ParallelSolvesShareReadOnlyHandles)
     for (const std::vector<double>& slot : weights)
     {
         EXPECT_EQ(slot, expected);
+    }
+}
+
+// No QP objective reaches its iteration limit on a test-sized problem, so the rule is checked where it is made:
+// a QP that stops at its limit becomes a result with NaN weights, multipliers and residual, for every shape
+// of data (with cash too), which po_solve hands to the caller unchanged.
+TEST(CapiSolve, MaxIterHasNoPointForQpObjectives)
+{
+    constexpr int kIterations = 17;
+    for (bool with_cash : {false, true})
+    {
+        SCOPED_TRACE(with_cash);
+        DataPair pair = full_data(with_cash);
+        po::qp::Solution solution;
+        solution.status = po::qp::Status::MaxIterations;
+        solution.iterations = kIterations;
+        po::Result result = po::problems::to_result(pair.core, po::problems::ConstraintRows{}, solution);
+        EXPECT_EQ(result.status, po::SolveStatus::MaxIterations);
+        EXPECT_EQ(result.iterations, kIterations);
+        ASSERT_EQ(result.weights.size(), pair.core.weight_count());
+        ASSERT_EQ(result.bound_multipliers.size(), pair.core.weight_count());
+        for (double value : result.weights)
+        {
+            EXPECT_TRUE(std::isnan(value));
+        }
+        for (double value : result.bound_multipliers)
+        {
+            EXPECT_TRUE(std::isnan(value));
+        }
+        for (double value : {result.budget_multiplier, result.target_return_multiplier,
+                             result.volatility_multiplier, result.leverage_multiplier, result.residual})
+        {
+            EXPECT_TRUE(std::isnan(value));
+        }
     }
 }
 

@@ -49,10 +49,10 @@ typedef struct po_spec po_spec;
 typedef struct po_data po_data;
 typedef struct po_result po_result;
 
-/* Objectives. This version solves every objective except PO_OBJECTIVE_RISK_PARITY: PO_OBJECTIVE_MIN_VARIANCE,
-   PO_OBJECTIVE_MAX_RETURN, PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_UTILITY, PO_OBJECTIVE_IMPORTANCE,
-   PO_OBJECTIVE_KELLY, PO_OBJECTIVE_TRACKING_ERROR and PO_OBJECTIVE_MAX_DIVERSIFICATION; po_solve returns
-   PO_UNSUPPORTED for PO_OBJECTIVE_RISK_PARITY. Values only grow, by addition.
+/* Objectives. This version solves every objective: PO_OBJECTIVE_MIN_VARIANCE, PO_OBJECTIVE_MAX_RETURN,
+   PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_UTILITY, PO_OBJECTIVE_IMPORTANCE, PO_OBJECTIVE_KELLY,
+   PO_OBJECTIVE_TRACKING_ERROR, PO_OBJECTIVE_MAX_DIVERSIFICATION and PO_OBJECTIVE_RISK_PARITY. Values only
+   grow, by addition.
 
    Each solved objective is the minimization of f over the weights, subject to the budget (the weights sum to
    one, cash included), the weight bounds, the gross exposure limit when po_spec_set_leverage was called
@@ -72,6 +72,11 @@ typedef struct po_result po_result;
                      benchmark; without cash R~ = R and the rate term vanishes
      MAX_DIVERSIFICATION
                      f = -sigma' w / sqrt(w' Sigma w), the diversification ratio negated
+     RISK_PARITY     f = sum_i (c_i - b_i)^2 over the risky weights, with c_i = w_i (Sigma w)_i / w' Sigma w the
+                     risk contributions and b the risk budget (po_spec_set_risk_budget, default 1 / n); it takes
+                     the budget, the bounds, the target return when po_spec_set_target_return was called (it
+                     needs mu) and the volatility sqrt(w' Sigma w) = s when po_spec_set_target_volatility was
+                     called, but no cash and no leverage (below)
    MAX_SHARPE and MAX_DIVERSIFICATION do not change when the weights are scaled, so they are solved on the cone
    of the feasible set and the result is rescaled to satisfy the budget. With cash, both fix the cash weight at
    0 (the risky weights then sum to one, and bounds on the cash weight that exclude 0 make the problem
@@ -97,8 +102,26 @@ typedef struct po_result po_result;
      KELLY                mu, covariance, rate > -1      -                                  yes
      TRACKING_ERROR       returns (mu with a target)     target_return                      yes
      MAX_DIVERSIFICATION  covariance                     -                                  yes
+     RISK_PARITY          covariance (mu with a target)  target_return, target_volatility,  no
+                                                         risk_budget
 
-   po_spec_set_leverage is accepted by every solved objective; PO_OBJECTIVE_RISK_PARITY will not take it. */
+   po_spec_set_leverage is accepted by every objective except PO_OBJECTIVE_RISK_PARITY ("leverage does not
+   apply to RISK_PARITY"). PO_OBJECTIVE_RISK_PARITY has no cash either: po_data_set_risk_free makes po_solve
+   return PO_INVALID_ARGUMENT, "risk_free does not apply to RISK_PARITY". po_spec_set_target_volatility
+   applies only to PO_OBJECTIVE_RISK_PARITY ("target_volatility does not apply to <OBJECTIVE>" elsewhere), and
+   a risk budget with k entries on data with n assets is "risk_budget has k entries; expected n".
+
+   PO_OBJECTIVE_RISK_PARITY is solved by a local method. PO_SOLVE_OPTIMAL means a KKT point of f over the
+   constraints, reached from the positive-orthant Spinu solution (f = 0), not the global minimum: f is not
+   convex, and in general there are at most 2^(n-1) normalized solutions of c = b, one per pair of opposite
+   orthants, none when the weight sum of the ray is 0. Without a target return or a target volatility, with the
+   Spinu point inside the bounds, the result is that point, every multiplier 0 and the residual at the
+   rounding floor. A KKT point is accepted when its KKT residual and its feasibility are within the rounding
+   noise of the problem. With a target volatility and few or no active bounds at cond(Sigma) around 1e8 the
+   weights are determined only to the rounding of the KKT residual amplified by the conditioning of the
+   problem: an OPTIMAL result can be up to about 1e-4 relative from the exact KKT point (measured up to
+   3.7e-5), while its objective value is right to 1e-7 (1 + f). Such a solve is also slow: about 10 s at
+   n = 50, cond(Sigma) = 1e8, no box and a target volatility, and at most about 0.15 s for n <= 20. */
 #define PO_OBJECTIVE_MIN_VARIANCE 0
 #define PO_OBJECTIVE_MAX_RETURN 1
 #define PO_OBJECTIVE_MAX_SHARPE 2
@@ -109,7 +132,15 @@ typedef struct po_result po_result;
 #define PO_OBJECTIVE_MAX_DIVERSIFICATION 7
 #define PO_OBJECTIVE_RISK_PARITY 8
 
-/* Solve status of a result. An infeasible problem is a result with this status, not an error of po_solve. */
+/* Solve status of a result. An infeasible problem is a result with this status, not an error of po_solve.
+   PO_SOLVE_INFEASIBLE is certified: incompatible linear constraints, a target return outside the achievable
+   range or, for PO_OBJECTIVE_RISK_PARITY, a target volatility below the minimum volatility of the feasible set.
+   PO_SOLVE_MAX_ITER means the solver did not end at a point it can vouch for, and it carries no point (see
+   po_result below). For PO_OBJECTIVE_RISK_PARITY that includes a target volatility the iteration cannot reach
+   (for example above every volatility of a bounded set), a target return without a minimizer (no bounds), and
+   a solution whose gross exposure sum_i |w_i| is above about 4.5e3, where the budget row 1'w = 1 is no longer
+   resolved in double. A bounded problem with the budget row only (n = 20, cond(Sigma) = 1e8) can also end
+   here: a known limitation. */
 #define PO_SOLVE_OPTIMAL 0
 #define PO_SOLVE_INFEASIBLE 1
 #define PO_SOLVE_UNBOUNDED 2 /* the supremum exists but is not attained; weights and multipliers are NaN */
@@ -149,6 +180,16 @@ PO_API po_status po_spec_set_importance(po_spec* s, double lambda);
    An invalid value of any of the three setters above leaves the spec unchanged and is PO_INVALID_ARGUMENT. */
 PO_API po_status po_spec_set_max_volatility(po_spec* s, double sigma);
 
+/* Volatility target sigma of PO_OBJECTIVE_RISK_PARITY: sqrt(w' Sigma w) = sigma. sigma must be positive and
+   finite; an invalid value leaves the spec unchanged and is PO_INVALID_ARGUMENT. */
+PO_API po_status po_spec_set_target_volatility(po_spec* s, double sigma);
+
+/* Risk budget b of PO_OBJECTIVE_RISK_PARITY: n entries, each positive and finite, with |sum b - 1| <= n *
+   DBL_EPSILON (the rounding of a sum of n terms). n must be the asset count of the data given to po_solve
+   (checked there). A null b, n = 0 or a value outside the domain is PO_INVALID_ARGUMENT and leaves the spec
+   unchanged. Without a budget it is 1 / n. */
+PO_API po_status po_spec_set_risk_budget(po_spec* s, const double* b, size_t n);
+
 /* Gross exposure limit: sum_i |w_i| <= max_gross over the risky weights (the cash weight is not counted).
    max_gross must be positive and finite; zero or negative, NaN and +-inf are PO_INVALID_ARGUMENT and leave the
    spec unchanged. Without cash a limit below 1 is infeasible, because sum_i |w_i| >= |1' w| = 1; po_solve
@@ -181,19 +222,17 @@ PO_API po_status po_data_weight_count(const po_data* d, size_t* out);
 
 PO_API void po_data_free(po_data* d);
 
-/* Solves the spec on the data; both are copied, so the result does not depend on them afterwards. Returns
-   PO_UNSUPPORTED for an objective this version does not solve (see the objectives above). Otherwise it
-   checks, in this order, and returns PO_INVALID_ARGUMENT at the first failure: a setter outside the
+/* Solves the spec on the data; both are copied, so the result does not depend on them afterwards. Every
+   objective is solved, so PO_UNSUPPORTED does not occur for a valid objective. It checks, in this order, and returns PO_INVALID_ARGUMENT at the first failure: a setter outside the
    objective's row, data the objective requires, per-asset bounds that do not match the weight count. The core
    does not range-check the values: the setters are the trust boundary. Infeasibility is reported in the
    result. Safe in parallel with the same read-only spec and data. */
 PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
 
-/* Result, immutable. The weights, the bound multipliers and the multipliers of the named constraints are NaN when
-   the status provides no point: always for PO_SOLVE_INFEASIBLE and PO_SOLVE_UNBOUNDED, and for PO_SOLVE_MAX_ITER
-   of every objective solved as a QP (every objective except PO_OBJECTIVE_RISK_PARITY), because the dual iterate of
-   the QP solver is not primal feasible. What PO_SOLVE_MAX_ITER reports for PO_OBJECTIVE_RISK_PARITY is documented
-   when that objective is added.
+/* Result, immutable. The weights, the bound multipliers, the multipliers of the named constraints and the
+   residual are NaN when the status provides no point: always for PO_SOLVE_INFEASIBLE and PO_SOLVE_UNBOUNDED,
+   and for PO_SOLVE_MAX_ITER of every objective (the dual iterate of the QP solver is not primal feasible, and
+   the iterate of RISK_PARITY is not a point the solver can vouch for).
 
    Multiplier convention. Let f be the objective in minimization form, as written for each objective above:
    for PO_OBJECTIVE_MIN_VARIANCE f(w) = w' Sigma w, without the factor 1/2, and a maximized objective enters
@@ -208,7 +247,8 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    (lower-bound multiplier minus upper-bound multiplier: >= 0 at an active lower bound, <= 0 at an active upper
    bound) and beta_0 is its cash entry, which enters with a minus sign because the cash weight is 1 - 1'w. The term
    of an absent constraint is omitted: no budget term with cash, no return term without a target return, no
-   volatility term unless the objective is PO_OBJECTIVE_MAX_RETURN, no leverage term without a leverage, no
+   volatility term unless the objective is PO_OBJECTIVE_MAX_RETURN or PO_OBJECTIVE_RISK_PARITY with a target
+   volatility, no leverage term without a leverage, no
    beta_0 without cash. For PO_OBJECTIVE_MAX_SHARPE and PO_OBJECTIVE_MAX_DIVERSIFICATION with cash the cash
    weight is 0 and not a variable, so the budget term appears as beta_0 and lambda_budget is NaN.
 
@@ -219,6 +259,17 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    For PO_OBJECTIVE_MAX_RETURN, PO_CONSTRAINT_VOLATILITY is lambda_vol <= 0, the derivative of the optimal f
    with respect to the cap sigma; it is 0 when the cap is inactive.
 
+   For PO_OBJECTIVE_RISK_PARITY, PO_CONSTRAINT_VOLATILITY is the derivative of the optimal f with respect to the
+   target volatility s, of either sign, and NaN when po_spec_set_target_volatility was not called. The budget
+   multiplier is finite (no cash), the target-return multiplier is NaN without a target return, the leverage
+   multiplier is always NaN, and a bound multiplier is 0 for a weight with no finite bound. The risk
+   contributions are homogeneous of degree 0, so w' grad f(w) = 0 and
+       lambda_budget = -lambda_return * r - lambda_vol * s - sum_i beta_i w_i
+   (a term of an absent constraint is 0). When s equals the minimum volatility of the feasible set to 1e-12
+   relative, the minimum-variance portfolio is the only feasible point: the result is PO_SOLVE_OPTIMAL there,
+   with lambda_vol = -inf and every other multiplier NaN, because the constraint gradients are dependent and no
+   KKT multipliers exist (the same convention as PO_OBJECTIVE_MAX_RETURN below).
+
    PO_CONSTRAINT_LEVERAGE is lambda_lev <= 0, the derivative of the optimal f with respect to the limit; it is 0
    when the leverage is set but inactive.
 
@@ -226,7 +277,8 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    constraint: the budget constraint does not exist when there is cash (nor for PO_OBJECTIVE_MAX_SHARPE and
    PO_OBJECTIVE_MAX_DIVERSIFICATION with cash, see above), the target-return constraint when no target was set
    (and for the objectives that take none), the volatility constraint unless the objective is
-   PO_OBJECTIVE_MAX_RETURN, and the leverage constraint when po_spec_set_leverage was not called.
+   PO_OBJECTIVE_MAX_RETURN or PO_OBJECTIVE_RISK_PARITY with a target volatility, and the leverage constraint
+   when po_spec_set_leverage was not called (always, for PO_OBJECTIVE_RISK_PARITY).
 
    One documented exception, for PO_OBJECTIVE_MAX_RETURN: when the cap equals the minimum volatility of the
    feasible set and the efficient frontier is vertical there, lambda_vol = -inf, and the budget multiplier
@@ -277,6 +329,11 @@ PO_API po_status po_sharpe_ratio(const po_data* d, const double* w, size_t n, do
    PO_OBJECTIVE_MAX_DIVERSIFICATION maximizes. Needs the covariance (not mu), otherwise PO_INVALID_ARGUMENT; NaN
    when the volatility is 0. */
 PO_API po_status po_diversification_ratio(const po_data* d, const double* w, size_t n, double* out);
+
+/* Risk contributions c_i = w_i (Sigma w)_i / w' Sigma w over the risky weights: out has n entries (n must be the
+   weight count of d, otherwise PO_INVALID_ARGUMENT), the cash entry is 0 and the entries sum to 1. All NaN when
+   the volatility is 0. Needs the covariance (not mu), otherwise PO_INVALID_ARGUMENT. */
+PO_API po_status po_risk_contributions(const po_data* d, const double* w, size_t n, double* out);
 
 #ifdef __cplusplus
 }

@@ -223,4 +223,51 @@ TEST(CapiMetrics, NullArguments)
     EXPECT_EQ(po_portfolio_volatility(data.get(), weights, 2, nullptr), PO_INVALID_ARGUMENT);
 }
 
+// Sigma = [[0.04, 0.01], [0.01, 0.09]] and w = (0.5, 0.5): Sigma w = (0.025, 0.05), w' Sigma w = 0.0375, so
+// c = (1/3, 2/3).
+TEST(CapiMetrics, RiskContributions)
+{
+    DataPtr data = po::testing::make_data(2, kMu, kCovariance);
+    const double weights[2] = {0.5, 0.5};
+    double out[2] = {};
+    ASSERT_EQ(po_risk_contributions(data.get(), weights, 2, out), PO_OK);
+    EXPECT_NEAR(out[0], 1.0 / 3.0, 1e-15);
+    EXPECT_NEAR(out[1], 2.0 / 3.0, 1e-15);
+
+    ASSERT_EQ(po_data_set_risk_free(data.get(), 0.02), PO_OK);
+    const double with_cash[3] = {0.4, 0.4, 0.2};
+    double cash_out[3] = {};
+    ASSERT_EQ(po_risk_contributions(data.get(), with_cash, 3, cash_out), PO_OK);
+    EXPECT_NEAR(cash_out[0], 1.0 / 3.0, 1e-15);
+    EXPECT_NEAR(cash_out[1], 2.0 / 3.0, 1e-15);
+    EXPECT_EQ(cash_out[2], 0.0);
+
+    const double all_cash[3] = {0.0, 0.0, 1.0};
+    ASSERT_EQ(po_risk_contributions(data.get(), all_cash, 3, cash_out), PO_OK);
+    for (double value : cash_out)
+    {
+        EXPECT_TRUE(std::isnan(value));
+    }
+    DataPtr without_cash = po::testing::make_data(2, {}, kCovariance);
+    const double zero[2] = {0.0, 0.0};
+    ASSERT_EQ(po_risk_contributions(without_cash.get(), zero, 2, out), PO_OK);
+    EXPECT_TRUE(std::isnan(out[0]) && std::isnan(out[1]));
+}
+
+TEST(CapiMetrics, RiskContributionsSizeMismatch)
+{
+    DataPtr data = po::testing::make_data(2, kMu, kCovariance);
+    const double weights[3] = {0.4, 0.4, 0.2};
+    double out[3] = {7.0, 7.0, 7.0};
+    EXPECT_EQ(po_risk_contributions(data.get(), weights, 3, out), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "n must be 2, got 3");
+    EXPECT_EQ(out[0], 7.0);
+    EXPECT_EQ(po_risk_contributions(nullptr, weights, 2, out), PO_INVALID_HANDLE);
+    EXPECT_EQ(po_risk_contributions(data.get(), nullptr, 2, out), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_risk_contributions(data.get(), weights, 2, nullptr), PO_INVALID_ARGUMENT);
+    DataPtr without_covariance = po::testing::make_data(2, kMu, {});
+    EXPECT_EQ(po_risk_contributions(without_covariance.get(), weights, 2, out), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "the risk contributions need the covariance");
+}
+
 } // namespace

@@ -56,6 +56,21 @@ bool all_valid(const double* lower, const double* upper, std::size_t n)
     return true;
 }
 
+// Each entry positive and finite, and the sum within the rounding of a sum of n terms of 1.
+bool valid_budget(const double* b, std::size_t n)
+{
+    double total = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!std::isfinite(b[i]) || b[i] <= 0.0)
+        {
+            return false;
+        }
+        total += b[i];
+    }
+    return std::abs(total - 1.0) <= static_cast<double>(n) * std::numeric_limits<double>::epsilon();
+}
+
 } // namespace
 
 extern "C" po_status po_spec_create(int32_t objective, po_spec** out)
@@ -220,6 +235,51 @@ extern "C" po_status po_spec_set_leverage(po_spec* s, double max_gross)
                 return set_error(PO_INVALID_ARGUMENT, "max_gross must be positive and finite");
             }
             s->spec.leverage = max_gross;
+            return PO_OK;
+        });
+}
+
+extern "C" po_status po_spec_set_target_volatility(po_spec* s, double sigma)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (!std::isfinite(sigma) || sigma <= 0.0)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "sigma must be positive and finite");
+            }
+            s->spec.target_volatility = sigma;
+            return PO_OK;
+        });
+}
+
+extern "C" po_status po_spec_set_risk_budget(po_spec* s, const double* b, size_t n)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (b == nullptr)
+            {
+                return null_argument("b");
+            }
+            if (n == 0)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "n must be positive");
+            }
+            if (!valid_budget(b, n))
+            {
+                return set_error(PO_INVALID_ARGUMENT,
+                                 "risk budget entries must be positive and finite and sum to 1 within n * epsilon");
+            }
+            s->spec.risk_budget.assign(b, b + n);
             return PO_OK;
         });
 }
