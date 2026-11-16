@@ -16,8 +16,9 @@ library whose ABI version differs).
   exception crosses.
 - `PO_OBJECTIVE_MIN_VARIANCE`: minimum variance with a scalar box (`po_spec_set_bounds`), per-asset bounds
   (`po_spec_set_asset_bounds`), a target return (`po_spec_set_target_return`) and a risk-free asset
-  (`po_data_set_risk_free`, cash last). The other objectives return `PO_UNSUPPORTED`; an infeasible problem is a
-  result with status `PO_SOLVE_INFEASIBLE`, not an error.
+  (`po_data_set_risk_free`, cash last). At that step the other objectives returned `PO_UNSUPPORTED` (every
+  objective is solved now, below); an infeasible problem is a result with status `PO_SOLVE_INFEASIBLE`, not an
+  error.
 - Multipliers of the budget and target-return constraints and of the bounds, under one documented sign convention.
 - A dense Goldfarb-Idnani dual active-set quadratic programming solver, written from the paper.
 - Portfolio metrics: `po_portfolio_return` and `po_portfolio_volatility`.

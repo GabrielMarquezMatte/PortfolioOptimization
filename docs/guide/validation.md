@@ -557,7 +557,8 @@ The error-free transformations hold only if every operation is rounded as writte
 `-ffp-contract=off` on GCC and Clang: with GCC 16.2 at `-O3 -std=c++23`, `a * b + c` still becomes one `vfmadd`
 when the target has FMA (`-mfma`, `-march=native`), which would fold a product into the following TwoSum; with
 `-ffp-contract=off` it stays `vmulsd` and `vaddsd`. No build uses `-ffast-math` or `-fassociative-math`
-(disabled at `-O3`). MSVC's default `/fp:precise` neither contracts nor reassociates.
+(disabled at `-O3`). With Visual Studio 2022 and later, MSVC's default `/fp:precise` neither contracts nor
+reassociates (Microsoft's documentation; not verified here, where only GCC was run).
 
 ### The polyhedral descent
 
@@ -673,7 +674,8 @@ largest term of `grad f`, not to `sum_i abs(w_i grad f_i)`. At a KKT point where
 itself makes `budget` vanish to the KKT residual. With the old scale, 6 converged runs of the first sweep failed
 on it (relative residual `4.8e-6` to `4.5e-4`, all LongOnly with uneven budgets); with the new one none does. A
 wrong gradient still fails: with the second of the three terms of the reference gradient scaled by 1.001, 394 of
-the 624 converged runs of `ConvergedRunsAreKkt` fail the identity (the rest sit at `f = 0`, where every term
+the 624 runs of `ConvergedRunsAreKkt` that converged when this was measured (its floor is now 625) fail the
+identity (the rest sit at `f = 0`, where every term
 vanishes and an error proportional to the gap cannot be seen). `RiskParityDescentFuzz.HomogeneityIdentityCatchesAWrongGradient`
 keeps that check on one converged LongOnly point with four weights at 0 (`n = 10`, `cond(Sigma) = 1e6`). Windows, GCC 16.2 (MSYS2 UCRT64).
 

@@ -75,7 +75,8 @@ double squared_tracking_gaps(const Data& data, std::span<const double> weights)
     return total;
 }
 
-std::vector<double> contributions_from_variance(const Data& data, std::span<const double> weights, double total)
+std::vector<double> contributions_from_variance(const Data& data, std::span<const double> weights,
+                                                double total)
 {
     std::size_t n = data.asset_count();
     std::vector<double> contributions(weights.size(), 0.0);

@@ -276,8 +276,8 @@ extern "C" po_status po_spec_set_risk_budget(po_spec* s, const double* b, size_t
             }
             if (!valid_budget(b, n))
             {
-                return set_error(PO_INVALID_ARGUMENT,
-                                 "risk budget entries must be positive and finite and sum to 1 within n * epsilon");
+                return set_error(PO_INVALID_ARGUMENT, "risk budget entries must be positive and finite and "
+                                                      "sum to 1 within n * epsilon");
             }
             s->spec.risk_budget.assign(b, b + n);
             return PO_OK;

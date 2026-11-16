@@ -12,8 +12,9 @@ volatility cap (`MAX_RETURN`), the maximum Sharpe ratio (`MAX_SHARPE`), mean-var
 with an importance weight between risk and return (`IMPORTANCE`), the Kelly criterion (`KELLY`), tracking error
 against a benchmark (`TRACKING_ERROR`), the maximum diversification ratio (`MAX_DIVERSIFICATION`) and risk parity with
 a risk budget (`RISK_PARITY`, a local method: its result is a KKT point, not a proven global minimum). All take a box on
-the weights (one pair for all of them or one pair per asset), an optional gross exposure limit (the leverage,
-`sum |w_i| <= L` over the risky weights) and an optional risk-free asset (cash, always the last weight);
+the weights (one pair for all of them or one pair per asset); all but `RISK_PARITY` take an optional gross exposure
+limit (the leverage, `sum |w_i| <= L` over the risky weights) and an optional risk-free asset (cash, always the last
+weight);
 `MIN_VARIANCE` and `TRACKING_ERROR` also take a target return, and `RISK_PARITY` takes neither cash nor a leverage but a
 target return and a target volatility. The result carries the weights and the multipliers of
 the budget, target-return, volatility and leverage constraints and of the bounds, under the convention in
@@ -66,7 +67,7 @@ print(data.sharpe_ratio(capped.weights))       # 0.7211 (rounded), against 1.090
 print(capped.leverage_multiplier)              # -0.3105 (rounded): the change of -Sharpe per unit of L
 
 # Risk parity with a risk budget (50% / 30% / 20% of the risk) and the volatility fixed at 17%
-# (the minimum volatility of this covariance is 16.4%, so a target below it is INFEASIBLE)
+# (the minimum volatility of this covariance is 16.3%, so a target below it is INFEASIBLE)
 cov = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.012], [0.002, 0.012, 0.16]])
 data = po.Data(None, cov)
 budget = [0.5, 0.3, 0.2]

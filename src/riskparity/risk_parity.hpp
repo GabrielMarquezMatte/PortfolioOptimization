@@ -36,10 +36,10 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 // can be up to about 1e-4 relative from the exact KKT point (measured up to 3.7e-5), while its objective
 // value is right to 1e-7 (1 + f). That covers the weights and the value, not the multipliers: with a target
 // volatility they are settled by least squares at the rounded weights and measured right only to about
-// 5e-10 relative at cond(Sigma) = 1e4, 3e-7 at 1e6 and 4e-2 at 1e8, and O(1) above (docs/guide/validation.md).
-// A local method: Optimal means a stationary point reached from the Spinu solution, not the global minimum.
-// iterations counts the Newton steps of Spinu, the steps of every descent and the Newton steps on the KKT
-// system.
+// 5e-10 relative at cond(Sigma) = 1e4, 3e-7 at 1e6 and 4e-2 at 1e8, and O(1) above
+// (docs/guide/validation.md). A local method: Optimal means a stationary point reached from the Spinu
+// solution, not the global minimum. iterations counts the Newton steps of Spinu, the steps of every descent
+// and the Newton steps on the KKT system.
 std::expected<Result, Failure> solve_risk_parity(const Spec& spec, const Data& data);
 
 } // namespace po::riskparity

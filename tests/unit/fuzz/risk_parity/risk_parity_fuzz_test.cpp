@@ -316,12 +316,12 @@ TEST(RiskParityFuzz, WeightsAtCondition1e8BelowTheirMeasuredCeiling)
     }
 }
 
-// The multipliers of the target-volatility path against those of the KKT point refined in long double from the
-// result, by cond(Sigma): no box, equal budget, n = 5 and 8. The weights are right to 1e-12 or better here,
-// but the multipliers are settled by least squares at the rounded weights and lose what the Newton correction
-// H dw would have put in them. These ceilings are measured (the largest of the grid, rounded up to the next
-// power of 10), not derived: they pin the present accuracy, which is outside the band from cond 1e6 up
-// (docs/guide/validation.md). Measured largest: 4.8e-10 at 1e4, 3.3e-7 at 1e6, 3.7e-2 at 1e8.
+// The multipliers of the target-volatility path against those of the KKT point refined in long double from
+// the result, by cond(Sigma): no box, equal budget, n = 5 and 8. The weights are right to 1e-12 or better
+// here, but the multipliers are settled by least squares at the rounded weights and lose what the Newton
+// correction H dw would have put in them. These ceilings are measured (the largest of the grid, rounded up to
+// the next power of 10), not derived: they pin the present accuracy, which is outside the band from cond 1e6
+// up (docs/guide/validation.md). Measured largest: 4.8e-10 at 1e4, 3.3e-7 at 1e6, 3.7e-2 at 1e8.
 double multiplier_ceiling(double condition)
 {
     if (condition <= 1e4)
@@ -348,7 +348,8 @@ TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
         {
             for (std::uint64_t seed = 1; seed <= 4; ++seed)
             {
-                Shape shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, 401 + seed};
+                Shape shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None,
+                            false,     true,      401 + seed};
                 SCOPED_TRACE(po::testing::describe(shape));
                 po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
                 Result result = po::solve(generated.spec, generated.data).value();

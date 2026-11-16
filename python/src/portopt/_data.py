@@ -127,7 +127,9 @@ class Data:
         if w.ndim != 1:
             raise ValueError("weights must be 1-D")
         out = np.empty(w.size, dtype=np.float64)
-        _native.check(lib.po_risk_contributions(self.pointer, doubles_pointer(w), w.size, doubles_pointer(out)))
+        _native.check(
+            lib.po_risk_contributions(self.pointer, doubles_pointer(w), w.size, doubles_pointer(out))
+        )
         return out
 
     def _metric(self, function: Callable[..., int], weights: ArrayLike, *extra: float) -> float:

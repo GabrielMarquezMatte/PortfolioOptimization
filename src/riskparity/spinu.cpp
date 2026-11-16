@@ -157,8 +157,8 @@ std::vector<double> moved(const Point& point, std::span<const double> direction,
     return y;
 }
 
-// Armijo backtracking; nullopt when no step of the sequence decreases F enough. The caller then takes the step
-// to the boundary fraction anyway (advance), so this is not a stop.
+// Armijo backtracking; nullopt when no step of the sequence decreases F enough. The caller then takes the
+// step to the boundary fraction anyway (advance), so this is not a stop.
 std::optional<Point> armijo(const Problem& problem, const Point& point, const NewtonStep& step)
 {
     double length = boundary_step(point, step.direction);
