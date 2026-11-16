@@ -75,7 +75,8 @@ inline constexpr double kKktNoiseFactor = 16.0;
 // A residual within its noise says nothing once the noise itself is large: weights that run off along an
 // unbounded direction of the polyhedron, where f tends to a limit and its gradient to 0, satisfy every row to
 // their rounding. So a KKT point must also resolve the budget row: the rounding of 1'w, eps sum_i |w_i|, is
-// at most the feasibility tolerance of the QP solver.
-bool is_kkt_point(const KktProblem& problem, const KktPoint& point);
+// at most the feasibility tolerance of the QP solver. factor replaces kKktNoiseFactor for a tighter stopping
+// rule inside an iteration.
+bool is_kkt_point(const KktProblem& problem, const KktPoint& point, double factor = kKktNoiseFactor);
 
 } // namespace po::riskparity

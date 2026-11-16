@@ -162,9 +162,12 @@ TEST(AugmentedLagrangian, UnreachableTargetDoesNotConverge)
     AugmentedResult result = po::riskparity::augmented_lagrangian(problem, start, kOptions);
     EXPECT_FALSE(result.converged);
     EXPECT_GT(result.outer_iterations, 1);
-    EXPECT_LE(result.outer_iterations, kOptions.max_outer_iterations);
     EXPECT_GT(result.penalty, 0.0);
-    EXPECT_LE(result.penalty, po::riskparity::kAugmentedPenaltyCeiling);
+    // The penalty reaches its ceiling in 11 growths from 10; then the gap stalls and ends the iteration well
+    // before the outer iterations run out.
+    EXPECT_EQ(result.penalty, po::riskparity::kAugmentedPenaltyCeiling);
+    EXPECT_LE(result.outer_iterations, 12 + po::riskparity::kAugmentedStallIterations);
+    EXPECT_LT(result.outer_iterations, kOptions.max_outer_iterations);
     EXPECT_NEAR(po::testing::portfolio_volatility(data, result.point.weights), 0.3, 1e-9);
     EXPECT_NEAR(result.point.weights[1], 1.0, 1e-9);
 }

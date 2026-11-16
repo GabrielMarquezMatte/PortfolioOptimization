@@ -29,6 +29,9 @@ struct Outer
     double penalty = kInitialPenalty;
     double tolerance;
     double previous_gap = std::numeric_limits<double>::infinity();
+    // With the penalty at its ceiling: the smallest gap seen there and the outer iterations since it halved.
+    double ceiling_gap = std::numeric_limits<double>::infinity();
+    int stalled = 0;
 };
 
 double relative_gap(const Data& data, std::span<const double> weights, double target)
@@ -75,6 +78,24 @@ void update(Outer& outer, double estimate, double gap, double final_tolerance)
     outer.tolerance = std::fmax(final_tolerance, kToleranceDecrease * outer.tolerance);
 }
 
+// With the penalty at its ceiling the gap can only fall by the multiplier; when it does not halve for
+// kAugmentedStallIterations outer iterations in a row, s is out of reach of the polyhedron.
+bool stalls(Outer& outer, double gap)
+{
+    if (outer.penalty < kAugmentedPenaltyCeiling)
+    {
+        return false;
+    }
+    if (std::fabs(gap) <= kRequiredDecrease * outer.ceiling_gap)
+    {
+        outer.ceiling_gap = std::fabs(gap);
+        outer.stalled = 0;
+        return false;
+    }
+    ++outer.stalled;
+    return outer.stalled >= kAugmentedStallIterations;
+}
+
 } // namespace
 
 AugmentedResult augmented_lagrangian(const KktProblem& problem, std::span<const double> start,
@@ -100,12 +121,16 @@ AugmentedResult augmented_lagrangian(const KktProblem& problem, std::span<const 
             break;
         }
         double largest = std::fmax(descent.stationarity, std::fabs(gap));
-        if (largest <= options.tolerance || is_kkt_point(problem, result.point))
+        if (largest <= options.tolerance || is_kkt_point(problem, result.point, kAugmentedStopFactor))
         {
             result.converged = true;
             break;
         }
         update(outer, estimate, gap, options.tolerance);
+        if (stalls(outer, gap))
+        {
+            break;
+        }
     }
     return result;
 }

@@ -16,6 +16,8 @@
 #include "core/spec.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
+#include "riskparity/kkt.hpp"
+#include "riskparity/newton_polish.hpp"
 #include "riskparity/polyhedral_descent.hpp"
 
 namespace
@@ -273,6 +275,34 @@ TEST(RiskParityDescentFuzz, DISABLED_MeasureSweep)
         std::printf("proximal %g\n", proximal);
         print_sweep(sweep({3, 5, 10, 20, 50}, 5, proximal));
     }
+}
+
+// Whether the Newton polish of the solver turns the descents that did not converge into KKT points, as
+// is_kkt_point decides: the count of docs/guide/validation.md.
+TEST(RiskParityDescentFuzz, DISABLED_MeasurePolishOfUnconverged)
+{
+    int unconverged = 0;
+    int repaired = 0;
+    for (const DescentRun& run : sweep({3, 5, 10, 20, 50}, 5, po::riskparity::kDescentProximal))
+    {
+        if (run.result.stop == DescentStop::Converged)
+        {
+            continue;
+        }
+        ++unconverged;
+        po::testing::GeneratedRiskParity generated = po::testing::generate(run.shape);
+        const po::Spec& spec = generated.spec;
+        po::riskparity::KktProblem problem{spec, generated.data, spec.risk_budget};
+        po::riskparity::KktPoint point{run.result.weights, run.result.equality_multipliers,
+                                       run.result.bound_multipliers};
+        po::riskparity::PolishResult polished = po::riskparity::newton_polish(problem, point);
+        bool kkt = po::riskparity::is_kkt_point(problem, polished.point);
+        repaired += kkt;
+        std::printf("%s | stop %d | polish steps %d | KKT %d\n",
+                    po::testing::describe(run.shape).GetString().c_str(),
+                    static_cast<int>(run.result.stop), polished.steps, static_cast<int>(kkt));
+    }
+    std::printf("unconverged %d, KKT after the polish %d\n", unconverged, repaired);
 }
 
 } // namespace

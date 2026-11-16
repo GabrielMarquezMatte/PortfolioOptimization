@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -67,6 +68,9 @@ struct SolveRun
     // Of a floor-limited result, against the KKT point of its active set refined in long double.
     po::testing::ForwardError forward{0.0, 0.0, 0.0, 0.0};
     double value = 0.0;
+    // Of an OPTIMAL result with finite multipliers: its KKT residual in units of its noise, the number the
+    // gate of the solver compares with kKktNoiseFactor.
+    double noise_residual = 0.0;
     bool no_point_is_nan = true;
     double seconds = 0.0;
 };
@@ -80,6 +84,24 @@ bool is_all_nan(const Result& result)
            std::ranges::all_of(result.bound_multipliers, is_nan);
 }
 
+// The result read back as the KKT point the solver accepted.
+double noise_residual_of(const po::testing::GeneratedRiskParity& generated, const Result& result)
+{
+    const po::Spec& spec = generated.spec;
+    po::riskparity::KktProblem problem{spec, generated.data, spec.risk_budget};
+    po::riskparity::KktPoint point{result.weights, {result.budget_multiplier}, result.bound_multipliers};
+    if (spec.target_return.has_value())
+    {
+        point.equality_multipliers.push_back(result.target_return_multiplier);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        point.equality_multipliers.push_back(result.volatility_multiplier);
+    }
+    po::riskparity::KktEvaluation evaluation = po::riskparity::evaluate_kkt(problem, point);
+    return po::riskparity::largest(po::riskparity::residual_of(problem, point, evaluation));
+}
+
 void check_optimal(const po::testing::GeneratedRiskParity& generated, SolveRun& run)
 {
     const po::Spec& spec = generated.spec;
@@ -91,6 +113,7 @@ void check_optimal(const po::testing::GeneratedRiskParity& generated, SolveRun& 
     }
     run.stationarity = po::testing::risk_parity_stationarity(spec, generated.data, run.result, band);
     run.floor_limited = !(run.stationarity.relative <= band);
+    run.noise_residual = noise_residual_of(generated, run.result);
     run.value = po::testing::risk_parity_value(generated.data, spec.risk_budget, run.result.weights);
     if (run.floor_limited && po::testing::kLongDoubleIsExtended)
     {
@@ -166,6 +189,8 @@ struct Tally
     double largest_reference = 0.0;
     double seconds = 0.0;
     double longest = 0.0;
+    double max_iteration_seconds = 0.0;
+    double largest_noise_residual = 0.0;
 };
 
 void count(const SolveRun& run, Tally& tally)
@@ -179,11 +204,16 @@ void count(const SolveRun& run, Tally& tally)
     tally.longest = std::fmax(tally.longest, run.seconds);
     tally.infeasible += run.result.status == SolveStatus::Infeasible;
     tally.max_iterations += run.result.status == SolveStatus::MaxIterations;
+    if (run.result.status == SolveStatus::MaxIterations)
+    {
+        tally.max_iteration_seconds += run.seconds;
+    }
     if (run.result.status != SolveStatus::Optimal)
     {
         return;
     }
     ++tally.optimal;
+    tally.largest_noise_residual = std::fmax(tally.largest_noise_residual, run.noise_residual);
     tally.kkt_failures += !run.kkt_failures.empty();
     tally.iterations += run.result.iterations;
     tally.most_iterations = std::max(tally.most_iterations, run.result.iterations);
@@ -203,7 +233,7 @@ void print_table(const char* first_column, const std::map<std::string, Tally>& t
 {
     std::printf("| %s | optimal | max iter | infeasible | KKT failed | floor-limited | stationarity / floor "
                 "| weight error | value error / band | reference / floor | iterations | seconds (longest) "
-                "|\n",
+                "| seconds of max iter | KKT / noise |\n",
                 first_column);
     for (const auto& [key, tally] : table)
     {
@@ -213,11 +243,12 @@ void print_table(const char* first_column, const std::map<std::string, Tally>& t
             mean = static_cast<double>(tally.iterations) / tally.optimal;
         }
         std::printf("| %s | %d / %d | %d | %d | %d | %d | %.2f | %.2g | %.2g | %.2g | %.1f (%d) | "
-                    "%.2f (%.3f) |\n",
+                    "%.2f (%.3f) | %.2f | %.2f |\n",
                     key.c_str(), tally.optimal, tally.runs, tally.max_iterations, tally.infeasible,
                     tally.kkt_failures, tally.floor_limited, tally.largest_over_floor,
                     tally.largest_weight_error, tally.largest_value_error, tally.largest_reference, mean,
-                    tally.most_iterations, tally.seconds, tally.longest);
+                    tally.most_iterations, tally.seconds, tally.longest, tally.max_iteration_seconds,
+                    tally.largest_noise_residual);
     }
 }
 
@@ -334,6 +365,41 @@ TEST(RiskParitySolveSweep, OptimalRunsAreKkt)
 TEST(RiskParitySolveSweep, DISABLED_MeasureSweep)
 {
     print_sweep(sweep({3, 5, 10, 20, 50}, 3));
+}
+
+// The hardest class of the sweep, no box with a target volatility at cond(Sigma) = 1e8, every run printed
+// (shape | status | iterations | seconds | KKT residual over noise): the measurement behind the constants of
+// the augmented Lagrangian in docs/guide/validation.md.
+TEST(RiskParitySolveSweep, DISABLED_MeasureHardestClass)
+{
+    std::vector<std::size_t> sizes = {10, 20, 50};
+    std::uint64_t seeds = 3;
+    // One size, one seed: PORTOPT_SWEEP_N=100 measures the scaling above n = 50.
+    if (const char* size = std::getenv("PORTOPT_SWEEP_N"))
+    {
+        sizes = {static_cast<std::size_t>(std::atoi(size))};
+        seeds = 1;
+    }
+    for (std::size_t n : sizes)
+    {
+        for (std::uint64_t seed = 1; seed <= seeds; ++seed)
+        {
+            for (const Shape& base : po::testing::risk_parity_shapes(192, 1))
+            {
+                if (base.condition != 1e8 || base.box != Shape::Box::None || !base.target_volatility)
+                {
+                    continue;
+                }
+                Shape shape = base;
+                shape.n = n;
+                shape.seed = seed * 7919 + n;
+                SolveRun run = run_shape(shape);
+                std::printf("%s | %d | %d | %.3f | %.2f\n", po::testing::describe(shape).GetString().c_str(),
+                            static_cast<int>(run.result.status), run.result.iterations, run.seconds,
+                            run.noise_residual);
+            }
+        }
+    }
 }
 
 // The start of the solver: the point of the polyhedron nearest to the Spinu solution.

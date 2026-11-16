@@ -28,7 +28,9 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 //   system.
 // Optimal is a point whose KKT residual, feasibility included, is within the noise of the problem. When the
 // iteration does not end at one (a target return on an unbounded line where f has no minimizer, a target
-// volatility out of reach) the status is MaxIterations, with NaN weights, multipliers and residual. A local
+// volatility out of reach) the status is MaxIterations, with NaN weights, multipliers and residual. So is a
+// point whose budget row 1'w = 1 is not resolved by its own rounding, eps (sum_i |w_i| + 1) > 1e-12: a gross
+// exposure sum_i |w_i| above about 4.5e3 is MaxIterations even when it is stationary. A local
 // method: Optimal means a stationary point reached from the Spinu solution, not the global minimum.
 // iterations counts the Newton steps of Spinu, the steps of every descent and the Newton steps on the KKT
 // system.

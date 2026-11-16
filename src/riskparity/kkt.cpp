@@ -275,11 +275,11 @@ double largest(const KktResidual& residual)
     return worst_of(worst, residual.complementarity);
 }
 
-bool is_kkt_point(const KktProblem& problem, const KktPoint& point)
+bool is_kkt_point(const KktProblem& problem, const KktPoint& point, double factor)
 {
     KktEvaluation evaluation = evaluate_kkt(problem, point);
     bool resolves_budget = evaluation.gap_noise.front() <= qp::kRelativeTolerance;
-    return resolves_budget && largest(residual_of(problem, point, evaluation)) <= kKktNoiseFactor;
+    return resolves_budget && largest(residual_of(problem, point, evaluation)) <= factor;
 }
 
 } // namespace po::riskparity
