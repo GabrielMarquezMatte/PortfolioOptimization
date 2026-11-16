@@ -3,6 +3,7 @@
 #include <optional>
 #include <utility>
 
+#include "problems/homogeneous.hpp"
 #include "problems/max_return.hpp"
 #include "problems/mean_variance.hpp"
 #include "problems/requirements.hpp"
@@ -26,6 +27,10 @@ std::expected<Result, Failure> solve_request(const Spec& spec, const Data& data)
         return problems::solve_max_return(spec, data);
     case Objective::TrackingError:
         return problems::solve_tracking_error(spec, data);
+    case Objective::MaxSharpe:
+        return problems::solve_max_sharpe(spec, data);
+    case Objective::MaxDiversification:
+        return problems::solve_max_diversification(spec, data);
     default:
         std::unreachable();
     }

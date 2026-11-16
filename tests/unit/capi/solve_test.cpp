@@ -278,17 +278,12 @@ TEST(CapiSolve, InfeasibleIsResultNotError)
 TEST(CapiSolve, UnsupportedObjective)
 {
     DataPtr data = sample_data();
-    for (int32_t objective :
-         {PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_MAX_DIVERSIFICATION, PO_OBJECTIVE_RISK_PARITY})
-    {
-        SCOPED_TRACE(objective);
-        SpecPtr spec = po::testing::make_spec(objective);
-        ResultPtr existing = po::testing::solve_ok(po::testing::make_spec().get(), data.get());
-        po_result* raw = existing.get();
-        EXPECT_EQ(po_solve(spec.get(), data.get(), &raw), PO_UNSUPPORTED);
-        EXPECT_EQ(raw, nullptr);
-        EXPECT_STREQ(po_last_error(), "objective not implemented yet");
-    }
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
+    ResultPtr existing = po::testing::solve_ok(po::testing::make_spec().get(), data.get());
+    po_result* raw = existing.get();
+    EXPECT_EQ(po_solve(spec.get(), data.get(), &raw), PO_UNSUPPORTED);
+    EXPECT_EQ(raw, nullptr);
+    EXPECT_STREQ(po_last_error(), "objective not implemented yet");
 }
 
 TEST(CapiSolve, ResultOutlivesSpecAndData)

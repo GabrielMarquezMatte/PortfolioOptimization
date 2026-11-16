@@ -2,7 +2,6 @@
 
 #include <gtest/gtest.h>
 
-#include <array>
 #include <expected>
 #include <vector>
 
@@ -37,16 +36,10 @@ TEST(Solve, TargetReturnWithoutMuIsInvalid)
 
 TEST(Solve, UnimplementedObjectiveIsUnsupported)
 {
-    constexpr std::array kObjectives = {Objective::MaxSharpe, Objective::MaxDiversification,
-                                        Objective::RiskParity};
     po::Data data = po::Data::create(3, {}, {}).value();
-    for (Objective objective : kObjectives)
-    {
-        SCOPED_TRACE(static_cast<int>(objective));
-        po::Spec spec;
-        spec.objective = objective;
-        expect_failure(po::solve(spec, data), FailureKind::Unsupported, "objective not implemented yet");
-    }
+    po::Spec spec;
+    spec.objective = Objective::RiskParity;
+    expect_failure(po::solve(spec, data), FailureKind::Unsupported, "objective not implemented yet");
 }
 
 } // namespace

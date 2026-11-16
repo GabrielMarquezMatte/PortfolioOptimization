@@ -53,6 +53,10 @@ std::optional<Requirements> requirements_of(Objective objective)
         return Requirements{"KELLY", false, false, false, true, false, true, false};
     case Objective::TrackingError:
         return Requirements{"TRACKING_ERROR", true, false, false, true, false, false, true};
+    case Objective::MaxSharpe:
+        return Requirements{"MAX_SHARPE", false, false, false, true, false, true, false};
+    case Objective::MaxDiversification:
+        return Requirements{"MAX_DIVERSIFICATION", false, false, false, true, false, false, false};
     default:
         return std::nullopt;
     }

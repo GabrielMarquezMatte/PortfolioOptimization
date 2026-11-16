@@ -42,6 +42,7 @@ add_library(portopt_core STATIC
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/problems/constraints.cpp
+    src/problems/homogeneous.cpp
     src/problems/max_return.cpp
     src/problems/parametric_path.cpp
     src/problems/mean_variance.cpp
@@ -105,8 +106,10 @@ if(PO_BUILD_TESTS)
         tests/unit/core/data_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
+        tests/unit/fuzz/ratio_fuzz_test.cpp
         tests/unit/problems/leverage_test.cpp
         tests/unit/problems/max_return_test.cpp
+        tests/unit/problems/max_sharpe_test.cpp
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/solve_test.cpp
         tests/unit/problems/utility_test.cpp

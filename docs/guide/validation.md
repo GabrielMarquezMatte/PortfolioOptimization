@@ -62,6 +62,7 @@ instead check each result against conditions that hold if and only if it is corr
 | Bound feasibility (`w >= lower`, a capped weight at its cap) | 1e-14 |
 | QP with the gross exposure family: value against the sign-pattern brute force, relative; the 1-norm of x at most `L (1 + tol)` | 1e-10; 1e-12 |
 | Leverage multiplier against a finite difference, relative | 1e-6 |
+| `MAX_SHARPE` against 10 000 feasible portfolios: none with a larger ratio, relative | 1e-12 |
 | Fuzz battery: KKT residuals and agreement with the reference, `cond(Sigma)` <= 1e4 / 1e6 / 1e8 (and above) | 1e-10 / 1e-9 / 1e-7 |
 
 The KKT residuals (`tests/unit/kkt.hpp`) are relative, and the stationarity and dual scales have no floor of 1,
@@ -305,10 +306,32 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
   no generated row is active. A family whose bound is never reached leaves the solution bit for bit that of the
   problem without it (`GoldfarbIdnani.GrossExposureInactive`).
 
+## Numerical decisions of MAX_SHARPE and MAX_DIVERSIFICATION
+
+The homogeneous QP (`src/problems/homogeneous.cpp`, the equations in
+[math.md](math.md#max_sharpe-and-max_diversification)) adds no tolerance of its own. Each decision is the solver's, or a
+sign, measured over `RatioFuzz.AgainstFrontierReference` (1200 cases, 1067 of them with an `Optimal` QP) with an
+instrumented copy of the builder:
+
+- **UNBOUNDED is the active set.** The row `1'y >= 0` is in the active set of the optimum, as the solver reports it
+  (`qp::Solution::active_inequalities`), and the solver adds that row only when it is violated beyond its feasibility
+  tolerance. The row was active in 28 of the 1067 solves, every one of them `UNBOUNDED` by the reference, with
+  `kappa = 1'y` at most 9.7e-17 of `sqrt(n) |y|max` (the scale of the row at the point); in the other 1039, `kappa` was
+  at least 0.14 of it. Sixteen orders of magnitude separate them, and no threshold on `kappa` is needed.
+- **A kappa that is not positive.** A `kappa <= 0` with the row inactive is the same closure point held within the
+  solver's feasibility tolerance, and is `UNBOUNDED` too: `w = y / kappa` would have the wrong sign or no value. It is
+  a sign, not a tolerance, and it did not occur in the 1067 solves.
+- **Cash bounds.** With cash the cash weight is held at exactly 0, and the request is `INFEASIBLE` when the cash bounds
+  exclude 0: `lower_0 > 0` or `upper_0 < 0`, compared with 0 exactly.
+- **The multipliers.** The mapping uses `nu = 2 sigma_y^2`, which complementarity gives in exact arithmetic, rather
+  than the QP's `nu`, and computes `sigma_y = |L'y|` from the factor of `Data`. The difference between the two is the
+  rounding of the active rows, and enters the user's stationarity as a term along `v`: the worst stationarity of the
+  battery is at most 0.087 of its band (below).
+
 ## Fuzz battery
 
 `tests/unit/fuzz/` holds a generator of problem shapes and references computed by another route, used by the
-`MaxReturnFuzz` and `LeverageFuzz` tests.
+`MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` tests.
 
 - **Shapes** (`random_problems.hpp`). `fuzz_shapes(count, seed)` cycles through every combination of `cond(Sigma)` in
   {1e2, 1e4, 1e6, 1e8}, the annual and daily scales (`Sigma` times 1 or 1e-4, `mu` times its square root), four mean
@@ -327,6 +350,23 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
   `sum_i |x_i| <= L` by brute force for n <= 8: on the orthant of each sign pattern `s`, `s_i x_i >= 0`, the
   constraint is the linear row `s'x <= L`, and the optimum is the best `Optimal` value over the `2^n` patterns, with
   explicit rows only.
+- **Ratio reference** (`ratio_reference.hpp`). `max_ratio_reference` maximizes the ratio along the efficient branch of
+  `MIN_VARIANCE(target_return = r)`, never through the homogeneous QP. With cash fixed at 0 the ratio problem is the one
+  without cash on the risky assets with `1'w = 1` and mean `v` (`mu - rf 1`, or `sigma` with `rf = 0`), so the
+  reference solves that one, with the risky bounds and the leverage. From the minimum-variance return it doubles
+  `r - r_mv` until the ratio stops increasing or no portfolio reaches `r`; there it bisects on feasibility for the
+  largest return, and then it runs a golden-section search on `r / vol(r)` to 1e-13 relative, keeping the best ratio of
+  a solved portfolio. Whether the ratio still increases at a point is the sign of
+  `lambda_budget + beta'w + lambda_lev ||w||_1`, read from the frontier point's multipliers: by the multiplier
+  convention `w' grad f = 2 vol^2 = lambda_budget + lambda_ret r + beta'w + lambda_lev ||w||_1`, so
+  `d/dr (r / vol(r)) = (2 vol^2 - r lambda_ret) / (2 vol^3)` has that sign. It is a sum of terms of the order of `r`,
+  where the difference of two ratios at a large `r` would be lost in their rounding. The result is `INFEASIBLE` when
+  `MIN_VARIANCE` is, when the best ratio is not positive, or when the cash bounds exclude 0. It is `UNBOUNDED` when the
+  ratio still increases after 30 doublings, about 1e9 times the scale of the returns, with weights of 7.5e8 to 5.0e9
+  there. Measured on the battery, every peak was found by the second doubling (`r - r_mv` at most 3 steps) and every
+  largest return by the first. Relative to `2 vol^2 / r`, the slope was at most -4.7e-4 where the reference stopped past
+  a peak, and at least 5.9e-4 at the last doubling of the 28 `UNBOUNDED` cases. The weights of the `OPTIMAL` results
+  are at most 3.2.
 - **Bands.** KKT residuals (`expect_user_kkt`) and the agreement of the return (relative to the larger of the
   reference and `|mu|max`) are held to 1e-10 for `cond(Sigma) <= 1e4`, 1e-9 up to 1e6 and 1e-7 up to 1e8, by the
   condition number of the covariance actually solved; above 1e8 the 1e-7 band applies.
@@ -362,6 +402,15 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
   1057 bind the leverage, 763 of them with the cap. The worst agreement with the reference is 1.5e-12 at
   `cond <= 1e4`, 4.2e-12 at 1e6 and 5.2e-10 at 1e8. `gcc-debug` runs the first 256 shapes (every combination once) at
   the caps 0.1, 0.5 and 0.9: 407 cases bind the leverage, 278 with the cap.
+- **`RatioFuzz.AgainstFrontierReference`**: `fuzz_shapes(300, 3)` for `MAX_SHARPE` and `MAX_DIVERSIFICATION`, at each
+  shape without a leverage and with `with_leverage`. The status must be that of `max_ratio_reference`. An `OPTIMAL`
+  result must have the reference's ratio, the cash weight exactly 0 and `expect_user_kkt` with the gradient written in
+  the test, `-v / vol + (v'w) Sigma w / vol^3`, and cash held to the bounds [0, 0]; all within the band. All 1200 cases
+  pass, with no case pinned. 1039 are `OPTIMAL` (91 bind the leverage), 133 `INFEASIBLE` (`rf` above every mean with a
+  box, and a leverage below 1) and 28 `UNBOUNDED` (24 `MAX_SHARPE`, 4 `MAX_DIVERSIFICATION`, all without a box or a
+  leverage). The worst agreement of the ratio is 1.4e-12 at `cond <= 1e4`, 2.0e-11 at 1e6 and 2.5e-9 at 1e8 (at most
+  0.025 of the band). The worst residual of `expect_user_kkt`, the stationarity, is 8.2e-13 at `cond <= 1e4`, 8.7e-11
+  at 1e6 and 8.4e-9 at 1e8 (at most 0.087 of the band). Every other measure stays below 1e-3 of its band.
 - **The known residual.** One case of `MaxReturnFuzz.LeverageFuzz` misses its band and is pinned by name: shape seed
   3963545680699380072 (n 24, `cond(Sigma) = 1e8`, annual scale, nearly equal means, no box, cash, the shape's leverage
   2.154), cap fraction 0.7 (cap 858.4). It is an acceptance at an adjacent end by `kAdjacentEnd`, not an error of the
@@ -376,8 +425,9 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
   11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
 - **Runtime.** In `gcc-release` `AgainstFrontierReference` 1.3 s, `NeverSilentlyWrong` 0.8 s, `MaxReturnFuzz.LeverageFuzz`
-  6.5 s and `LeverageFuzz.AgainstSignPatterns` 0.9 s; in `gcc-debug` 25.0 s, 11.9 s, 37.7 s (117 s in full, hence the
-  smaller debug run above) and 11.6 s. The other tests run their full counts in both presets.
+  6.5 s, `LeverageFuzz.AgainstSignPatterns` 0.9 s and `RatioFuzz.AgainstFrontierReference` 3.1 s; in `gcc-debug` 25.0 s,
+  11.9 s, 37.7 s (117 s in full, hence the smaller debug run above), 11.6 s and 43.7 s (in full). The other tests
+  run their full counts in both presets.
 
 **Plan-2 scripts against the fixed DLL.** The Python probes of the plan-2 review (`MAX_RETURN` against Clarabel, an
 SOCP reference, and an independent KKT check) were run against the DLL before and after these changes. Their
@@ -419,9 +469,11 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, an ill-conditioned one (`cond(R) = 1e8`) accepted with the objective of an independent least squares, no covariance needed |
 | `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems, a conditioning sweep (`cond(Sigma)` 1e2 to 1e7), a risk-free rate above every mean (all cash), equal means with tight upper bounds or with cash, the budget multiplier under a common shift of the means, the leverage along the path (the vertex of the leverage in closed form, both caps binding against finite differences in s and L), and the multipliers mapped back from the shift along the leverage and the cash bound in closed form |
 | `tests/unit/problems/leverage_test.cpp` | The leverage in `MIN_VARIANCE` and `UTILITY`: KKT with the subgradient term, a weight held at 0 by a subgradient inside [-1, 1], `L < 1` without cash infeasible, cash not counted, the multiplier against a finite difference, NaN without a leverage and 0 when inactive |
+| `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
+| `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
-| `tests/unit/problems/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the six QP objectives, `MAX_RETURN` among them), its messages and the order of the checks |
+| `tests/unit/problems/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives solved, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`), its messages and the order of the checks |
 | `tests/unit/problems/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
 | `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, the new setters and `po_data_set_returns`, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |

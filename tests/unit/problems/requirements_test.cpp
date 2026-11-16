@@ -113,17 +113,26 @@ TEST(Requirements, KellyRequiresRateAboveMinusOne)
 
 TEST(Requirements, UnimplementedObjectivesStayUnsupported)
 {
-    constexpr std::array kObjectives = {Objective::MaxSharpe, Objective::MaxDiversification, Objective::RiskParity};
-    for (Objective objective : kObjectives)
-    {
-        SCOPED_TRACE(static_cast<int>(objective));
-        Spec spec = spec_of(objective);
-        spec.risk_aversion = 3.0;
-        std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
-        ASSERT_TRUE(failure.has_value());
-        EXPECT_EQ(failure->kind, FailureKind::Unsupported);
-        EXPECT_EQ(failure->message, "objective not implemented yet");
-    }
+    Spec spec = spec_of(Objective::RiskParity);
+    spec.risk_aversion = 3.0;
+    std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
+    ASSERT_TRUE(failure.has_value());
+    EXPECT_EQ(failure->kind, FailureKind::Unsupported);
+    EXPECT_EQ(failure->message, "objective not implemented yet");
+}
+
+TEST(Requirements, MaxSharpeRequiresMu)
+{
+    expect_invalid(spec_of(Objective::MaxSharpe), without_mu(), "MAX_SHARPE requires mu");
+    expect_invalid(spec_of(Objective::MaxSharpe), without_covariance(), "MAX_SHARPE requires covariance");
+    expect_accepted(spec_of(Objective::MaxSharpe), full_data());
+}
+
+TEST(Requirements, MaxDiversificationNeedsNoMu)
+{
+    expect_accepted(spec_of(Objective::MaxDiversification), without_mu());
+    expect_invalid(spec_of(Objective::MaxDiversification), without_covariance(),
+                   "MAX_DIVERSIFICATION requires covariance");
 }
 
 TEST(Requirements, MaxReturnRequiresMaxVolatility)
@@ -156,8 +165,9 @@ TEST(Requirements, MaxVolatilityOnlyForMaxReturn)
 
 TEST(Requirements, LeverageAcceptedByQpObjectives)
 {
-    constexpr std::array kAccepting = {Objective::MinVariance, Objective::Utility, Objective::Importance,
-                                       Objective::Kelly, Objective::TrackingError};
+    constexpr std::array kAccepting = {Objective::MinVariance, Objective::Utility,      Objective::Importance,
+                                       Objective::Kelly,       Objective::TrackingError, Objective::MaxSharpe,
+                                       Objective::MaxDiversification};
     for (Objective objective : kAccepting)
     {
         SCOPED_TRACE(static_cast<int>(objective));
@@ -249,7 +259,9 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
         Cell{Objective::Utility, "UTILITY", false, true, false, false},
         Cell{Objective::Importance, "IMPORTANCE", false, false, true, false},
         Cell{Objective::Kelly, "KELLY", false, false, false, false},
-        Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false, false}};
+        Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false, false},
+        Cell{Objective::MaxSharpe, "MAX_SHARPE", false, false, false, false},
+        Cell{Objective::MaxDiversification, "MAX_DIVERSIFICATION", false, false, false, false}};
     constexpr std::array kSetters = {"target_return", "risk_aversion", "importance", "max_volatility"};
     for (const Cell& cell : kCells)
     {
@@ -271,7 +283,7 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
 
 TEST(Requirements, ImplementedCheckComesFirst)
 {
-    Spec spec = spec_of(Objective::MaxSharpe);
+    Spec spec = spec_of(Objective::RiskParity);
     spec.target_return = 0.08;
     std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
     ASSERT_TRUE(failure.has_value());

@@ -1,7 +1,8 @@
 # Mathematics
 
 The equations PortOpt solves, as the code writes them. This version covers `MIN_VARIANCE`, `UTILITY`,
-`IMPORTANCE`, `KELLY`, `TRACKING_ERROR` and `MAX_RETURN`. Later objectives add their own sections.
+`IMPORTANCE`, `KELLY`, `TRACKING_ERROR`, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION`. Later objectives add
+their own sections.
 
 ## Notation
 
@@ -186,6 +187,69 @@ Without a box, `MAX_RETURN` lies on the efficient frontier. With cash it is the 
 `w = s Sigma^-1 mu~ / sqrt(mu~' Sigma^-1 mu~)` over the risky assets, and `lambda_vol = -sqrt(mu~' Sigma^-1 mu~)`,
 the negative of the slope of the line.
 
+## MAX_SHARPE and MAX_DIVERSIFICATION
+
+    minimize    f(w) = -v'w / sqrt(w' Sigma w)
+    subject to  1'w = 1,  lower_i <= w_i <= upper_i,  sum_i |w_i| <= L (with a leverage)
+
+with `v = mu~` for `MAX_SHARPE` (the Sharpe ratio `(return - rf) / vol` with `rf = 0` without cash) and
+`v = sigma = sqrt(diag Sigma)` for `MAX_DIVERSIFICATION` (the diversification ratio, which needs no `mu`). Both ratios
+are of risky assets only: with cash the cash weight is fixed at 0, so `1'w = 1` holds over the risky weights, and cash
+bounds that exclude 0 are `PO_SOLVE_INFEASIBLE` before anything is solved. The bounds are those of the risky weights.
+
+**Homogenization** (Cornuejols and Tütüncü; Choueifaty for the diversification ratio). The ratio is homogeneous of
+degree 0 in `w`, so with `y = kappa w`, `kappa = 1'y > 0`, and the scale fixed by `v'y = 1`, maximizing the ratio is
+minimizing `y' Sigma y`. Each constraint on `w` becomes homogeneous in `y`, and `kappa > 0` is relaxed to `1'y >= 0`:
+
+    minimize    y' Sigma y
+    subject to  v'y = 1
+                y_i - lower_i 1'y >= 0      (finite lower bounds)
+                upper_i 1'y - y_i >= 0      (finite upper bounds)
+                1'y >= 0
+                L 1'y - ||y||_1 >= 0        (with a leverage: the gross exposure family with offset L 1, rhs 0)
+
+`src/problems/homogeneous.cpp` builds it with `G = 2 Sigma` (factor `sqrt(2) L`), `g = 0`, one equality row and the
+rows in this order: the bound rows of each risky asset (lower then upper), then `1'y >= 0`.
+
+- The QP `Infeasible`: no feasible `w` has `v'w > 0` (`v'y = 1` cannot be met). `PO_SOLVE_INFEASIBLE`.
+- The row `1'y >= 0` in the active set of the optimum: the optimum is at `kappa = 0`, a limit of feasible portfolios
+  whose weights grow without bound. The supremum of the ratio exists but is not attained: `PO_SOLVE_UNBOUNDED`, with
+  NaN weights and multipliers. It needs an unbounded feasible set: with every weight bounded on both sides, or with a
+  leverage, `kappa = 0` forces `y = 0`, which contradicts `v'y = 1`. Without bounds it happens when
+  `1' Sigma^-1 v <= 0`.
+- Otherwise `PO_SOLVE_OPTIMAL` with `w = y / kappa` (and cash exactly 0).
+
+Without bounds or a leverage, the optimum is `y = Sigma^-1 v / (v' Sigma^-1 v)`, so `w = Sigma^-1 v / (1' Sigma^-1 v)`
+when `1' Sigma^-1 v > 0`: the tangency portfolio for `MAX_SHARPE`, the most diversified one for `MAX_DIVERSIFICATION`.
+
+**Multipliers in the user's `w`.** With `sigma_y = sqrt(y' Sigma y)`, `w = y / kappa` gives `sigma_w = sigma_y / kappa`
+and `v'w = 1 / kappa`, so
+
+    grad f(w) = -v / sigma_w + (v'w) Sigma w / sigma_w^3 = -kappa v / sigma_y + kappa Sigma y / sigma_y^3.
+
+The stationarity of the QP (`src/qp/problem.hpp`) is
+
+    2 Sigma y = nu v + C'z + eta 1 + sum_j zeta_j (L 1 - s_j)
+
+with `nu` the multiplier of `v'y = 1`, `z` those of the bound rows, `eta` that of `1'y >= 0` and `zeta_j` those of the
+active generated rows. Every inequality row has right-hand side 0, so multiplying by `y` and using complementarity and
+`v'y = 1` leaves `nu = 2 sigma_y^2`. Substituting `Sigma y` into the gradient, the `v` terms cancel:
+
+    grad f(w) = c (C'z + eta 1 + sum_j zeta_j (L 1 - s_j)),    c = kappa / (2 sigma_y^3) > 0.
+
+The normal of a lower row is `e_i - lower_i 1` and that of an upper row `upper_j 1 - e_j`, so in the convention below
+
+- `beta_i += c z_i` for an active lower row of weight i, and `beta_j -= c z_j` for an upper row;
+- `lambda_lev = -c sum_j zeta_j`, since `-c sum_j zeta_j s_j = lambda_lev g` with `g = sum_j zeta_j s_j / sum_j zeta_j`
+  in the subdifferential of `||w||_1`;
+- the budget term is `lambda = c (eta - sum_lower z_i lower_i + sum_upper z_j upper_j + L sum_j zeta_j)`, where `eta` is
+  0 at every `OPTIMAL` result, since an active `1'y >= 0` is `UNBOUNDED`. Without cash `lambda` is the budget
+  multiplier. With cash the budget multiplier is NaN and the term is `beta_0 = -lambda`, the multiplier of the cash
+  weight held at 0, which enters the gradient as `-beta_0 1`.
+
+`f` is homogeneous of degree 0, so `w' grad f = 0`, and the budget term balances the others:
+`lambda = -(sum_i beta_i w_i + lambda_lev ||w||_1)`. At an unconstrained tangency it is 0.
+
 ## Which setters and data each objective takes
 
 Any other combination is `PO_INVALID_ARGUMENT`:
@@ -198,6 +262,8 @@ Any other combination is `PO_INVALID_ARGUMENT`:
 | `IMPORTANCE` | mu, covariance | `importance` |
 | `KELLY` | mu, covariance, `1 + rf > 0` | none |
 | `TRACKING_ERROR` | returns (mu with a target) | `target_return` |
+| `MAX_SHARPE` | mu, covariance | `leverage` |
+| `MAX_DIVERSIFICATION` | covariance | `leverage` |
 
 `po_solve` checks, in this order: the objective is solved by this version (`PO_UNSUPPORTED` otherwise), every set
 setter applies to the objective, the data it requires is present, and per-asset bounds match the weight count. The
