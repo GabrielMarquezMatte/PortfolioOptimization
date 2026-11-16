@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "core/data.hpp"
@@ -15,9 +17,11 @@
 #include "core/spec.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
+#include "fuzz/risk_parity/risk_parity_refinement.hpp"
 #include "random_covariance.hpp"
 #include "riskparity/kkt.hpp"
 #include "riskparity/polyhedral_descent.hpp"
+#include "solve/solve.hpp"
 
 namespace
 {
@@ -77,6 +81,10 @@ Result as_result(const Spec& spec, const KktPoint& point)
     if (spec.target_return.has_value())
     {
         result.target_return_multiplier = point.equality_multipliers.at(1);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        result.volatility_multiplier = point.equality_multipliers.back();
     }
     return result;
 }
@@ -263,6 +271,139 @@ TEST(NewtonPolish, ReleasesABoundWhoseMultiplierHasTheWrongSign)
     {
         EXPECT_NEAR(polished.point.weights[i], solution.point.weights[i], 1e-12) << "weight " << i;
     }
+}
+
+using Shape = po::testing::RiskParityShape;
+
+KktPoint point_of(const Spec& spec, const Result& result)
+{
+    KktPoint point{result.weights, {result.budget_multiplier}, result.bound_multipliers};
+    if (spec.target_return.has_value())
+    {
+        point.equality_multipliers.push_back(result.target_return_multiplier);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        point.equality_multipliers.push_back(result.volatility_multiplier);
+    }
+    return point;
+}
+
+// The cases of the measurement of the Newton multipliers in docs/guide/validation.md at one cond(Sigma), no
+// box and equal budget: three shapes at s = 1.2 sigma_min and the 8 of
+// RiskParityFuzz.TargetVolatilityMultipliersByCondition.
+std::vector<po::testing::GeneratedRiskParity> multiplier_cases(double condition)
+{
+    std::vector<po::testing::GeneratedRiskParity> cases;
+    for (auto [n, seed] : {std::pair<std::size_t, std::uint64_t>{5, 7}, {5, 11}, {8, 3}})
+    {
+        po::testing::GeneratedRiskParity generated = po::testing::generate(
+            Shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, seed});
+        Result minimum = po::testing::frontier_point(generated.spec, generated.data, std::nullopt);
+        double smallest = po::testing::portfolio_volatility(generated.data, minimum.weights);
+        generated.spec.target_volatility = 1.2 * smallest;
+        cases.push_back(std::move(generated));
+    }
+    for (std::size_t n : {5u, 8u})
+    {
+        for (std::uint64_t seed = 402; seed <= 405; ++seed)
+        {
+            cases.push_back(po::testing::generate(
+                Shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, seed}));
+        }
+    }
+    return cases;
+}
+
+// forward_error(...).multipliers of the least-squares and of the corrected multipliers of a polish.
+struct MultiplierErrors
+{
+    double least_squares;
+    double corrected;
+};
+
+// The corrected multipliers are those po::solve returned. A polish of that result takes no step and settles
+// the same weights again: its least-squares multipliers are those the KKT gate checked (to their rounding,
+// which depends on the multipliers the least-squares fit starts from), and it accepts the correction there.
+MultiplierErrors multiplier_errors(const po::testing::GeneratedRiskParity& generated)
+{
+    const Spec& spec = generated.spec;
+    Result solved = po::solve(spec, generated.data).value();
+    EXPECT_EQ(solved.status, po::SolveStatus::Optimal);
+    KktProblem problem{spec, generated.data, spec.risk_budget};
+    PolishResult polished = po::riskparity::newton_polish(problem, point_of(spec, solved));
+    EXPECT_EQ(polished.steps, 0);
+    EXPECT_TRUE(polished.correction.accepted);
+    EXPECT_EQ(polished.correction.point.weights, solved.weights);
+    Result least_squares = as_result(spec, polished.point);
+    return MultiplierErrors{po::testing::forward_error(spec, generated.data, least_squares).multipliers,
+                            po::testing::forward_error(spec, generated.data, solved).multipliers};
+}
+
+struct MultiplierCeiling
+{
+    double condition;
+    double corrected;
+};
+
+// The multipliers of the target-volatility path against those of the KKT point refined in long double, with
+// the weights unchanged. The least-squares estimate at the rounded weights loses the correction H dw that the
+// Newton solve at the end of the polish keeps. The ceilings of the corrected multipliers are the largest
+// measured on these cases times 10, not derived (docs/guide/validation.md): 5.2e-11 at 1e6 and 7.1e-10 at
+// 1e8. The least-squares ones stay more than 100 times above them (8.2e-7 and 3.7e-2), so that the test tells
+// the two apart.
+TEST(NewtonPolish, KeepsTheNewtonMultiplierCorrection)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    for (MultiplierCeiling ceiling : {MultiplierCeiling{1e6, 5.2e-10}, MultiplierCeiling{1e8, 7.2e-9}})
+    {
+        SCOPED_TRACE(ceiling.condition);
+        double worst_least_squares = 0.0;
+        double worst_corrected = 0.0;
+        for (const po::testing::GeneratedRiskParity& generated : multiplier_cases(ceiling.condition))
+        {
+            MultiplierErrors errors = multiplier_errors(generated);
+            EXPECT_LE(errors.corrected, ceiling.corrected);
+            worst_least_squares = std::fmax(worst_least_squares, errors.least_squares);
+            worst_corrected = std::fmax(worst_corrected, errors.corrected);
+        }
+        std::string exponent = std::to_string(static_cast<int>(std::log10(ceiling.condition)));
+        RecordProperty("least_squares_" + exponent, ::testing::PrintToString(worst_least_squares));
+        RecordProperty("corrected_" + exponent, ::testing::PrintToString(worst_corrected));
+        EXPECT_GT(worst_least_squares, 100.0 * ceiling.corrected);
+    }
+}
+
+// A point far from a KKT point of its problem: the solution at s = 1.1 sigma_min, multipliers included, for
+// the problem at s = sigma_min (1 + 1e-4), where the volatility multiplier is much larger and the weights
+// must move toward the minimum-variance portfolio. A second solve from the corrected multipliers changes them
+// by more than half of the first correction, which is refused: the multipliers stay those of the point.
+TEST(NewtonPolish, RejectsACorrectionThatDoesNotContract)
+{
+    std::size_t n = 5;
+    Data data = sample_data(n, 7);
+    Spec spec;
+    spec.objective = po::Objective::RiskParity;
+    spec.risk_budget.assign(n, 1.0 / static_cast<double>(n));
+    Result minimum = po::testing::frontier_point(spec, data, std::nullopt);
+    double smallest = po::testing::portfolio_volatility(data, minimum.weights);
+    spec.target_volatility = 1.1 * smallest;
+    Result far = po::solve(spec, data).value();
+    ASSERT_EQ(far.status, po::SolveStatus::Optimal);
+    spec.target_volatility = smallest * (1.0 + 1e-4);
+    KktProblem problem{spec, data, spec.risk_budget};
+    KktPoint point = point_of(spec, far);
+    po::riskparity::MultiplierCorrection correction = po::riskparity::corrected_multipliers(problem, point);
+    RecordProperty("contraction", ::testing::PrintToString(correction.second_change / correction.change));
+    EXPECT_GT(correction.change, 0.0);
+    EXPECT_GT(correction.second_change, 0.5 * correction.change);
+    EXPECT_FALSE(correction.accepted);
+    EXPECT_EQ(correction.point.weights, point.weights);
+    EXPECT_EQ(correction.point.equality_multipliers, point.equality_multipliers);
+    EXPECT_EQ(correction.point.bound_multipliers, point.bound_multipliers);
 }
 
 // The KKT residual in units of its noise separates a KKT point from a point an error of 1e-9 of a weight

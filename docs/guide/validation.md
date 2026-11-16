@@ -756,6 +756,26 @@ computed in the test in `long double` and without `src/riskparity/kkt.cpp`:
   `1e8` (three seeds, `n = 6`; the test asks `1e-3`, since the analytic one is itself rounded by about
   `eps cond(Sigma)`: `RiskParityReference.HessianByDifferencesMatchesTheObjectiveAtCondition1e8`).
 
+The multipliers in `r` are not always those of the result. Where the free weights (those whose `beta` is 0)
+determine the equality multipliers (at least as many free weights as equalities, their gradients over the free
+weights independent by the `1e-12` rule of the QP solver), the test refits them at the weights of the result,
+by least squares over the free weights in `long double` (modified Gram-Schmidt), with the `beta` of a held
+weight what its row then leaves: the multipliers the KKT gate of the library checks
+(`least_squares_fit`). Elsewhere (every weight held, dependent rows) `r` takes the multipliers of the result.
+The multipliers of the result are then checked against the KKT point refined from it in `long double` (the six
+Newton steps of the forward error below): `max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)` may
+exceed that of the fit by at most the band (`expect_multipliers_toward_the_reference`; not checked where the
+refinement meets a singular system or `long double` is `double`). The reason: the polish returns multipliers
+corrected by a Newton solve (the section on the polish), and with the exact multipliers the stationarity at
+weights off the KKT point is `H dw`, which the least-squares fit absorbs in part. On every result measured here
+the corrected multipliers stay within the floor anyway (at most 0.27 of it in the measurement of the Newton
+multipliers below), so the refit decides nothing there; it is a guard. The guard cuts both ways
+(`RiskParityReference.KktUsesLeastSquaresMultipliersForTheFloor`): at `s = sigma_min (1 + 1e-10)` (`n = 5`,
+`cond(Sigma) = 1e4`) the fit is `5.3e-8` from the refined multipliers, and multipliers half as far from them,
+all of it in the budget multiplier, leave a stationarity at `1.0e6` times its floor, yet pass; at
+`s = 1.2 sigma_min` of another shape, multipliers `1e-6` from the refined ones fail, by the comparison with the
+reference alone.
+
 **Portability of the reference.** Every sum of the reference that cancels (`Sigma w`, `w' Sigma w`, `c'(c - b)`,
 the residual of the Spinu reference in `spinu_test.cpp`) is a compensated dot product (Dot2: `fma` and TwoSum),
 templated on the type, so it is as accurate as a sum in twice the working precision whether `long double` is
@@ -955,6 +975,27 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
   `s = sigma_min (1 + 1e-9)` (`n = 5`, `cond(Sigma) = 1e4`), where `lambda_vol s = -2.5e5`, the polish refused
   its first step from every point the augmented Lagrangian reached and the result was `MAX_ITER`; with the
   estimate it takes 4 to 8 steps to a residual of 0.3.
+- **The multipliers are corrected once more at the end** (`corrected_multipliers`): at the point the polish
+  ends at, one more Newton solve at the same weights gives `dlambda`, added to the multipliers of the kept
+  equalities, and `beta_j = (grad f - A'lambda_new)_j + (H dw)_j` for a held weight. The weights, the status,
+  the steps and the KKT gate (`is_kkt_point`, with the least-squares multipliers) do not change; `po::solve`
+  returns the corrected multipliers. The correction is kept only if both QR factorizations have full rank, a
+  second solve from `(w, lambda_new)` changes the multipliers by at most half the first correction, every held
+  `beta` keeps the sign of its bound, and the stationarity at `(w, lambda_new)` is within 16 times its noise
+  (the factor of the gate). The last rule is measured, not derived: near `sigma_min` the contraction alone is
+  not enough. At `s = sigma_min (1 + 1e-10)` (the table below) the correction is `6.1e-7` of `abs(lambda)` and
+  its second solve contracts by `6.3e-7`, yet it takes the multipliers from `5.3e-8` to `5.5e-7` of the refined
+  ones and leaves a stationarity of 958 times its noise, against 0.027 with least squares. Every correction
+  that improved the multipliers left at most 0.50 (this table) and 0.27 (the 44 cases of the measurement
+  above) of the noise. A cap on `abs(dlambda) / abs(lambda)` cannot tell them apart: the good corrections at
+  `cond(Sigma) = 1e8` reach `4.3e-2`. On the 18 results of the table below (9 values of `delta` from `1e-2` to
+  `1e-10`, no box and long only) the safeguard kept the least-squares multipliers twice, at `delta = 1e-10`
+  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`); on the 44 cases of the measurement above
+  it refused only where the QR has no full rank (`cond(Sigma) = 1e10`, `n = 8`). A point far from its KKT
+  point (`s = 1.1 sigma_min` solved, `s = sigma_min (1 + 1e-4)` asked) has a contraction of 0.71 and is
+  refused (`NewtonPolish.RejectsACorrectionThatDoesNotContract`). With a target return alone (`cond(Sigma) =
+  1e8`, `n = 8`, LongOnly and Capped, both budgets, 4 seeds) the multipliers stay within `5.1e-15` of the
+  refined ones, as with least squares (`RiskParity.TargetReturnOnlyMultipliersUnchanged`).
 - **The settling is done at the start too**, whether or not a step follows: the weights the start names at a
   bound are put exactly there and the multipliers are the settled ones, so a point that no step improves does
   not keep the multipliers of the descent (`NewtonPolish.SettlesTheMultipliersWithoutAStep`: a budget
@@ -1335,8 +1376,8 @@ Verified means the text was read for the claim it supports. The full list, with 
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
 | `tests/unit/riskparity/spinu_test.cpp` | Spinu against the diagonal and the two-asset closed forms (1e-12), the contributions against an equal budget (n up to 100, `cond(Sigma)` 1e2 to 1e6, 20 seeds) and an uneven one (`b_i` from 1e-6 to 1, `cond(Sigma)` up to 1e8, both scales), in the bands of the table above |
-| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s` |
-| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point |
+| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s`; `s = sigma_min (1 + delta)` for `delta` from `1e-2` to `1e-10` with the safeguard of the multiplier correction; the multipliers of the target-return path unchanged at `1e8` |
+| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point; the Newton correction of the multipliers against the refined KKT point at `cond(Sigma)` 1e6 and 1e8, and a correction that does not contract refused |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
 | `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit) |
 | `tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp` | Disabled measurement only: the multipliers of the target-volatility path at the point `po::solve` returns, least squares and after one Newton-KKT solve, against the refined KKT point, with an optional dump for the 80-digit reference |

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/data.hpp"
+#include "core/objective.hpp"
 #include "core/result.hpp"
 #include "core/spec.hpp"
 #include "fuzz/frontier_reference.hpp"
@@ -646,6 +647,77 @@ TEST(RiskParityReference, ForwardErrorMeasuresTheDistanceToTheRefinedPoint)
     EXPECT_LE(error.reference_over_floor, 1e-2);
     EXPECT_GE(error.weights, 0.5e-10);
     EXPECT_LE(error.weights, 2e-10);
+}
+
+// The KKT point refined from a result and the result with its equality multipliers, the budget multiplier
+// then moved by a fraction of the largest of them.
+struct NearRefined
+{
+    std::vector<long double> refined;
+    Result result;
+};
+
+NearRefined near_refined(const Spec& spec, const Data& data, const Result& result, double fraction)
+{
+    NearRefined near{po::testing::refined_multipliers(spec, data, result).value(), result};
+    po::testing::set_equality_multipliers(spec, near.refined, near.result);
+    double largest =
+        std::fmax(std::fabs(near.result.budget_multiplier), std::fabs(near.result.volatility_multiplier));
+    near.result.budget_multiplier += fraction * largest;
+    return near;
+}
+
+// The stationarity at the weights of a result is checked with the least-squares fit there, as the KKT gate of
+// the library does, and the multipliers of the result against the KKT point refined from it. At
+// s = sigma_min (1 + 1e-10) (n = 5, cond(Sigma) = 1e4, equal budget, no box) the gradients of the budget and
+// of the volatility are nearly parallel and the fit is about 5e-8 from the refined multipliers, along the
+// direction the stationarity does not see. Multipliers half as far from the refined ones, all of it in the
+// budget multiplier, leave a stationarity far above the band and the floor, yet are closer than the fit and
+// pass. At s = 1.2 sigma_min of another shape, where the fit is right to about 1e-11, multipliers 1e-6 from
+// the refined ones fail, by the comparison with the reference alone.
+TEST(RiskParityReference, KktUsesLeastSquaresMultipliersForTheFloor)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    std::size_t n = 5;
+    Data data = covariance_data(n, random_vector(n, 513, 0.03, 0.15), random_covariance(n, 13, 1e4));
+    Spec spec;
+    spec.objective = po::Objective::RiskParity;
+    spec.risk_budget.assign(n, 1.0 / static_cast<double>(n));
+    Result minimum = po::testing::frontier_point(spec, data, std::nullopt);
+    spec.target_volatility = po::testing::portfolio_volatility(data, minimum.weights) * (1.0 + 1e-10);
+    Result solved = po::solve(spec, data).value();
+    ASSERT_EQ(solved.status, SolveStatus::Optimal);
+    Result fit = po::testing::least_squares_fit(spec, data, solved).value();
+    EXPECT_LE(po::testing::risk_parity_stationarity(spec, data, fit, 1e-10).over_floor,
+              po::testing::kRoundingFloorFactor);
+    std::vector<long double> refined = po::testing::refined_multipliers(spec, data, solved).value();
+    std::vector<long double> fitted = po::testing::wide_kkt_of(spec, fit).multipliers;
+    double fit_distance = po::testing::multiplier_distance(fitted, refined);
+    EXPECT_GT(fit_distance, 1e-8);
+    NearRefined close = near_refined(spec, data, solved, 0.5 * fit_distance);
+    po::testing::RiskParityStationarity own =
+        po::testing::risk_parity_stationarity(spec, data, close.result, 1e-10);
+    RecordProperty("fit_distance", ::testing::PrintToString(fit_distance));
+    RecordProperty("own_over_floor", ::testing::PrintToString(own.over_floor));
+    EXPECT_GT(own.relative, 1e-10);
+    EXPECT_GT(own.over_floor, po::testing::kRoundingFloorFactor);
+    std::vector<std::string> failures =
+        po::testing::risk_parity_kkt_failures(spec, data, close.result, 1e-10);
+    EXPECT_TRUE(failures.empty()) << failures.front();
+
+    using Shape = po::testing::RiskParityShape;
+    po::testing::GeneratedRiskParity plain = po::testing::generate(
+        Shape{5, 1e4, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, 402});
+    Result result = po::solve(plain.spec, plain.data).value();
+    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    po::testing::expect_risk_parity_kkt(plain.spec, plain.data, result, 1e-10);
+    NearRefined away = near_refined(plain.spec, plain.data, result, 1e-6);
+    failures = po::testing::risk_parity_kkt_failures(plain.spec, plain.data, away.result, 1e-10);
+    ASSERT_EQ(failures.size(), 1u);
+    EXPECT_NE(failures.front().find("refined KKT point"), std::string::npos) << failures.front();
 }
 
 TEST(RiskParityReference, ShapesCoverEveryCombination)

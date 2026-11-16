@@ -18,8 +18,8 @@
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_refinement.hpp"
-#include "linalg/qr.hpp"
 #include "riskparity/kkt.hpp"
+#include "riskparity/newton_polish.hpp"
 #include "solve/solve.hpp"
 
 namespace
@@ -31,69 +31,6 @@ using Shape = po::testing::RiskParityShape;
 
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-// [H, -A'; A, 0] and -[stationarity; gaps] over every weight (no box), as newton_polish builds its Newton
-// system: each row of A and its right-hand side scaled to the largest entry of H, so that the unknown z_k of
-// equality k is dlambda_k / scales[k].
-struct ScaledSystem
-{
-    std::size_t size;
-    std::vector<double> matrix;
-    std::vector<double> rhs;
-    std::vector<double> scales;
-};
-
-ScaledSystem scaled_system(const po::riskparity::KktEvaluation& evaluation)
-{
-    std::size_t n = evaluation.stationarity.size();
-    std::size_t m = evaluation.gaps.size();
-    std::size_t size = n + m;
-    ScaledSystem system{size, std::vector<double>(size * size, 0.0), std::vector<double>(size),
-                        std::vector<double>(m)};
-    for (std::size_t a = 0; a < n; ++a)
-    {
-        for (std::size_t b = 0; b < n; ++b)
-        {
-            system.matrix[a * size + b] = evaluation.lagrangian_hessian[a * n + b];
-        }
-        system.rhs[a] = -evaluation.stationarity[a];
-    }
-    double hessian_scale = po::testing::largest_magnitude(system.matrix);
-    for (std::size_t k = 0; k < m; ++k)
-    {
-        std::span<const double> row = std::span<const double>(evaluation.rows).subspan(k * n, n);
-        system.scales[k] = hessian_scale / po::testing::largest_magnitude(row);
-        for (std::size_t a = 0; a < n; ++a)
-        {
-            system.matrix[a * size + n + k] = -system.scales[k] * row[a];
-            system.matrix[(n + k) * size + a] = system.scales[k] * row[a];
-        }
-        system.rhs[n + k] = -system.scales[k] * evaluation.gaps[k];
-    }
-    return system;
-}
-
-// lambda + dlambda of one Newton-KKT solve at the point, by a Householder QR of the scaled system; the
-// weights stay where they are. NaN when the system is rank deficient to working precision.
-std::vector<double> newton_multipliers(const po::riskparity::KktProblem& problem,
-                                       const po::riskparity::KktPoint& point)
-{
-    std::vector<double> multipliers = point.equality_multipliers;
-    ScaledSystem system = scaled_system(po::riskparity::evaluate_kkt(problem, point));
-    po::linalg::Qr qr = po::linalg::householder_qr(system.matrix, system.size, system.size);
-    if (!po::linalg::has_full_column_rank(qr))
-    {
-        multipliers.assign(multipliers.size(), kNaN);
-        return multipliers;
-    }
-    std::vector<double> step = po::linalg::least_squares(qr, std::move(system.rhs));
-    std::size_t n = point.weights.size();
-    for (std::size_t k = 0; k < multipliers.size(); ++k)
-    {
-        multipliers[k] += system.scales[k] * step[n + k];
-    }
-    return multipliers;
-}
-
 double norm_of(std::span<const double> values)
 {
     double total = 0.0;
@@ -102,16 +39,6 @@ double norm_of(std::span<const double> values)
         total += value * value;
     }
     return std::sqrt(total);
-}
-
-std::vector<double> difference(std::span<const double> a, std::span<const double> b)
-{
-    std::vector<double> result(a.size());
-    for (std::size_t k = 0; k < a.size(); ++k)
-    {
-        result[k] = a[k] - b[k];
-    }
-    return result;
 }
 
 // The KKT point refined from the result in long double, by the steps of forward_error.
@@ -134,6 +61,7 @@ po::testing::WideKkt refined(const po::Spec& spec, const po::Data& data, const R
 // The budget and volatility multipliers of a result without a target return.
 Result with_multipliers(const Result& start, std::span<const double> multipliers)
 {
+    // equality_multipliers is [budget, volatility] here: no target return, so no middle entry.
     Result result = start;
     result.budget_multiplier = multipliers.front();
     result.volatility_multiplier = multipliers.back();
@@ -172,6 +100,8 @@ struct Measurement
     // |dlambda| / |lambda_LS|, and |dlambda_2| / |dlambda| for a second solve from (w, lambda_LS + dlambda).
     double change;
     double contraction;
+    // The safeguard of corrected_multipliers kept the correction; the Newton columns are NaN otherwise.
+    bool accepted;
     // risk_parity_stationarity(...).over_floor: the gate of expect_risk_parity_kkt is 2.
     double least_squares_over_floor;
     double newton_over_floor;
@@ -196,23 +126,37 @@ double over_noise(const po::riskparity::KktProblem& problem, const po::riskparit
     return po::riskparity::residual_of(problem, point, evaluation).stationarity;
 }
 
+// The least-squares point of a polish of the result (no step: the weights of the result), the correction
+// corrected_multipliers made there, and the refined KKT point.
 struct Point
 {
     po::riskparity::KktPoint least_squares;
-    po::riskparity::KktPoint newton;
+    po::riskparity::MultiplierCorrection correction;
     std::vector<long double> reference;
 };
+
+// The corrected multipliers when the safeguard kept them, NaN otherwise.
+po::riskparity::KktPoint newton_point(const Point& point)
+{
+    po::riskparity::KktPoint newton = point.correction.point;
+    if (!point.correction.accepted)
+    {
+        newton.equality_multipliers.assign(newton.equality_multipliers.size(), kNaN);
+    }
+    return newton;
+}
 
 Point point_of(const po::testing::GeneratedRiskParity& generated, const Result& result,
                const po::riskparity::KktProblem& problem)
 {
-    po::riskparity::KktPoint least_squares{result.weights,
-                                           {result.budget_multiplier, result.volatility_multiplier},
-                                           result.bound_multipliers};
-    po::riskparity::KktPoint newton = least_squares;
-    newton.equality_multipliers = newton_multipliers(problem, least_squares);
-    return Point{std::move(least_squares), std::move(newton),
-                 refined(generated.spec, generated.data, result).multipliers};
+    po::riskparity::KktPoint start{result.weights,
+                                   {result.budget_multiplier, result.volatility_multiplier},
+                                   result.bound_multipliers};
+    po::riskparity::PolishResult polished = po::riskparity::newton_polish(problem, start);
+    EXPECT_EQ(polished.steps, 0);
+    Result least_squares = with_multipliers(result, polished.point.equality_multipliers);
+    return Point{std::move(polished.point), std::move(polished.correction),
+                 refined(generated.spec, generated.data, least_squares).multipliers};
 }
 
 Measurement measure(const po::testing::GeneratedRiskParity& generated, const Result& result,
@@ -220,12 +164,12 @@ Measurement measure(const po::testing::GeneratedRiskParity& generated, const Res
 {
     const po::Spec& spec = generated.spec;
     const po::Data& data = generated.data;
+    po::riskparity::KktPoint newton_kkt = newton_point(point);
     std::span<const double> least_squares = point.least_squares.equality_multipliers;
-    std::span<const double> newton = point.newton.equality_multipliers;
+    std::span<const double> newton = newton_kkt.equality_multipliers;
+    Result fitted = with_multipliers(result, least_squares);
     Result corrected = with_multipliers(result, newton);
-    po::testing::ForwardError forward = po::testing::forward_error(spec, data, result);
-    std::vector<double> step = difference(newton, least_squares);
-    std::vector<double> second = difference(newton_multipliers(problem, point.newton), newton);
+    po::testing::ForwardError forward = po::testing::forward_error(spec, data, fitted);
     double target = *spec.target_volatility;
     return Measurement{forward.weights,
                        forward.reference_over_floor,
@@ -233,23 +177,25 @@ Measurement measure(const po::testing::GeneratedRiskParity& generated, const Res
                        multiplier_error(target, point.reference, newton),
                        forward.multipliers,
                        po::testing::forward_error(spec, data, corrected).multipliers,
-                       norm_of(step) / norm_of(least_squares),
-                       norm_of(second) / norm_of(step),
-                       over_floor(spec, data, result),
+                       point.correction.change / norm_of(least_squares),
+                       point.correction.second_change / point.correction.change,
+                       point.correction.accepted,
+                       over_floor(spec, data, fitted),
                        over_floor(spec, data, corrected),
                        over_noise(problem, point.least_squares),
-                       over_noise(problem, point.newton)};
+                       over_noise(problem, newton_kkt)};
 }
 
 void print_measurement(const char* label, const Shape& shape, const Measurement& measured)
 {
     std::printf("| %s | %.0e | %zu | %llu | %.1e | %.1e / %.1e | %.1e / %.1e | %.1e / %.1e | %.1e | %.1e | "
-                "%.2f / %.2f | %.2f / %.2f | %.1e |\n",
+                "%d | %.2f / %.2f | %.2f / %.2f | %.1e |\n",
                 label, shape.condition, shape.n, static_cast<unsigned long long>(shape.seed),
                 measured.weights, measured.least_squares.volatility, measured.least_squares.budget,
                 measured.newton.volatility, measured.newton.budget, measured.least_squares_combined,
                 measured.newton_combined, measured.change, measured.contraction,
-                measured.least_squares_over_floor, measured.newton_over_floor,
+                static_cast<int>(measured.accepted), measured.least_squares_over_floor,
+                measured.newton_over_floor,
                 measured.least_squares_over_noise, measured.newton_over_noise, measured.reference_over_floor);
 }
 
@@ -281,7 +227,7 @@ void dump(const char* label, const Shape& shape, const po::testing::GeneratedRis
     dump_values(file, "covariance", generated.data.covariance());
     dump_values(file, "weights", point.least_squares.weights);
     dump_values(file, "least_squares", point.least_squares.equality_multipliers);
-    dump_values(file, "newton", point.newton.equality_multipliers);
+    dump_values(file, "newton", newton_point(point).equality_multipliers);
     std::fprintf(file, "reference %.21Lg %.21Lg\n", point.reference.front(), point.reference.back());
     po::riskparity::KktEvaluation evaluation = po::riskparity::evaluate_kkt(problem, point.least_squares);
     dump_values(file, "hessian", evaluation.lagrangian_hessian);
@@ -316,10 +262,10 @@ po::testing::GeneratedRiskParity probe_problem(const Shape& shape)
 }
 
 // The multipliers of the target-volatility path at the point po::solve returns (no box, equal budget), by
-// cond(Sigma): those of the result (least squares at the rounded weights) and those of one Newton-KKT solve
-// there, both against the KKT point refined in long double; the measurement of docs/guide/validation.md. Run
-// with --gtest_also_run_disabled_tests. PORTOPT_MULTIPLIER_DUMP=path appends every case to path for the
-// 80-digit reference of the same section.
+// cond(Sigma): the least-squares ones at the rounded weights and those of one Newton-KKT solve there
+// (corrected_multipliers, NaN where its safeguard refused it), both against the KKT point refined in long
+// double; the measurement of docs/guide/validation.md. Run with --gtest_also_run_disabled_tests.
+// PORTOPT_MULTIPLIER_DUMP=path appends every case to path for the 80-digit reference of the same section.
 TEST(RiskParityMultiplierMeasure, DISABLED_MeasureNewtonMultipliers)
 {
     if (!po::testing::kLongDoubleIsExtended)
@@ -327,7 +273,7 @@ TEST(RiskParityMultiplierMeasure, DISABLED_MeasureNewtonMultipliers)
         GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
     }
     std::printf("| cases | cond | n | seed | w error | LS vol / budget | Newton vol / budget | "
-                "combined LS / Newton | dlambda | contraction | over floor LS / Newton | "
+                "combined LS / Newton | dlambda | contraction | accepted | over floor LS / Newton | "
                 "over noise LS / Newton | reference over floor |\n");
     for (double condition : {1e4, 1e6, 1e8, 1e10})
     {

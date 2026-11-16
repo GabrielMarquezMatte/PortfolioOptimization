@@ -15,7 +15,10 @@
 #include "core/spec.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
+#include "fuzz/risk_parity/risk_parity_refinement.hpp"
 #include "random_covariance.hpp"
+#include "riskparity/kkt.hpp"
+#include "riskparity/newton_polish.hpp"
 #include "solve/solve.hpp"
 
 namespace
@@ -328,6 +331,117 @@ TEST(RiskParity, VolatilityEqualMinimumAtCondition1e8)
         EXPECT_EQ(result.volatility_multiplier, -kInfinity);
         po::testing::expect_risk_parity_kkt(spec, data, result, 1e-7);
     }
+}
+
+po::riskparity::KktPoint kkt_point_of(const Spec& spec, const Result& result)
+{
+    po::riskparity::KktPoint point{result.weights, {result.budget_multiplier}, result.bound_multipliers};
+    if (spec.target_return.has_value())
+    {
+        point.equality_multipliers.push_back(result.target_return_multiplier);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        point.equality_multipliers.push_back(result.volatility_multiplier);
+    }
+    return point;
+}
+
+void expect_near_multipliers(const std::vector<double>& actual, const std::vector<double>& expected)
+{
+    double scale = po::testing::largest_magnitude(expected);
+    for (std::size_t k = 0; k < expected.size(); ++k)
+    {
+        EXPECT_NEAR(actual[k], expected[k], 1e-12 * scale) << "multiplier " << k;
+    }
+}
+
+// The polish of a result settles the same weights again (no step): its least-squares multipliers are those
+// the KKT gate checked, and its correction the multipliers po::solve returned, both to the rounding of the
+// least-squares fit, which depends on the multipliers it starts from.
+po::riskparity::PolishResult polish_of(const Spec& spec, const Data& data, const Result& result)
+{
+    std::vector<double> budget = po::riskparity::risk_budget_of(spec, data);
+    po::riskparity::KktProblem problem{spec, data, budget};
+    po::riskparity::PolishResult polished =
+        po::riskparity::newton_polish(problem, kkt_point_of(spec, result));
+    EXPECT_EQ(polished.steps, 0);
+    expect_near_multipliers(polished.correction.point.equality_multipliers,
+                            kkt_point_of(spec, result).equality_multipliers);
+    expect_near_multipliers(polished.correction.point.bound_multipliers, result.bound_multipliers);
+    return polished;
+}
+
+// s = sigma_min (1 + delta), where the volatility multiplier grows like 1 / sqrt(delta) and the gradients of
+// the budget and of the volatility turn parallel: the Newton correction of the multipliers is returned only
+// where the safeguard accepts it. Every result is OPTIMAL and a KKT point at the band, whose returned
+// multipliers expect_risk_parity_kkt finds no farther from the refined KKT point than the least-squares ones.
+// How many results kept the least-squares multipliers is recorded (docs/guide/validation.md).
+TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
+{
+    Data data = sample_data(5, 13);
+    int kept = 0;
+    for (Spec spec : {risk_parity_spec(), long_only_spec()})
+    {
+        double sigma_min = minimum_volatility(spec, data);
+        for (double delta : {1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10})
+        {
+            SCOPED_TRACE(::testing::Message() << "lower " << spec.lower << " delta " << delta);
+            spec.target_volatility = sigma_min * (1.0 + delta);
+            Result result = solved(spec, data);
+            expect_stationary(spec, data, result);
+            po::riskparity::PolishResult polished = polish_of(spec, data, result);
+            kept += polished.correction.accepted ? 0 : 1;
+        }
+    }
+    RecordProperty("kept_least_squares", kept);
+}
+
+// The path with a target return and no target volatility, at cond(Sigma) = 1e8: its least-squares
+// multipliers are already right to 1e-14 of the refined KKT point, and the correction keeps them there, as
+// the same bits or at most 1e-14 away.
+TEST(RiskParity, TargetReturnOnlyMultipliersUnchanged)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    using Shape = po::testing::RiskParityShape;
+    int same_bits = 0;
+    double worst = 0.0;
+    double worst_least_squares = 0.0;
+    for (Shape::Box box : {Shape::Box::LongOnly, Shape::Box::Capped})
+    {
+        for (Shape::Budget budget : {Shape::Budget::Equal, Shape::Budget::Uneven})
+        {
+            for (std::uint64_t seed = 1; seed <= 4; ++seed)
+            {
+                Shape shape{8, 1e8, 1.0, budget, box, true, false, seed};
+                SCOPED_TRACE(po::testing::describe(shape));
+                po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+                Result result = solved(generated.spec, generated.data);
+                ASSERT_EQ(result.status, SolveStatus::Optimal);
+                po::riskparity::PolishResult polished = polish_of(generated.spec, generated.data, result);
+                Result least_squares = result;
+                least_squares.budget_multiplier = polished.point.equality_multipliers.front();
+                least_squares.target_return_multiplier = polished.point.equality_multipliers.back();
+                least_squares.bound_multipliers = polished.point.bound_multipliers;
+                bool same = least_squares.budget_multiplier == result.budget_multiplier &&
+                            least_squares.target_return_multiplier == result.target_return_multiplier &&
+                            least_squares.bound_multipliers == result.bound_multipliers;
+                double error = po::testing::forward_error(generated.spec, generated.data, result).multipliers;
+                EXPECT_TRUE(same || error <= 1e-14) << "multiplier error " << error;
+                same_bits += same ? 1 : 0;
+                worst = std::fmax(worst, error);
+                double fit_error =
+                    po::testing::forward_error(generated.spec, generated.data, least_squares).multipliers;
+                worst_least_squares = std::fmax(worst_least_squares, fit_error);
+            }
+        }
+    }
+    RecordProperty("same_bits", same_bits);
+    RecordProperty("worst", ::testing::PrintToString(worst));
+    RecordProperty("worst_least_squares", ::testing::PrintToString(worst_least_squares));
 }
 
 TEST(RiskParity, VolatilityBelowMinimumInfeasible)

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <utility>
@@ -51,12 +52,14 @@ struct Unknowns
     std::vector<std::size_t> equalities;
 };
 
-// A square system, size x size (row-major), and its right-hand side.
+// A square system, size x size (row-major), and its right-hand side. The row of each kept equality is
+// scaled by its entry of scales, which scales its unknown by the inverse.
 struct LinearSystem
 {
     std::size_t size;
     std::vector<double> matrix;
     std::vector<double> rhs;
+    std::vector<double> scales;
 };
 
 std::vector<Side> sides_named_by(std::span<const double> bound_multipliers)
@@ -275,7 +278,8 @@ LinearSystem newton_system(const KktEvaluation& evaluation, const Unknowns& unkn
     std::size_t n = evaluation.stationarity.size();
     std::size_t free_count = unknowns.free.size();
     std::size_t size = free_count + unknowns.equalities.size();
-    LinearSystem system{size, std::vector<double>(size * size, 0.0), std::vector<double>(size)};
+    LinearSystem system{size, std::vector<double>(size * size, 0.0), std::vector<double>(size),
+                        std::vector<double>(unknowns.equalities.size())};
     for (std::size_t a = 0; a < free_count; ++a)
     {
         std::size_t j = unknowns.free[a];
@@ -291,6 +295,7 @@ LinearSystem newton_system(const KktEvaluation& evaluation, const Unknowns& unkn
         std::size_t k = unknowns.equalities[b];
         std::vector<double> row = equality_row(evaluation, k, unknowns.free);
         double scale = hessian_scale / largest_magnitude(row);
+        system.scales[b] = scale;
         for (std::size_t a = 0; a < free_count; ++a)
         {
             system.matrix[a * size + free_count + b] = -scale * row[a];
@@ -299,6 +304,26 @@ LinearSystem newton_system(const KktEvaluation& evaluation, const Unknowns& unkn
         system.rhs[free_count + b] = -scale * evaluation.gaps[k];
     }
     return system;
+}
+
+// The solution of the Newton system by a Householder QR of its matrix; none when there are no free weights or
+// the matrix is rank deficient to working precision: the active gradients are dependent or the Hessian is
+// singular along the constraints.
+std::optional<std::vector<double>> solution_of(LinearSystem system, const Unknowns& unknowns)
+{
+    std::optional<std::vector<double>> solution;
+    double scale = largest_magnitude(system.matrix);
+    if (unknowns.free.empty() || scale == 0.0 || !std::isfinite(scale))
+    {
+        return solution;
+    }
+    linalg::Qr qr = linalg::householder_qr(system.matrix, system.size, system.size);
+    if (!linalg::has_full_column_rank(qr))
+    {
+        return solution;
+    }
+    solution.emplace(linalg::least_squares(qr, std::move(system.rhs)));
+    return solution;
 }
 
 // A free weight that the step takes out of the box stops at the bound it crossed and is held there.
@@ -324,29 +349,97 @@ Position moved_by(const Spec& spec, const Candidate& candidate, const Unknowns& 
     return position;
 }
 
-// The step of the weights is that of the Newton system, solved by a Householder QR of its matrix; the
-// multipliers are estimated again at the new weights, which keeps the step a good one where the gradients of
-// the constraints turn quickly (a target volatility just above the minimum). No step when the matrix is rank
-// deficient to working precision: the active gradients are dependent or the Hessian is singular along the
-// constraints.
+// The step of the weights is that of the Newton system (solution_of); the multipliers are estimated again at
+// the new weights, which keeps the step a good one where the gradients of the constraints turn quickly (a
+// target volatility just above the minimum). No step where the system has no solution.
 std::optional<Candidate> newton_step(const KktProblem& problem, const Candidate& candidate)
 {
     std::optional<Candidate> next;
     Unknowns unknowns = unknowns_of(candidate.position.sides, candidate.evaluation);
-    LinearSystem system = newton_system(candidate.evaluation, unknowns);
-    double scale = largest_magnitude(system.matrix);
-    if (unknowns.free.empty() || scale == 0.0 || !std::isfinite(scale))
+    std::optional<std::vector<double>> step =
+        solution_of(newton_system(candidate.evaluation, unknowns), unknowns);
+    if (!step.has_value())
     {
         return next;
     }
-    linalg::Qr qr = linalg::householder_qr(system.matrix, system.size, system.size);
-    if (!linalg::has_full_column_rank(qr))
-    {
-        return next;
-    }
-    std::vector<double> step = linalg::least_squares(qr, std::move(system.rhs));
-    next.emplace(settled(problem, moved_by(problem.spec, candidate, unknowns, step)));
+    next.emplace(settled(problem, moved_by(problem.spec, candidate, unknowns, *step)));
     return next;
+}
+
+// The step of the free weights and the change of the multipliers of the kept equalities that the Newton
+// system at a point gives.
+struct NewtonCorrection
+{
+    std::vector<double> weights;
+    std::vector<double> multipliers;
+};
+
+std::optional<NewtonCorrection> newton_correction(const KktEvaluation& evaluation, const Unknowns& unknowns)
+{
+    std::optional<NewtonCorrection> correction;
+    LinearSystem system = newton_system(evaluation, unknowns);
+    std::vector<double> scales = system.scales;
+    std::optional<std::vector<double>> solution = solution_of(std::move(system), unknowns);
+    if (!solution.has_value())
+    {
+        return correction;
+    }
+    auto split = solution->begin() + static_cast<std::ptrdiff_t>(unknowns.free.size());
+    correction.emplace(NewtonCorrection{std::vector<double>(solution->begin(), split),
+                                        std::vector<double>(split, solution->end())});
+    for (std::size_t b = 0; b < scales.size(); ++b)
+    {
+        correction->multipliers[b] *= scales[b];
+    }
+    return correction;
+}
+
+// beta_j = (grad f - sum_k lambda_k grad h_k)_j + (H dw)_j of held weight j, the lambda of the point moved by
+// the correction: what its row of the Newton system leaves.
+double held_multiplier(const KktEvaluation& evaluation, const KktPoint& point, const Unknowns& unknowns,
+                       const NewtonCorrection& correction, std::size_t j)
+{
+    std::size_t n = point.weights.size();
+    double beta = evaluation.stationarity[j] + point.bound_multipliers[j];
+    for (std::size_t b = 0; b < unknowns.equalities.size(); ++b)
+    {
+        beta -= correction.multipliers[b] * evaluation.rows[unknowns.equalities[b] * n + j];
+    }
+    for (std::size_t a = 0; a < unknowns.free.size(); ++a)
+    {
+        beta += evaluation.lagrangian_hessian[j * n + unknowns.free[a]] * correction.weights[a];
+    }
+    return beta;
+}
+
+KktPoint corrected_point(const KktPoint& point, const KktEvaluation& evaluation, const Unknowns& unknowns,
+                         const NewtonCorrection& correction)
+{
+    KktPoint corrected = point;
+    for (std::size_t b = 0; b < unknowns.equalities.size(); ++b)
+    {
+        corrected.equality_multipliers[unknowns.equalities[b]] += correction.multipliers[b];
+    }
+    for (std::size_t j = 0; j < point.weights.size(); ++j)
+    {
+        if (point.bound_multipliers[j] != 0.0)
+        {
+            corrected.bound_multipliers[j] = held_multiplier(evaluation, point, unknowns, correction, j);
+        }
+    }
+    return corrected;
+}
+
+bool keeps_sides(std::span<const double> bound_multipliers, std::span<const Side> sides)
+{
+    for (std::size_t j = 0; j < sides.size(); ++j)
+    {
+        if (sides[j] != Side::Free && !has_sign_of(bound_multipliers[j], sides[j]))
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 // A NaN residual is worse than any number.
@@ -357,11 +450,46 @@ bool improves_on(double residual, double current)
 
 } // namespace
 
+// The second solve, from the corrected multipliers at the same weights, measures how far the first is from
+// its limit. The weights do not move, so the gradients of the equalities and the unknowns are those of the
+// first solve.
+MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktPoint& point)
+{
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    MultiplierCorrection result{point, kNaN, kNaN, false};
+    std::vector<Side> sides = sides_named_by(point.bound_multipliers);
+    KktEvaluation evaluation = evaluate_kkt(problem, point);
+    Unknowns unknowns = unknowns_of(sides, evaluation);
+    std::optional<NewtonCorrection> first = newton_correction(evaluation, unknowns);
+    if (!first.has_value())
+    {
+        return result;
+    }
+    result.change = norm_of(first->multipliers);
+    KktPoint corrected = corrected_point(point, evaluation, unknowns, *first);
+    KktEvaluation again = evaluate_kkt(problem, corrected);
+    std::optional<NewtonCorrection> second = newton_correction(again, unknowns);
+    if (!second.has_value())
+    {
+        return result;
+    }
+    result.second_change = norm_of(second->multipliers);
+    bool contracts = result.second_change <= 0.5 * result.change;
+    bool stationary = residual_of(problem, corrected, again).stationarity <= kKktNoiseFactor;
+    if (!contracts || !stationary || !keeps_sides(corrected.bound_multipliers, sides))
+    {
+        return result;
+    }
+    result.point = std::move(corrected);
+    result.accepted = true;
+    return result;
+}
+
 PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
 {
     double start_residual = largest(residual_of(problem, start, evaluate_kkt(problem, start)));
     std::optional<Candidate> candidate(std::in_place, held_start(problem, start));
-    PolishResult result{candidate->position.point, candidate->residual, 0, false};
+    PolishResult result{candidate->position.point, {}, candidate->residual, 0, false};
     for (int step = 1; step <= kMaxSteps && !(result.residual <= kNoiseFloor); ++step)
     {
         candidate = newton_step(problem, *candidate);
@@ -374,6 +502,7 @@ PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
         result.steps = step;
     }
     result.improved = improves_on(result.residual, start_residual);
+    result.correction = corrected_multipliers(problem, result.point);
     return result;
 }
 

@@ -205,8 +205,9 @@ Stage stage_of(const KktProblem& problem, std::span<const double> start, const E
 }
 
 // Each stage takes the descent to its tolerance, from where the last one stopped, and polishes the point by
-// Newton on the KKT system. Only a KKT point to the noise of the problem is an answer; when no stage ends at
-// one, the answer is MaxIterations, without a point.
+// Newton on the KKT system. Only a KKT point to the noise of the problem is an answer, judged with the
+// least-squares multipliers of the polish; the answer carries its corrected multipliers. When no stage ends
+// at one, the answer is MaxIterations, without a point.
 Result stationary_point(const KktProblem& problem, std::vector<double> start, int iterations)
 {
     for (const Effort& effort : kStages)
@@ -221,7 +222,7 @@ Result stationary_point(const KktProblem& problem, std::vector<double> start, in
         iterations += polished.steps;
         if (is_kkt_point(problem, polished.point))
         {
-            return kkt_point(problem, std::move(polished.point), iterations);
+            return kkt_point(problem, std::move(polished.correction.point), iterations);
         }
         start = std::move(stage.point.weights);
     }

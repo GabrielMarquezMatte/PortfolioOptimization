@@ -885,6 +885,206 @@ inline std::vector<long double> wide_lagrangian_hessian(const po::Data& data, st
     return hessian;
 }
 
+// Gaussian elimination with partial pivoting of a size x size system (row-major); false when a pivot is 0.
+inline bool solve_wide(std::vector<long double>& matrix, std::vector<long double>& rhs)
+{
+    std::size_t size = rhs.size();
+    for (std::size_t k = 0; k < size; ++k)
+    {
+        std::size_t pivot = k;
+        for (std::size_t i = k + 1; i < size; ++i)
+        {
+            if (std::fabs(matrix[i * size + k]) > std::fabs(matrix[pivot * size + k]))
+            {
+                pivot = i;
+            }
+        }
+        if (matrix[pivot * size + k] == 0.0L)
+        {
+            return false;
+        }
+        for (std::size_t j = 0; j < size; ++j)
+        {
+            std::swap(matrix[k * size + j], matrix[pivot * size + j]);
+        }
+        std::swap(rhs[k], rhs[pivot]);
+        for (std::size_t i = k + 1; i < size; ++i)
+        {
+            long double factor = matrix[i * size + k] / matrix[k * size + k];
+            for (std::size_t j = k; j < size; ++j)
+            {
+                matrix[i * size + j] -= factor * matrix[k * size + j];
+            }
+            rhs[i] -= factor * rhs[k];
+        }
+    }
+    for (std::size_t k = size; k-- > 0;)
+    {
+        for (std::size_t j = k + 1; j < size; ++j)
+        {
+            rhs[k] -= matrix[k * size + j] * rhs[j];
+        }
+        rhs[k] /= matrix[k * size + k];
+    }
+    return true;
+}
+
+// The KKT system of RISK_PARITY on the active set of a result, in long double: the weights whose bound
+// multiplier is not 0 stay where the result has them, the others and the multipliers of the equalities
+// (budget, target return, volatility, those of spec) are the unknowns.
+struct WideKkt
+{
+    std::vector<long double> weights;
+    std::vector<long double> multipliers;
+    std::vector<std::size_t> free;
+};
+
+struct WideEqualities
+{
+    // One gradient per equality, n entries each.
+    std::vector<std::vector<long double>> rows;
+    std::vector<long double> gaps;
+};
+
+inline WideEqualities wide_equalities(const po::Spec& spec, const po::Data& data,
+                                      const std::vector<long double>& w)
+{
+    std::size_t n = w.size();
+    WideEqualities equalities;
+    long double total = -1.0L;
+    for (long double weight : w)
+    {
+        total += weight;
+    }
+    equalities.rows.emplace_back(n, 1.0L);
+    equalities.gaps.push_back(total);
+    if (spec.target_return.has_value())
+    {
+        std::vector<long double> mu = widened(data.mu());
+        equalities.gaps.push_back(wide_dot(mu, w) - *spec.target_return);
+        equalities.rows.push_back(std::move(mu));
+    }
+    if (spec.target_volatility.has_value())
+    {
+        std::vector<long double> gradient = wide_covariance_times(data, w);
+        long double volatility = std::sqrt(wide_dot(w, gradient));
+        for (long double& entry : gradient)
+        {
+            entry /= volatility;
+        }
+        equalities.gaps.push_back(volatility - *spec.target_volatility);
+        equalities.rows.push_back(std::move(gradient));
+    }
+    return equalities;
+}
+
+inline long double volatility_multiplier_of(const po::Spec& spec, const WideKkt& kkt)
+{
+    if (!spec.target_volatility.has_value())
+    {
+        return 0.0L;
+    }
+    return kkt.multipliers.back();
+}
+
+// grad f - sum_k lambda_k grad h_k at the point, every entry.
+inline std::vector<long double> wide_stationarity(const po::Data& data, std::span<const double> budget,
+                                                  const WideKkt& kkt, const WideEqualities& equalities)
+{
+    std::vector<long double> residual = wide_gradient_at(data, budget, kkt.weights);
+    for (std::size_t k = 0; k < equalities.rows.size(); ++k)
+    {
+        for (std::size_t j = 0; j < residual.size(); ++j)
+        {
+            residual[j] -= kkt.multipliers[k] * equalities.rows[k][j];
+        }
+    }
+    return residual;
+}
+
+// [H, -A'; A, 0] over the free weights of kkt and -[stationarity; gaps], the rows of A scaled to the size
+// of H by scale (size x size, row-major).
+struct WideSystem
+{
+    std::vector<long double> matrix;
+    std::vector<long double> rhs;
+    long double scale = 0.0L;
+};
+
+inline WideSystem wide_kkt_system(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
+                                  const WideKkt& kkt)
+{
+    std::size_t n = kkt.weights.size();
+    std::size_t free_count = kkt.free.size();
+    WideEqualities equalities = wide_equalities(spec, data, kkt.weights);
+    std::size_t size = free_count + equalities.gaps.size();
+    std::vector<long double> residual = wide_stationarity(data, budget, kkt, equalities);
+    std::vector<long double> hessian =
+        wide_lagrangian_hessian(data, budget, volatility_multiplier_of(spec, kkt), kkt.weights);
+    WideSystem system{std::vector<long double>(size * size, 0.0L), std::vector<long double>(size), 0.0L};
+    for (std::size_t a = 0; a < free_count; ++a)
+    {
+        for (std::size_t b = 0; b < free_count; ++b)
+        {
+            system.matrix[a * size + b] = hessian[kkt.free[a] * n + kkt.free[b]];
+            system.scale = std::fmax(system.scale, std::fabs(system.matrix[a * size + b]));
+        }
+        system.rhs[a] = -residual[kkt.free[a]];
+    }
+    for (std::size_t k = 0; k < equalities.gaps.size(); ++k)
+    {
+        for (std::size_t a = 0; a < free_count; ++a)
+        {
+            system.matrix[a * size + free_count + k] = -system.scale * equalities.rows[k][kkt.free[a]];
+            system.matrix[(free_count + k) * size + a] = system.scale * equalities.rows[k][kkt.free[a]];
+        }
+        system.rhs[free_count + k] = -system.scale * equalities.gaps[k];
+    }
+    return system;
+}
+
+// One Newton step on wide_kkt_system. False when the system is singular.
+inline bool wide_newton_step(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
+                             WideKkt& kkt)
+{
+    std::size_t free_count = kkt.free.size();
+    WideSystem system = wide_kkt_system(spec, data, budget, kkt);
+    if (!solve_wide(system.matrix, system.rhs))
+    {
+        return false;
+    }
+    for (std::size_t a = 0; a < free_count; ++a)
+    {
+        kkt.weights[kkt.free[a]] += system.rhs[a];
+    }
+    for (std::size_t k = 0; k + free_count < system.rhs.size(); ++k)
+    {
+        kkt.multipliers[k] += system.scale * system.rhs[free_count + k];
+    }
+    return true;
+}
+
+inline WideKkt wide_kkt_of(const po::Spec& spec, const po::Result& result)
+{
+    WideKkt kkt{widened(result.weights), {result.budget_multiplier}, {}};
+    if (spec.target_return.has_value())
+    {
+        kkt.multipliers.push_back(result.target_return_multiplier);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        kkt.multipliers.push_back(result.volatility_multiplier);
+    }
+    for (std::size_t j = 0; j < result.weights.size(); ++j)
+    {
+        if (result.bound_multipliers[j] == 0.0)
+        {
+            kkt.free.push_back(j);
+        }
+    }
+    return kkt;
+}
+
 // The constraint terms of the stationarity in long double: their sum, the sum of their magnitudes per entry,
 // and the largest single one.
 struct WideConstraintTerms
@@ -998,6 +1198,193 @@ inline RiskParityStationarity risk_parity_stationarity(const po::Spec& spec, con
                                   largest_over_floor(residual, hessian, terms, result.weights)};
 }
 
+// The multipliers of the equalities at the KKT point refined in long double from a result: the six Newton
+// steps on its active set that forward_error takes. None where a Newton system is singular.
+inline std::optional<std::vector<long double>> refined_multipliers(const po::Spec& spec, const po::Data& data,
+                                                                   const po::Result& result)
+{
+    constexpr int kSteps = 6;
+    std::vector<double> budget = budget_of(spec, data.asset_count());
+    WideKkt kkt = wide_kkt_of(spec, result);
+    for (int step = 0; step < kSteps; ++step)
+    {
+        if (!wide_newton_step(spec, data, budget, kkt))
+        {
+            return std::nullopt;
+        }
+    }
+    return kkt.multipliers;
+}
+
+// The component of vector along the unit vector direction, removed from it.
+inline long double project_out(const std::vector<long double>& direction, std::vector<long double>& vector)
+{
+    long double projection = 0.0L;
+    for (std::size_t i = 0; i < vector.size(); ++i)
+    {
+        projection += direction[i] * vector[i];
+    }
+    for (std::size_t i = 0; i < vector.size(); ++i)
+    {
+        vector[i] -= projection * direction[i];
+    }
+    return projection;
+}
+
+inline long double wide_norm(const std::vector<long double>& vector)
+{
+    return std::sqrt(compensated_dot_of<long double>(vector.size(), vector, vector));
+}
+
+// min over x of |rhs - sum_k x_k columns_k|, by modified Gram-Schmidt in long double. None when a column
+// outside the span of the earlier ones is at most 1e-12 of its norm, the rule of the QP solver for dependent
+// rows: the coefficients are then not determined.
+inline std::optional<std::vector<long double>> wide_least_squares(
+    const std::vector<std::vector<long double>>& columns, std::vector<long double> rhs)
+{
+    constexpr long double kDependent = 1e-12L;
+    std::size_t m = columns.size();
+    std::vector<std::vector<long double>> basis;
+    std::vector<long double> upper(m * m, 0.0L);
+    for (std::size_t k = 0; k < m; ++k)
+    {
+        std::vector<long double> column = columns[k];
+        long double norm = wide_norm(column);
+        for (std::size_t i = 0; i < k; ++i)
+        {
+            upper[i * m + k] = project_out(basis[i], column);
+        }
+        long double outside = wide_norm(column);
+        if (!(outside > kDependent * norm))
+        {
+            return std::nullopt;
+        }
+        for (long double& entry : column)
+        {
+            entry /= outside;
+        }
+        upper[k * m + k] = outside;
+        basis.push_back(std::move(column));
+    }
+    std::vector<long double> solution(m);
+    for (std::size_t k = 0; k < m; ++k)
+    {
+        solution[k] = project_out(basis[k], rhs);
+    }
+    for (std::size_t k = m; k-- > 0;)
+    {
+        for (std::size_t i = k + 1; i < m; ++i)
+        {
+            solution[k] -= upper[k * m + i] * solution[i];
+        }
+        solution[k] /= upper[k * m + k];
+    }
+    return solution;
+}
+
+inline std::vector<long double> over_free(const std::vector<long double>& values, const WideKkt& kkt)
+{
+    std::vector<long double> entries;
+    for (std::size_t j : kkt.free)
+    {
+        entries.push_back(values[j]);
+    }
+    return entries;
+}
+
+inline void set_equality_multipliers(const po::Spec& spec, const std::vector<long double>& multipliers,
+                                     po::Result& result)
+{
+    result.budget_multiplier = static_cast<double>(multipliers.front());
+    if (spec.target_return.has_value())
+    {
+        result.target_return_multiplier = static_cast<double>(multipliers[1]);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        result.volatility_multiplier = static_cast<double>(multipliers.back());
+    }
+}
+
+// The result with the multipliers the KKT gate of the library checks, refit at its weights in long double:
+// for the equalities, those that leave the smallest stationarity over the free weights (bound multiplier 0);
+// for a held weight, what its row then leaves. None where the free weights do not determine them: fewer free
+// weights than equalities, or their gradients over the free weights dependent.
+inline std::optional<po::Result> least_squares_fit(const po::Spec& spec, const po::Data& data,
+                                                   const po::Result& result)
+{
+    std::vector<double> budget = budget_of(spec, data.asset_count());
+    WideKkt kkt = wide_kkt_of(spec, result);
+    WideEqualities equalities = wide_equalities(spec, data, kkt.weights);
+    std::vector<long double> residual = wide_stationarity(data, budget, kkt, equalities);
+    std::vector<std::vector<long double>> columns;
+    for (const std::vector<long double>& row : equalities.rows)
+    {
+        columns.push_back(over_free(row, kkt));
+    }
+    std::optional<std::vector<long double>> change = wide_least_squares(columns, over_free(residual, kkt));
+    if (!change.has_value())
+    {
+        return std::nullopt;
+    }
+    po::Result fit = result;
+    for (std::size_t k = 0; k < columns.size(); ++k)
+    {
+        kkt.multipliers[k] += (*change)[k];
+        for (std::size_t j = 0; j < residual.size(); ++j)
+        {
+            residual[j] -= (*change)[k] * equalities.rows[k][j];
+        }
+    }
+    set_equality_multipliers(spec, kkt.multipliers, fit);
+    for (std::size_t j = 0; j < residual.size(); ++j)
+    {
+        if (result.bound_multipliers[j] != 0.0)
+        {
+            fit.bound_multipliers[j] = static_cast<double>(residual[j]);
+        }
+    }
+    return fit;
+}
+
+// max_k |lambda_k - reference_k| / max_k |reference_k| over the multipliers of the equalities; absolute where
+// every reference multiplier is 0 (no target and the budget alone active, f = 0).
+inline double multiplier_distance(const std::vector<long double>& multipliers,
+                                  const std::vector<long double>& reference)
+{
+    long double scale = 0.0L;
+    long double distance = 0.0L;
+    for (std::size_t k = 0; k < reference.size(); ++k)
+    {
+        scale = std::fmax(scale, std::fabs(reference[k]));
+        distance = std::fmax(distance, std::fabs(multipliers[k] - reference[k]));
+    }
+    if (scale == 0.0L)
+    {
+        return static_cast<double>(distance);
+    }
+    return static_cast<double>(distance / scale);
+}
+
+// The multipliers of the equalities of the result are no farther from those of the KKT point refined from it
+// than the least-squares fit is, but for the tolerance: a correction of the least-squares multipliers may
+// only bring them closer. Not checked where the refinement meets a singular system.
+inline void expect_multipliers_toward_the_reference(const po::Spec& spec, const po::Data& data,
+                                                    const po::Result& result, const po::Result& fit,
+                                                    double tolerance)
+{
+    std::optional<std::vector<long double>> reference = refined_multipliers(spec, data, result);
+    if (!reference.has_value())
+    {
+        return;
+    }
+    double returned = multiplier_distance(wide_kkt_of(spec, result).multipliers, *reference);
+    double fitted = multiplier_distance(wide_kkt_of(spec, fit).multipliers, *reference);
+    EXPECT_LE(returned, fitted + tolerance)
+        << "multipliers: " << returned << " from those of the refined KKT point, above the " << fitted
+        << " of the least-squares fit plus the tolerance " << tolerance;
+}
+
 // A stationarity above the tolerance passes when every entry of the residual is within this many times its
 // rounding floor: no doubles near the solution do better (docs/guide/validation.md).
 inline constexpr double kRoundingFloorFactor = 2.0;
@@ -1006,10 +1393,15 @@ inline constexpr double kRoundingFloorFactor = 2.0;
 // multipliers, and
 //   grad f(w) = budget * 1 + target_return * mu + volatility * Sigma w / vol + beta,
 // with grad f from risk_parity_gradient, and the identity w'grad f = 0. The stationarity passes at the
-// tolerance, relative to its largest term, or within kRoundingFloorFactor of its rounding floor. A volatility
-// multiplier of -inf is the case s = sigma_min, which has no stationarity to check
+// tolerance, relative to its largest term, or within kRoundingFloorFactor of its rounding floor. It is
+// checked with the multipliers of least_squares_fit where the free weights determine them, as the KKT gate of
+// the library does, and with those of the result elsewhere: at weights off the KKT point by more than their
+// rounding, even the exact multipliers leave a stationarity of H dw, above the floor. The multipliers of the
+// result are then checked against the reference instead (expect_multipliers_toward_the_reference). A
+// volatility multiplier of -inf is the case s = sigma_min, which has no stationarity to check
 // (expect_minimum_volatility_point). Where long double is not extended (extended false) a stationarity above
-// the tolerance cannot be checked against its floor, and the test is skipped instead.
+// the tolerance cannot be checked against its floor, and the test is skipped instead; nor is there a
+// reference for the multipliers.
 inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
                                    double tolerance, bool extended = kLongDoubleIsExtended)
 {
@@ -1031,7 +1423,13 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
         gradient.scale = worst_of(gradient.scale, unit_gap_gradient_scale(data, result.weights));
     }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
-    RiskParityStationarity stationarity = risk_parity_stationarity(spec, data, result, tolerance);
+    std::optional<po::Result> fit = least_squares_fit(spec, data, result);
+    const po::Result* checked = &result;
+    if (fit.has_value())
+    {
+        checked = &*fit;
+    }
+    RiskParityStationarity stationarity = risk_parity_stationarity(spec, data, *checked, tolerance);
     if (stationarity.relative > tolerance && !extended)
     {
         // The floor is eps of the magnitudes of the terms; in double their sum is rounded by about as much.
@@ -1042,6 +1440,10 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
         << "stationarity: " << stationarity.relative << " of the largest term, above the tolerance "
         << tolerance << ", and " << stationarity.over_floor << " of its rounding floor, above "
         << kRoundingFloorFactor;
+    if (fit.has_value() && extended)
+    {
+        expect_multipliers_toward_the_reference(spec, data, result, *fit, tolerance);
+    }
 }
 
 // The message of every failure of expect_risk_parity_kkt on the result; empty when it passes. The failures
