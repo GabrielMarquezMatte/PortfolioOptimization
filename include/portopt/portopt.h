@@ -119,9 +119,14 @@ typedef struct po_result po_result;
    rounding floor. A KKT point is accepted when its KKT residual and its feasibility are within the rounding
    noise of the problem. With a target volatility and few or no active bounds at cond(Sigma) around 1e8 the
    weights are determined only to the rounding of the KKT residual amplified by the conditioning of the
-   problem: an OPTIMAL result can be up to about 1e-4 relative from the exact KKT point (measured up to
-   3.7e-5), while its objective value is right to 1e-7 (1 + f). Such a solve is also slow: about 10 s at
-   n = 50, cond(Sigma) = 1e8, no box and a target volatility, and at most about 0.15 s for n <= 20. */
+   problem: the weights of an OPTIMAL result can be up to about 1e-4 relative from the exact KKT point
+   (measured up to 3.7e-5), while its objective value is right to 1e-7 (1 + f). That covers the weights and
+   the value, not the multipliers: with a target volatility the multipliers are measured right only to about
+   5e-10 relative at cond(Sigma) = 1e4, 3e-7 at 1e6 and 4e-2 at 1e8, and can be wrong by O(1) above that
+   (an OPTIMAL result at cond(Sigma) >= 1e10 is not validated). Such a solve is also slow: about 10 s at
+   n = 50, cond(Sigma) = 1e8, no box and a target volatility, and at most about 0.15 s for n <= 20.
+   The Spinu point is computed before the feasibility check, so a Spinu iteration that does not converge
+   reports PO_SOLVE_MAX_ITER even for an infeasible problem. */
 #define PO_OBJECTIVE_MIN_VARIANCE 0
 #define PO_OBJECTIVE_MAX_RETURN 1
 #define PO_OBJECTIVE_MAX_SHARPE 2
@@ -139,7 +144,8 @@ typedef struct po_result po_result;
    po_result below). For PO_OBJECTIVE_RISK_PARITY that includes a target volatility the iteration cannot reach
    (for example above every volatility of a bounded set), a target return without a minimizer (no bounds), and
    a solution whose gross exposure sum_i |w_i| is above about 4.5e3, where the budget row 1'w = 1 is no longer
-   resolved in double. A bounded problem with the budget row only (n = 20, cond(Sigma) = 1e8) can also end
+   resolved in double (except at s = sigma_min, where the minimum-variance portfolio is returned without this
+   check). A bounded problem with the budget row only (n = 20, cond(Sigma) = 1e8) can also end
    here: a known limitation. */
 #define PO_SOLVE_OPTIMAL 0
 #define PO_SOLVE_INFEASIBLE 1
@@ -223,8 +229,9 @@ PO_API po_status po_data_weight_count(const po_data* d, size_t* out);
 PO_API void po_data_free(po_data* d);
 
 /* Solves the spec on the data; both are copied, so the result does not depend on them afterwards. Every
-   objective is solved, so PO_UNSUPPORTED does not occur for a valid objective. It checks, in this order, and returns PO_INVALID_ARGUMENT at the first failure: a setter outside the
-   objective's row, data the objective requires, per-asset bounds that do not match the weight count. The core
+   objective is solved, so PO_UNSUPPORTED does not occur for a valid objective. It checks, in this order, and
+   returns PO_INVALID_ARGUMENT at the first failure: a setter outside the objective's row, data the objective
+   requires, per-asset bounds that do not match the weight count. The core
    does not range-check the values: the setters are the trust boundary. Infeasibility is reported in the
    result. Safe in parallel with the same read-only spec and data. */
 PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
@@ -260,7 +267,8 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    with respect to the cap sigma; it is 0 when the cap is inactive.
 
    For PO_OBJECTIVE_RISK_PARITY, PO_CONSTRAINT_VOLATILITY is the derivative of the optimal f with respect to the
-   target volatility s, of either sign, and NaN when po_spec_set_target_volatility was not called. The budget
+   target volatility s, of either sign, and NaN when po_spec_set_target_volatility was not called (its
+   accuracy is in the PO_OBJECTIVE_RISK_PARITY entry above: below that of the weights). The budget
    multiplier is finite (no cash), the target-return multiplier is NaN without a target return, the leverage
    multiplier is always NaN, and a bound multiplier is 0 for a weight with no finite bound. The risk
    contributions are homogeneous of degree 0, so w' grad f(w) = 0 and
@@ -273,17 +281,18 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    PO_CONSTRAINT_LEVERAGE is lambda_lev <= 0, the derivative of the optimal f with respect to the limit; it is 0
    when the leverage is set but inactive.
 
-   A bound multiplier is 0 (not NaN) for a weight with no finite bound. NaN is only for an absent named
-   constraint: the budget constraint does not exist when there is cash (nor for PO_OBJECTIVE_MAX_SHARPE and
+   A bound multiplier is 0 (not NaN) for a weight with no finite bound. Apart from the two exceptions below,
+   NaN is only for an absent named constraint: the budget constraint does not exist when there is cash (nor for PO_OBJECTIVE_MAX_SHARPE and
    PO_OBJECTIVE_MAX_DIVERSIFICATION with cash, see above), the target-return constraint when no target was set
    (and for the objectives that take none), the volatility constraint unless the objective is
    PO_OBJECTIVE_MAX_RETURN or PO_OBJECTIVE_RISK_PARITY with a target volatility, and the leverage constraint
    when po_spec_set_leverage was not called (always, for PO_OBJECTIVE_RISK_PARITY).
 
-   One documented exception, for PO_OBJECTIVE_MAX_RETURN: when the cap equals the minimum volatility of the
-   feasible set and the efficient frontier is vertical there, lambda_vol = -inf, and the budget multiplier
-   (when present), the bound multipliers and the leverage multiplier (when a leverage was set, active or not)
-   are NaN even though those constraints exist. */
+   Two documented exceptions, where existing constraints have NaN multipliers: for PO_OBJECTIVE_MAX_RETURN,
+   when the cap equals the minimum volatility of the feasible set and the efficient frontier is vertical there,
+   lambda_vol = -inf, and the budget multiplier (when present), the bound multipliers and the leverage
+   multiplier (when a leverage was set, active or not) are NaN; for PO_OBJECTIVE_RISK_PARITY at s equal to the
+   minimum volatility, lambda_vol = -inf and the budget and bound multipliers are NaN (above). */
 PO_API po_status po_result_status(const po_result* r, int32_t* out);
 
 /* The weight count of the data the result was solved on. */

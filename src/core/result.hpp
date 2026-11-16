@@ -23,10 +23,11 @@ enum class SolveStatus : std::int32_t
 // subdifferential of ||w||_1 over the risky weights (g_i = sign(w_i) where w_i != 0, any value in [-1, 1] where w_i = 0),
 // leverage <= 0 (0 when the leverage is inactive), beta = bound_multipliers (lower minus upper: >= 0 at an
 // active lower bound, <= 0 at an active upper bound) and beta_0 its cash entry, because the cash weight is
-// 1 - 1'w. A multiplier of an absent constraint is NaN. One exception, for
-// MAX_RETURN: at a cap equal to the minimum volatility where the efficient frontier is vertical,
-// volatility = -inf and the budget multiplier (when present), the bound multipliers and the leverage multiplier
-// (when a leverage was set) are NaN even though those constraints exist.
+// 1 - 1'w. A multiplier of an absent constraint is NaN. Two exceptions, where existing constraints have NaN
+// multipliers: MAX_RETURN at a cap equal to the minimum volatility where the efficient frontier is vertical
+// (volatility = -inf; the budget multiplier when present, the bound multipliers and the leverage multiplier
+// when a leverage was set are NaN), and RISK_PARITY at a target volatility equal to the minimum volatility
+// (volatility = -inf; the budget and bound multipliers are NaN).
 struct Result
 {
     SolveStatus status = SolveStatus::Infeasible;

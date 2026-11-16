@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
 #include <cstdio>
 #include <limits>
 #include <numeric>
@@ -251,13 +251,13 @@ TEST(RiskParityFuzz, UnrepairedDescentShapesThroughSolve)
     }
 }
 
-// The weights of a result at its rounding floor are determined only to how much the KKT matrix of its active
-// set amplifies that floor: the bound of weight_error_bound, which this factor covers with room for the
-// second-order terms it leaves out (the largest error over the bound measured: docs/guide/validation.md).
-constexpr double kBoundSafety = 4.0;
-// The weight error of this class is not held to the band of cond(Sigma), which does not apply at the floor,
-// but it must not grow: the largest of 229 measured results is 3.7e-5 (docs/guide/validation.md).
+// The guard of the weights of this class: they are not held to the band of cond(Sigma), which does not apply
+// at the floor, but their error must not grow past this measured ceiling (the largest of 229 results is
+// 3.7e-5; docs/guide/validation.md). Measured, not derived.
 constexpr double kWeightErrorCeiling = 1e-4;
+// A sanity bound only: weight_error_bound holds but is 3.7e3 to 3e4 times above the error, so it guards
+// nothing the ceiling does not; it would catch a refinement or a bound that came apart.
+constexpr double kSanityBoundFactor = 4.0;
 
 // What the forward error of one OPTIMAL result is, against the refined KKT point of its active set.
 struct WeightCheck
@@ -287,9 +287,9 @@ Shape thinnest_class(std::size_t n, std::uint64_t seed)
 
 // The thinnest forward-error class of the sweep: no box, a target volatility, cond(Sigma) = 1e8, n = 20.
 // Seed 4 (31696) is a result whose weights are 2.3e-5 from the refined KKT point while its stationarity is
-// at 0.22 of its rounding floor. The value is right at the band and the weights within their a posteriori
-// bound; the band of the weights does not apply to a result at its floor.
-TEST(RiskParityFuzz, WeightsAtCondition1e8WithinTheirAPosterioriBound)
+// at 0.22 of its rounding floor. The value is right at the band and the weights below their measured
+// ceiling, kWeightErrorCeiling; the band of the weights does not apply to a result at its floor.
+TEST(RiskParityFuzz, WeightsAtCondition1e8BelowTheirMeasuredCeiling)
 {
     if (!po::testing::kLongDoubleIsExtended)
     {
@@ -311,8 +311,57 @@ TEST(RiskParityFuzz, WeightsAtCondition1e8WithinTheirAPosterioriBound)
         EXPECT_LE(check.forward.reference_over_floor, 1e-2);
         EXPECT_LE(check.forward.value, 1e-7 * (1.0 + check.value));
         EXPECT_LE(check.forward.weights, kWeightErrorCeiling);
-        EXPECT_LE(check.forward.weights, kBoundSafety * check.bound.residual)
-            << "bound " << check.bound.residual;
+        EXPECT_LE(check.forward.weights, kSanityBoundFactor * check.bound.residual)
+            << "sanity bound " << check.bound.residual;
+    }
+}
+
+// The multipliers of the target-volatility path against those of the KKT point refined in long double from the
+// result, by cond(Sigma): no box, equal budget, n = 5 and 8. The weights are right to 1e-12 or better here,
+// but the multipliers are settled by least squares at the rounded weights and lose what the Newton correction
+// H dw would have put in them. These ceilings are measured (the largest of the grid, rounded up to the next
+// power of 10), not derived: they pin the present accuracy, which is outside the band from cond 1e6 up
+// (docs/guide/validation.md). Measured largest: 4.8e-10 at 1e4, 3.3e-7 at 1e6, 3.7e-2 at 1e8.
+double multiplier_ceiling(double condition)
+{
+    if (condition <= 1e4)
+    {
+        return 1e-9;
+    }
+    if (condition <= 1e6)
+    {
+        return 1e-6;
+    }
+    return 1e-1;
+}
+
+TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    for (double condition : {1e4, 1e6, 1e8})
+    {
+        double worst = 0.0;
+        for (std::size_t n : {5u, 8u})
+        {
+            for (std::uint64_t seed = 1; seed <= 4; ++seed)
+            {
+                Shape shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, 401 + seed};
+                SCOPED_TRACE(po::testing::describe(shape));
+                po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+                Result result = po::solve(generated.spec, generated.data).value();
+                ASSERT_EQ(result.status, SolveStatus::Optimal);
+                po::testing::ForwardError forward =
+                    po::testing::forward_error(generated.spec, generated.data, result);
+                EXPECT_LE(forward.reference_over_floor, 1e-2);
+                EXPECT_LE(forward.multipliers, multiplier_ceiling(condition));
+                worst = std::fmax(worst, forward.multipliers);
+            }
+        }
+        RecordProperty("worst_" + std::to_string(static_cast<int>(std::log10(condition))),
+                       ::testing::PrintToString(worst));
     }
 }
 

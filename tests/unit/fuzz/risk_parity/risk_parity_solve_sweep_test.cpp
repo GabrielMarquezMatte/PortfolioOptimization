@@ -66,7 +66,7 @@ struct SolveRun
     po::testing::RiskParityStationarity stationarity{0.0, 0.0};
     bool floor_limited = false;
     // Of a floor-limited result, against the KKT point of its active set refined in long double.
-    po::testing::ForwardError forward{0.0, 0.0, 0.0, 0.0};
+    po::testing::ForwardError forward{0.0, 0.0, 0.0, 0.0, 0.0};
     double value = 0.0;
     // Of an OPTIMAL result with finite multipliers: its KKT residual in units of its noise, the number the
     // gate of the solver compares with kKktNoiseFactor.

@@ -220,8 +220,8 @@ Special cases:
   `lambda_vol = -s / t_b`. The efficient frontier is vertical at `sigma_min` (`t_b = 0`) only when the weights moved
   beyond their rounding at a larger `t` on the active set of `w(0)` and no exit comes before that `t`: then
   `lambda_vol = -inf` and the budget multiplier (when present), the bound multipliers and the leverage multiplier (when a
-  leverage was set, active or not) are NaN, although those constraints exist. This is the one case where a multiplier
-  is NaN for an existing constraint. When the weights and the multipliers disagree, the multipliers decide (`0` or
+  leverage was set, active or not) are NaN, although those constraints exist. This and RISK_PARITY at
+  `s = sigma_min` are the two cases where a multiplier is NaN for an existing constraint. When the weights and the multipliers disagree, the multipliers decide (`0` or
   `-s / t_b`), never `-inf`.
 
 **The leverage along the path.** With a leverage the rows of `Q(t)` include the family above. Its generated rows
@@ -430,7 +430,11 @@ for a weight with no finite bound. Each is the derivative of the optimal `f` wit
 **What the weights are good to.** With a target volatility and few or no active bounds at `cond(Sigma)` around 1e8, the
 weights are determined only to the rounding of the KKT residual amplified by the conditioning of the problem: an `OPTIMAL`
 result can be up to about 1e-4 relative from the exact KKT point (measured up to 3.7e-5 over 229 results), while its
-objective value is right to its band. A solve with a target volatility, no box and `N = 50` at `cond(Sigma) = 1e8` can take
+objective value is right to its band. This covers the weights and the value, **not the multipliers**: with a target
+volatility the multipliers are settled by least squares at the rounded weights, and their measured relative error is up
+to 4.8e-10 at `cond(Sigma) = 1e4`, 3.3e-7 at 1e6 and 3.7e-2 at 1e8 (bands 1e-10, 1e-9, 1e-7); an independent 80-digit
+refinement found 0.3 to 2.1 (`lambda_vol`) and 2.4 to 17 (`lambda_budget`) at 1e10, where an `OPTIMAL` result is not
+validated. `RiskParity.MultipliersAreDerivatives` runs on well-conditioned data only. A solve with a target volatility, no box and `N = 50` at `cond(Sigma) = 1e8` can take
 about 10 s; at `N <= 20` it takes at most about 0.15 s. See
 [validation.md](validation.md#numerical-decisions-of-risk_parity).
 
@@ -511,9 +515,10 @@ is
   cash rows have the opposite signs of those of an asset (see the table).
 - A multiplier of an absent constraint is NaN: the budget when there is cash, the target return when none was set
   (and for the objectives that take none), the volatility constraint unless the objective is MAX_RETURN or RISK_PARITY with a target volatility, and the
-  leverage constraint when no leverage was set (always, for RISK_PARITY). The one other NaN is the vertical `s = sigma_min` case of MAX_RETURN
-  above: the budget multiplier (when present), the bound multipliers and the leverage multiplier (when a leverage was
-  set).
+  leverage constraint when no leverage was set (always, for RISK_PARITY). There are two documented exceptions, where
+  existing constraints have NaN multipliers: the vertical `s = sigma_min` case of MAX_RETURN above (the budget
+  multiplier when present, the bound multipliers and the leverage multiplier when a leverage was set), and RISK_PARITY
+  at `s = sigma_min` (the budget and bound multipliers; see its section).
 - Each multiplier is the derivative of the optimal `f` with respect to the right-hand side of its constraint. A `<=`
   constraint therefore has a multiplier `<= 0`, like `beta` at an upper bound, and a `>=` constraint one `>= 0`. For
   MAX_RETURN, `lambda_vol <= 0` is the derivative with respect to the cap `s`, and 0 when the cap is inactive. For

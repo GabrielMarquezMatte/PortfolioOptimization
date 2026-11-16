@@ -826,10 +826,41 @@ A posteriori bounds were tried and do not predict the error: with `K` the KKT ma
 the 200 seeds, and `max_j sum_l abs(K^-1)_jl abs(r_l)` (the residual `r` of the result itself) gives 0.086
 there; the error is at most `5.2e-4` of the second over the 229 results. Both hold, neither is sharp (the
 componentwise absolute values lose the cancellation that makes the true error small). The contract of
-`solve_risk_parity` states the limitation. `RiskParityFuzz.WeightsAtCondition1e8WithinTheirAPosterioriBound`
+`solve_risk_parity` states the limitation. `RiskParityFuzz.WeightsAtCondition1e8BelowTheirMeasuredCeiling`
 (seeds 1 to 4 of `n = 20`, seed 31696 among them, 0.5 s) checks, against the refined point, the value error at
-`band (1 + f)`, the weight error within 4 times the residual bound and below a ceiling of `1e-4` (the largest of
-the 229 is `3.7e-5`): the band of the weights is not applied to a result at its floor.
+`band (1 + f)` and, as the guard of the weights, the measured ceiling of `1e-4` (the largest of the 229 is
+`3.7e-5`); the band of the weights is not applied to a result at its floor. It also checks the weight error
+within 4 times the residual bound, a sanity bound only, since that bound is 3.7e3 to 3e4 times loose.
+
+**The multipliers of the target-volatility path are less accurate than the weights.** The weights and the value
+above are what the floor bounds; the multipliers are not. With a target volatility the polish settles the
+multipliers by least squares at the rounded weights, and that fit loses the correction `H dw` that the Newton step
+would have put in them. Against the multipliers of the KKT point refined in `long double` from the result
+(`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`; no box, equal budget, `n` in {5, 8}, 4 seeds,
+`s` between `sigma_min` and `1.5 sigma_min`; `RiskParityFuzz.TargetVolatilityMultipliersByCondition`, 0.5 s):
+
+| cond(Sigma) | largest multiplier error | band | ceiling pinned by the test |
+|---|---|---|---|
+| 1e4 | 4.8e-10 | 1e-10 | 1e-9 |
+| 1e6 | 3.3e-7 | 1e-9 | 1e-6 |
+| 1e8 | 3.7e-2 | 1e-7 | 1e-1 |
+
+The ceilings are the measured largest rounded up to the next power of 10: they pin the present accuracy and are
+not derived. The weights of the same results are right to `1e-12` or better. An independent refinement in 80-digit
+arithmetic of the returned `(w, lambda)` (no box, `s = 1.2 sigma_min`, equal budget, `n` = 5 or 8) agrees in
+order of magnitude: `lambda_vol` off by 8e-12 to 9.5e-11 at 1e4, 3.5e-8 to 8.4e-8 at 1e6, 3.1e-5 to 7.4e-4 at 1e8 and
+0.3 to 2.1 at `1e10`, and `lambda_budget` by 6e-12 to 8e-11, 8.8e-8 to 2.1e-7, 1.4e-4 to 3.6e-3 and 2.4 to 17.
+Above `cond(Sigma) = 1e8` an `OPTIMAL` result's multipliers can be wrong by `O(1)`; `Data` accepts
+`cond(Sigma) >= 1e10`, and an `OPTIMAL` there is not validated. The path with a target return alone is not
+affected (multipliers within `1e-14` at 1e8). The KKT gate and `expect_risk_parity_kkt` accept these results
+through the rounding floor, which the settled multipliers satisfy at the rounded weights;
+`RiskParity.MultipliersAreDerivatives` runs on well-conditioned data only.
+
+**Future work (a hypothesis, not measured).** Keep the `dlambda` of the last Newton solve of the polish instead
+of re-estimating `lambda` by least squares at the rounded weights, so that the `H dw` correction survives in
+`lambda`. The re-estimation was introduced because the Newton `dlambda` refused steps near `s = sigma_min` (the
+section on the polish); whether keeping it at the last step only fixes the multipliers without that failure is to
+be measured, with the test above as the measure.
 
 ### The Newton polish
 
@@ -1060,7 +1091,8 @@ cover:
   by `RiskParitySolveSweep.OptimalRunsAreKkt` on 576 shapes and by both tests here.
 - **Forward error, the thinnest class**: the weights at `cond(Sigma) = 1e8` with a target volatility are a
   conditioning limit, measured and pinned in the section on the noise above
-  (`RiskParityFuzz.WeightsAtCondition1e8WithinTheirAPosterioriBound`).
+  (`RiskParityFuzz.WeightsAtCondition1e8BelowTheirMeasuredCeiling`); the multipliers, which are worse, in the
+  same section (`RiskParityFuzz.TargetVolatilityMultipliersByCondition`).
 
 ## Fuzz battery
 

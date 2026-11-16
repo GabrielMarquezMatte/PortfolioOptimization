@@ -232,6 +232,8 @@ struct ForwardError
     double reference_over_floor;
     // The largest relative gap of an equality at w_ref.
     double reference_gap;
+    // max_k |lambda_k - lambda_ref_k| / max_k |lambda_ref_k| over the multipliers of the equalities.
+    double multipliers = 0.0;
 };
 
 inline double reference_over_floor(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
@@ -288,11 +290,12 @@ inline ForwardError forward_error(const po::Spec& spec, const po::Data& data, co
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
     std::vector<double> budget = budget_of(spec, data.asset_count());
     WideKkt kkt = wide_kkt_of(spec, result);
+    std::vector<long double> returned = kkt.multipliers;
     for (int step = 0; step < kSteps; ++step)
     {
         if (!wide_newton_step(spec, data, budget, kkt))
         {
-            return ForwardError{kNaN, kNaN, kNaN, kNaN};
+            return ForwardError{kNaN, kNaN, kNaN, kNaN, kNaN};
         }
     }
     long double largest = 0.0L;
@@ -304,8 +307,16 @@ inline ForwardError forward_error(const po::Spec& spec, const po::Data& data, co
     }
     long double change =
         wide_value_at(data, budget, widened(result.weights)) - wide_value_at(data, budget, kkt.weights);
+    long double multiplier_scale = 0.0L;
+    long double multiplier_distance = 0.0L;
+    for (std::size_t k = 0; k < returned.size(); ++k)
+    {
+        multiplier_scale = std::fmax(multiplier_scale, std::fabs(kkt.multipliers[k]));
+        multiplier_distance = std::fmax(multiplier_distance, std::fabs(returned[k] - kkt.multipliers[k]));
+    }
     return ForwardError{static_cast<double>(distance / largest), static_cast<double>(std::fabs(change)),
-                        reference_over_floor(spec, data, budget, kkt), reference_gap(spec, data, kkt)};
+                        reference_over_floor(spec, data, budget, kkt), reference_gap(spec, data, kkt),
+                        static_cast<double>(multiplier_distance / multiplier_scale)};
 }
 
 // The rounding of each row of wide_kkt_system at the point of kkt: for a free weight j,
