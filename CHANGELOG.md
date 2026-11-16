@@ -49,7 +49,9 @@ library whose ABI version differs).
   with `kappa = 1'y`). With cash both fix the cash weight at 0, and the budget term is carried by `beta_0`, with the
   budget multiplier NaN.
 - `PO_SOLVE_UNBOUNDED`: the supremum of the ratio exists but is not attained (for example `MAX_SHARPE` with unbounded
-  short selling and `1' Sigma^-1 mu~ <= 0`); the weights and multipliers are NaN. `PO_SOLVE_INFEASIBLE` also covers
+  short selling and `1' Sigma^-1 mu~ <= 0`); the weights and multipliers are NaN. So is a problem whose
+  `1' Sigma^-1 v` is within the rounding of the data, where `kappa` is at most 16 times its noise model and its sign
+  is not decided (docs/guide/validation.md). `PO_SOLVE_INFEASIBLE` also covers
   the problem with no feasible portfolio of positive numerator, and cash bounds that exclude 0.
 - `po_sharpe_ratio` and `po_diversification_ratio`.
 - Python: `Spec.leverage`, `Data.sharpe_ratio`, `Data.diversification_ratio` and `Result.leverage_multiplier`; `Spec`

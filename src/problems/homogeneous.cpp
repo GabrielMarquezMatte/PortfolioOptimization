@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "linalg/cholesky.hpp"
 #include "problems/constraints.hpp"
 #include "qp/goldfarb_idnani.hpp"
 #include "qp/problem.hpp"
@@ -16,6 +17,12 @@ namespace po::problems
 {
 namespace
 {
+
+// kappa at most this multiple of its rounding (kappa_noise) is the closure point kappa = 0: 400 times the
+// largest error of kappa measured at the boundary, and 1.6e5 times below the smallest kappa of an OPTIMAL result
+// of the battery, both in units of kappa_noise (docs/guide/validation.md).
+constexpr double kKappaNoiseFactor = 16.0;
+constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 
 // The QP rows whose multipliers map back to the user's: the bound rows and the row 1'y >= 0.
 struct Homogeneous
@@ -122,10 +129,16 @@ Result without_point(const Data& data, qp::Status status, int iterations)
     return to_result(data, ConstraintRows{}, solution);
 }
 
+// The supremum is not attained: no point, so NaN weights and multipliers.
 Result unbounded(const Data& data, int iterations)
 {
-    Result result = without_point(data, qp::Status::Infeasible, iterations);
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    Result result;
     result.status = SolveStatus::Unbounded;
+    result.weights.assign(data.weight_count(), kNaN);
+    result.bound_multipliers.assign(data.weight_count(), kNaN);
+    result.residual = kNaN;
+    result.iterations = iterations;
     return result;
 }
 
@@ -155,6 +168,49 @@ double volatility_of(const Data& data, std::span<const double> y)
         variance += entry * entry;
     }
     return std::sqrt(variance);
+}
+
+// |Sigma| |y|, componentwise.
+std::vector<double> magnitude_product(const Data& data, std::span<const double> y)
+{
+    std::size_t n = data.asset_count();
+    std::span<const double> covariance = data.covariance();
+    std::vector<double> product(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            product[i] += std::fabs(covariance[i * n + j] * y[j]);
+        }
+    }
+    return product;
+}
+
+double magnitude_dot(std::span<const double> a, std::span<const double> b)
+{
+    double total = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        total += std::fabs(a[i]) * std::fabs(b[i]);
+    }
+    return total;
+}
+
+// The rounding of kappa = 1'y. Where only v'y = 1 is active, Sigma y = sigma_y^2 v and kappa = sigma_y^2 z'v with
+// z = Sigma^-1 1 (two triangular solves on the factor of Data). A backward error |dSigma| <= n eps |Sigma| of the
+// solve and the rounding |dv| <= eps m of v (m = |mu| + |rf| or sigma, the magnitudes v is computed from) move it
+// to first order by |z|'|dSigma||y| + sigma_y^2 |z|'|dv|, so kappa is known to
+// n eps (|z|'|Sigma||y| + sigma_y^2 |z|'m).
+double kappa_noise(const Data& data, std::span<const double> y, std::span<const double> magnitude)
+{
+    std::size_t n = data.asset_count();
+    std::vector<double> z(n, 1.0);
+    linalg::solve_lower(data.covariance_factor(), n, z);
+    linalg::solve_lower_transposed(data.covariance_factor(), n, z);
+    double sigma = volatility_of(data, y);
+    double curvature = magnitude_dot(z, magnitude_product(data, y));
+    double rounding = sigma * sigma * magnitude_dot(z, magnitude);
+    return static_cast<double>(n) * kEpsilon * (curvature + rounding);
 }
 
 std::vector<double> user_weights(const Data& data, std::span<const double> y, double kappa)
@@ -221,9 +277,11 @@ bool cash_can_be_zero(const Spec& spec, const Data& data)
     return !data.risk_free().has_value() || (lower_of(spec, n) <= 0.0 && upper_of(spec, n) >= 0.0);
 }
 
-// The row 1'y >= 0 in the active set is the supremum at kappa = 0. A kappa that is not positive with the row
-// inactive is the same closure point, held by the solver within its feasibility tolerance.
-Result solve_homogeneous(const Spec& spec, const Data& data, std::span<const double> v)
+// The row 1'y >= 0 in the active set is the supremum at kappa = 0. A kappa within kKappaNoiseFactor times its
+// rounding (kappa_noise) with the row inactive is the same closure point, held by the solver within its
+// feasibility tolerance: its sign, and with it w = y / kappa, is not decided by the data.
+Result solve_homogeneous(const Spec& spec, const Data& data, std::span<const double> v,
+                         std::span<const double> magnitude)
 {
     if (!cash_can_be_zero(spec, data))
     {
@@ -236,7 +294,8 @@ Result solve_homogeneous(const Spec& spec, const Data& data, std::span<const dou
         return without_point(data, solution.status, solution.iterations);
     }
     bool kappa_active = std::ranges::binary_search(solution.active_inequalities, homogeneous.kappa_row);
-    if (kappa_active || !(sum_of(solution.x) > 0.0))
+    double kappa = sum_of(solution.x);
+    if (kappa_active || !(kappa > kKappaNoiseFactor * kappa_noise(data, solution.x, magnitude)))
     {
         return unbounded(data, solution.iterations);
     }
@@ -254,6 +313,18 @@ std::vector<double> excess_return(const Data& data)
     return excess;
 }
 
+// |mu| + |rf|, the magnitudes whose rounding mu - rf 1 carries.
+std::vector<double> excess_magnitude(const Data& data)
+{
+    double rate = std::fabs(data.risk_free().value_or(0.0));
+    std::vector<double> magnitude(data.mu().begin(), data.mu().end());
+    for (double& value : magnitude)
+    {
+        value = std::fabs(value) + rate;
+    }
+    return magnitude;
+}
+
 std::vector<double> asset_volatilities(const Data& data)
 {
     std::size_t n = data.asset_count();
@@ -269,12 +340,13 @@ std::vector<double> asset_volatilities(const Data& data)
 
 Result solve_max_sharpe(const Spec& spec, const Data& data)
 {
-    return solve_homogeneous(spec, data, excess_return(data));
+    return solve_homogeneous(spec, data, excess_return(data), excess_magnitude(data));
 }
 
 Result solve_max_diversification(const Spec& spec, const Data& data)
 {
-    return solve_homogeneous(spec, data, asset_volatilities(data));
+    std::vector<double> sigma = asset_volatilities(data);
+    return solve_homogeneous(spec, data, sigma, sigma);
 }
 
 } // namespace po::problems

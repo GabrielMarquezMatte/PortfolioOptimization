@@ -79,7 +79,9 @@ typedef struct po_result po_result;
    multiplier is NaN. A MAX_SHARPE or MAX_DIVERSIFICATION problem with no feasible portfolio of positive
    numerator (for example MAX_SHARPE long only with the rate above every mean) is PO_SOLVE_INFEASIBLE; one whose
    supremum exists but is not attained (for example MAX_SHARPE with unbounded short selling and
-   1' Sigma^-1 mu~ <= 0) is PO_SOLVE_UNBOUNDED.
+   1' Sigma^-1 mu~ <= 0) is PO_SOLVE_UNBOUNDED. Near that boundary, a problem whose 1' Sigma^-1 mu~ is positive
+   but within the rounding of the data, so that its exact weights are of the order of the inverse of that
+   rounding, is PO_SOLVE_UNBOUNDED too: its sign is not decided by the data.
    Which setters and data each objective takes (a setter outside its row makes po_solve return
    PO_INVALID_ARGUMENT, "<setter> does not apply to <OBJECTIVE>"; a missing input, "<OBJECTIVE> requires
    <item>"):

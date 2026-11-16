@@ -14,8 +14,9 @@ namespace po::problems
 //   min y'Sigma y  s.t.  v'y = 1,  y_i - lo_i 1'y >= 0,  hi_i 1'y - y_i >= 0 (finite bounds),  1'y >= 0,
 // and with leverage L 1'y - ||y||_1 >= 0 (gross_exposure {L 1, 0}); G = 2 Sigma, factor sqrt(2) L.
 // A QP that is Infeasible is INFEASIBLE (no feasible w has v'w > 0). The row 1'y >= 0 in the active set at
-// the optimum is UNBOUNDED: the supremum is approached as kappa -> 0 and never attained. Otherwise OPTIMAL
-// with w = y / kappa.
+// the optimum is UNBOUNDED: the supremum is approached as kappa -> 0 and never attained. So is a kappa = 1'y within
+// 16 times its rounding, whose sign the data do not decide (near 1' Sigma^-1 v = 0 without bounds). Otherwise
+// OPTIMAL with w = y / kappa.
 Result solve_max_sharpe(const Spec& spec, const Data& data);
 Result solve_max_diversification(const Spec& spec, const Data& data);
 

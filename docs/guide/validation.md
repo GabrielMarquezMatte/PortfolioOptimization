@@ -100,6 +100,11 @@ so that a problem whose objective is scaled by 1e-4 is held to the same relative
   residual there is the part of its magnitude beyond `|lambda_lev|`. A weight within `tol |w|max` of 0 counts as 0:
   the family holds such a weight at 0 only to rounding, and its sign is the rounding's.
 
+The bands assume weights of order 1 (`||w||_1 = O(1)`, as in every test problem). The solver is backward stable:
+its rounding is that of a nearby problem, so the forward error of the weights grows with `||w||_1`, and a problem
+whose exact weights are large (near the boundary of `MAX_SHARPE` below, with weights of 1e5 and more) is held to its
+band relative to those weights, not to 1.
+
 NaN always fails, so a solution full of NaN cannot pass a residual check. With these measures the worst residuals in
 the suite are, for the QP, 1.7e-14 (stationarity) at the 1e-10 tolerance and 3.9e-12 for the covariance of condition
 number 1e10 at 1e-8; in the user's variables, 4.0e-14 at 1e-10 outside the conditioning sweep of `MAX_RETURN`, and in
@@ -312,33 +317,46 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
 ## Numerical decisions of MAX_SHARPE and MAX_DIVERSIFICATION
 
 The homogeneous QP (`src/problems/homogeneous.cpp`, the equations in
-[math.md](math.md#max_sharpe-and-max_diversification)) adds no tolerance of its own. Each decision is the solver's, or a
-sign, measured over `RatioFuzz.AgainstFrontierReference` (1200 cases, 1067 of them with an `Optimal` QP) with an
-instrumented copy of the builder:
+[math.md](math.md#max_sharpe-and-max_diversification)) adds one decision of its own, the noise of `kappa`; the others
+are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (1200 cases, 1067 of them with an
+`Optimal` QP) with an instrumented copy of the builder, and the noise of `kappa` also at the boundary:
 
 - **UNBOUNDED is the active set.** The row `1'y >= 0` is in the active set of the optimum, as the solver reports it
   (`qp::Solution::active_inequalities`), and the solver adds that row only when it is violated beyond its feasibility
   tolerance. The row was active in 28 of the 1067 solves, every one of them `UNBOUNDED` by the reference, with
   `kappa = 1'y` at most 9.7e-17 of `sqrt(n) |y|max` (the scale of the row at the point); in the other 1039, `kappa` was
-  at least 0.14 of it. Sixteen orders of magnitude separate them, and no threshold on `kappa` is needed (but see the
-  boundary below).
-- **A kappa that is not positive.** A `kappa <= 0` with the row inactive is the same closure point held within the
-  solver's feasibility tolerance, and is `UNBOUNDED` too: `w = y / kappa` would have the wrong sign or no value. It is
-  a sign, not a tolerance, and it did not occur in the 1067 solves.
-- **The boundary of the sign of kappa.** Without bounds, `kappa = 1' Sigma^-1 v / v' Sigma^-1 v` is fixed by the data, and
-  `1' Sigma^-1 v = 0` is the border between `OPTIMAL` (it is positive) and `UNBOUNDED` (it is not). When `1' Sigma^-1 v`
-  is zero to rounding, for example `rf` equal to the return of the global minimum-variance portfolio (`B / A` in the
-  notation of [math.md](math.md#min_variance)) with unbounded short selling, the QP can return `kappa = 1'y` in
-  `(0, noise]` with the row `1'y >= 0` inactive. Neither rule above catches it, since the row is not active and `kappa`
-  is positive, and the result is `OPTIMAL` with weights `y / kappa` of order `1 / eps`. It is an ill-posed boundary, not
-  an error of the mapping: the weights of the exact optimum grow like `1 / (1' Sigma^-1 v)` toward it. Measured on
-  `COV` and `MU` of `python/tests/test_ratio_objectives.py` with cash and `rf = B / A` computed in floating point
-  (`1' Sigma^-1 mu~` evaluated in floating point is -1.1e-16, of the order of its own rounding): `OPTIMAL` with
-  `|w|max = 5.7e15`; `rf` moved by `1e-16`, `1e-15`, `1e-14` and `1e-12` below it gives `OPTIMAL` with `|w|max` 1.1e14,
-  1.1e13, 1.1e12 and 1.1e10, proportional to `1 / (1' Sigma^-1 mu~)`, and above it `UNBOUNDED`. The battery has no case there, only the gap of 16 orders of
-  magnitude between the two groups above (at most 9.7e-17 against at least 0.14), so no threshold on `kappa` has a
-  measurement behind it and none is added. This is documented, not fixed: a result with weights of order `1 / eps`
-  is a sign of this boundary.
+  at least 0.14 of it. The row alone does not decide the boundary, below.
+- **The noise of kappa: the boundary of its sign.** Without bounds, `kappa = 1' Sigma^-1 v / v' Sigma^-1 v` is fixed by
+  the data, and `1' Sigma^-1 v = 0` is the border between `OPTIMAL` (it is positive) and `UNBOUNDED` (it is not). When
+  `1' Sigma^-1 v` is zero to rounding, for example `rf` equal to the return of the global minimum-variance portfolio
+  (`B / A` in the notation of [math.md](math.md#min_variance)) with unbounded short selling, the QP returns
+  `kappa = 1'y` of either sign within its rounding with the row `1'y >= 0` inactive. Before this decision a positive one
+  was `OPTIMAL` with weights `y / kappa` of order `1 / eps`: against an exact rational reference, `|w|` from 1e14 to
+  3e15 with weights wrong by 0.37 to 2.8 relative at `rf = r_gmv`, `|w| = 5e11` and 83% wrong at `cond(Sigma) = 1e6`,
+  `|w|` about 1e9 and 44 to 134% wrong at 1e8, several of them with an exact `kappa <= 0`, which is `UNBOUNDED`.
+  - **The model.** Where only `v'y = 1` is active, `Sigma y = sigma_y^2 v` and `kappa = sigma_y^2 z'v` with
+    `z = Sigma^-1 1`. A backward error `|dSigma| <= n eps |Sigma|` of the solve and the rounding `|dv| <= eps m` of `v`
+    (`m = |mu| + |rf|` for `MAX_SHARPE`, `sigma` for `MAX_DIVERSIFICATION`) move it to first order by at most
+    `kappa_noise = n eps (|z|'|Sigma||y| + sigma_y^2 |z|'m)`, with `z` from two triangular solves on the factor of
+    `Data` (`kappa_noise` in `src/problems/homogeneous.cpp`). `kappa <= 16 kappa_noise` (`kKappaNoiseFactor`) with the
+    row inactive is the closure point `kappa = 0`: `UNBOUNDED`. It replaces the former rule `kappa <= 0`, which it
+    contains.
+  - **The boundary side.** The error of the computed `kappa` against its exact value, in units of `kappa_noise`, is at
+    most 0.040: on `MaxSharpe.RiskFreeAtMinimumVarianceReturn` at `rf = r_gmv`, where the data make `kappa` exactly 0
+    (16 problems, `cond(Sigma)` 1e2 to 1e8, both scales; at most 0.040), on
+    `MaxDiversification.InverseCovarianceTimesVolatilitiesSumsToZero`, also exactly 0 (24 problems; at most 0.016), and
+    on the reviewer's probes (`n = 6`, `cond(Sigma)` 1e2 to 1e8, both scales, 3 draws each, `rf = r_gmv` computed in
+    floating point, at 0 and 1 ulp from it and moved by 3 to 3e4 times `cond(Sigma) eps` relative, 312 solves against an
+    exact rational `kappa`; 187 with the row inactive, at most 0.029). The factor 16 is 400 times the largest error.
+  - **The battery side.** The 1039 `OPTIMAL` solves of `RatioFuzz` have `kappa` at least 2.5e6 `kappa_noise`, 1.6e5
+    times the threshold, and the factor changes no status of the battery; the unit suites of `MAX_SHARPE` and
+    `MAX_DIVERSIFICATION` are at least 1.1e11.
+  - **What it gives.** On the probes no result is `OPTIMAL` with an exact `kappa <= 0` (several were before). The 99
+    `OPTIMAL` results have an exact `kappa` of at least 23 `kappa_noise`, weights from 11 to 1.3e12 and a relative error
+    of the weights of at most 6.5e-4, consistent with an error of `kappa` of at most 0.029 `kappa_noise` over a `kappa`
+    above 16: backward-stable results whose band is relative to weights far from order 1 (see "Tolerances"). The other
+    side of the same honesty: 54 problems whose exact `kappa` is positive but at most 16 `kappa_noise` are
+    `UNBOUNDED`, with exact weights of at least 3.2e6, since their sign is within the rounding of the data.
 - **Cash bounds.** With cash the cash weight is held at exactly 0, and the request is `INFEASIBLE` when the cash bounds
   exclude 0: `lower_0 > 0` or `upper_0 < 0`, compared with 0 exactly.
 - **The multipliers.** The mapping uses `nu = 2 sigma_y^2`, which complementarity gives in exact arithmetic, rather
@@ -487,7 +505,7 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, an ill-conditioned one (`cond(R) = 1e8`) accepted with the objective of an independent least squares, no covariance needed |
 | `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems, a conditioning sweep (`cond(Sigma)` 1e2 to 1e7), a risk-free rate above every mean (all cash), equal means with tight upper bounds or with cash, the budget multiplier under a common shift of the means, the leverage along the path (the vertex of the leverage in closed form, both caps binding against finite differences in s and L), and the multipliers mapped back from the shift along the leverage and the cash bound in closed form |
 | `tests/unit/problems/leverage_test.cpp` | The leverage in `MIN_VARIANCE` and `UTILITY`: KKT with the subgradient term, a weight held at 0 by a subgradient inside [-1, 1], `L < 1` without cash infeasible, cash not counted, the multiplier against a finite difference, NaN without a leverage and 0 when inactive |
-| `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
+| `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, the boundary `1' Sigma^-1 v = 0` exact in the data (`rf` at the minimum-variance return and a few ulps away for `MAX_SHARPE`, a covariance with `1' Sigma^-1 sigma = 0` for `MAX_DIVERSIFICATION`, over `cond(Sigma)` 1e2 to 1e8 and both scales: `UNBOUNDED`, or `OPTIMAL` against an extended-precision reference), long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
 | `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |

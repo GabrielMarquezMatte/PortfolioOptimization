@@ -271,7 +271,9 @@ rows in this order: the bound rows of each risky asset (lower then upper), then 
   whose weights grow without bound. The supremum of the ratio exists but is not attained: `PO_SOLVE_UNBOUNDED`, with
   NaN weights and multipliers. It needs an unbounded feasible set: with every weight bounded on both sides, or with a
   leverage, `kappa = 0` forces `y = 0`, which contradicts `v'y = 1`. Without bounds it happens when
-  `1' Sigma^-1 v <= 0`. At `1' Sigma^-1 v` of order rounding the sign of `kappa` is not decided by the data; see
+  `1' Sigma^-1 v <= 0`. At `1' Sigma^-1 v` of order rounding the sign of `kappa` is not decided by the data, so a
+  `kappa = 1'y` at most 16 times its rounding (the row inactive) is `PO_SOLVE_UNBOUNDED` too, even where the exact
+  `1' Sigma^-1 v` is positive and tiny and the exact weights are of the order of the inverse of that rounding; see
   [the boundary](validation.md#numerical-decisions-of-max_sharpe-and-max_diversification) in `validation.md`.
 - Otherwise `PO_SOLVE_OPTIMAL` with `w = y / kappa` (and cash exactly 0).
 

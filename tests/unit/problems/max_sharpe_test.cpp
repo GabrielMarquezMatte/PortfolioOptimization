@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -260,6 +261,251 @@ TEST(MaxSharpe, NoSharperFeasiblePortfolio)
         }
         double ratio = ratio_of(data, data.mu(), point);
         ASSERT_LE(ratio, best * (1.0 + 1e-12)) << "sample " << sample << " t " << t;
+    }
+}
+
+// The boundary 1' Sigma^-1 mu~ = 0, exact in the data: mu = Sigma y0 + rf 1 with 1'y0 = 0, computed in integers, so
+// that Sigma^-1 mu~ = y0 and rf is exactly the return of the global minimum-variance portfolio. The covariance is
+// random_covariance(n, seed, condition) scaled to a largest eigenvalue of about 0.04 (times 2^-14 at the daily
+// scale) and rounded to integers times 2^exponent, 2^-36 of its largest entry: the rounding is far below the
+// smallest eigenvalue, so the condition number stays that of random_covariance.
+struct Boundary
+{
+    Data data;
+    std::vector<double> direction;
+};
+
+constexpr int kGridBits = 36;
+constexpr std::int64_t kExact = std::int64_t{1} << 53;
+
+// Integers in [-8, 8] summing to 0 (the last one too), times 2^shift.
+std::vector<std::int64_t> zero_sum_direction(std::size_t n, std::uint64_t seed, int shift)
+{
+    std::mt19937_64 engine(seed);
+    std::uniform_int_distribution<std::int64_t> draw(-8, 8);
+    std::vector<std::int64_t> direction(n);
+    std::int64_t total = 100;
+    while (total < -8 || total > 8)
+    {
+        total = 0;
+        for (std::size_t i = 0; i + 1 < n; ++i)
+        {
+            direction[i] = draw(engine);
+            total += direction[i];
+        }
+    }
+    direction[n - 1] = -total;
+    for (std::int64_t& entry : direction)
+    {
+        entry *= std::int64_t{1} << shift;
+    }
+    return direction;
+}
+
+// Sigma as integers times 2^exponent.
+struct DyadicCovariance
+{
+    std::vector<std::int64_t> entries;
+    int exponent;
+};
+
+DyadicCovariance dyadic_covariance(std::size_t n, std::uint64_t seed, double condition, int scale_exponent)
+{
+    std::vector<double> covariance = po::testing::random_covariance(n, seed, condition);
+    int grid = std::ilogb(largest_magnitude(covariance)) - kGridBits;
+    DyadicCovariance dyadic{std::vector<std::int64_t>(n * n), grid - std::ilogb(condition) + scale_exponent};
+    for (std::size_t k = 0; k < n * n; ++k)
+    {
+        dyadic.entries[k] = std::llround(std::ldexp(covariance[k], -grid));
+    }
+    return dyadic;
+}
+
+// rf is 2^-6 at the annual scale and 2^-13 at the daily one (2^-14 on Sigma, its square root on the means).
+Boundary boundary_problem(std::size_t n, std::uint64_t seed, double condition, bool daily)
+{
+    int scale_exponent = daily ? -14 : 0;
+    DyadicCovariance dyadic = dyadic_covariance(n, seed, condition, scale_exponent);
+    std::vector<std::int64_t> direction = zero_sum_direction(n, seed + 100, daily ? 7 : 0);
+    double rate = std::ldexp(1.0, daily ? -13 : -6);
+    std::int64_t rate_units = std::llround(std::ldexp(rate, -dyadic.exponent));
+    std::vector<double> covariance(n * n);
+    std::vector<double> mu(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        std::int64_t mean = rate_units;
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            covariance[i * n + j] = std::ldexp(static_cast<double>(dyadic.entries[i * n + j]), dyadic.exponent);
+            mean += dyadic.entries[i * n + j] * direction[j];
+        }
+        EXPECT_LT(std::llabs(mean), kExact);
+        mu[i] = std::ldexp(static_cast<double>(mean), dyadic.exponent);
+    }
+    Boundary boundary{Data::create(n, mu, covariance).value(),
+                      std::vector<double>(direction.begin(), direction.end())};
+    boundary.data.set_risk_free(rate);
+    return boundary;
+}
+
+// The lower factor of Sigma in long double, for a reference that does not share the rounding of the library.
+std::vector<long double> extended_factor(const Data& data)
+{
+    std::size_t n = data.asset_count();
+    std::vector<long double> factor(data.covariance().begin(), data.covariance().end());
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        for (std::size_t k = 0; k < j; ++k)
+        {
+            factor[j * n + j] -= factor[j * n + k] * factor[j * n + k];
+        }
+        factor[j * n + j] = std::sqrt(factor[j * n + j]);
+        for (std::size_t i = j + 1; i < n; ++i)
+        {
+            for (std::size_t k = 0; k < j; ++k)
+            {
+                factor[i * n + j] -= factor[i * n + k] * factor[j * n + k];
+            }
+            factor[i * n + j] /= factor[j * n + j];
+        }
+    }
+    return factor;
+}
+
+// Sigma^-1 1 in long double.
+std::vector<long double> extended_inverse_times_ones(const Data& data)
+{
+    std::size_t n = data.asset_count();
+    std::vector<long double> factor = extended_factor(data);
+    std::vector<long double> solution(n, 1.0L);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t k = 0; k < i; ++k)
+        {
+            solution[i] -= factor[i * n + k] * solution[k];
+        }
+        solution[i] /= factor[i * n + i];
+    }
+    for (std::size_t i = n; i-- > 0;)
+    {
+        for (std::size_t k = i + 1; k < n; ++k)
+        {
+            solution[i] -= factor[k * n + i] * solution[k];
+        }
+        solution[i] /= factor[i * n + i];
+    }
+    return solution;
+}
+
+// With rf moved down by d > 0, Sigma^-1 mu~ = y0 + d Sigma^-1 1 exactly, so the weights are
+// (y0 + d z) / (d 1'z), z = Sigma^-1 1, with no cancellation since 1'y0 = 0 exactly.
+void expect_boundary_weights(const Boundary& boundary, const Result& result, double distance, double tolerance)
+{
+    std::vector<long double> z = extended_inverse_times_ones(boundary.data);
+    long double total = 0.0L;
+    for (long double entry : z)
+    {
+        total += entry;
+    }
+    std::vector<double> expected(z.size());
+    for (std::size_t i = 0; i < z.size(); ++i)
+    {
+        expected[i] = static_cast<double>((boundary.direction[i] + distance * z[i]) / (distance * total));
+    }
+    double scale = largest_magnitude(expected);
+    for (std::size_t i = 0; i < z.size(); ++i)
+    {
+        EXPECT_NEAR(result.weights[i], expected[i], tolerance * scale);
+    }
+}
+
+// rf moved by ulps units in the last place, up for ulps > 0.
+double moved_rate(double rate, int ulps)
+{
+    double direction = ulps > 0 ? 1.0 : -1.0;
+    for (int step = 0; step < std::abs(ulps); ++step)
+    {
+        rate = std::nextafter(rate, direction);
+    }
+    return rate;
+}
+
+// rf at the return of the global minimum-variance portfolio, and k ulps away, over cond(Sigma) 1e2 to 1e8 at both
+// scales. Without bounds the supremum is attained only when 1' Sigma^-1 mu~ > 0: at rf and above it the result
+// must be UNBOUNDED; below it, where the exact weights are of order 1 / (k eps), UNBOUNDED (kappa within its noise)
+// or OPTIMAL with the weights of the extended-precision reference within the band.
+TEST(MaxSharpe, RiskFreeAtMinimumVarianceReturn)
+{
+    constexpr std::array kConditions = {1e2, 1e4, 1e6, 1e8};
+    constexpr std::array kUlps = {0, 1, -1, 3, -3, 16, -16};
+    for (double condition : kConditions)
+    {
+        for (std::uint64_t seed = 1; seed <= 4; ++seed)
+        {
+            SCOPED_TRACE(testing::Message() << "cond " << condition << " seed " << seed);
+            Boundary boundary = boundary_problem(3 + 3 * seed, seed, condition, seed % 2 == 0);
+            double rate = *boundary.data.risk_free();
+            for (int ulps : kUlps)
+            {
+                SCOPED_TRACE(ulps);
+                Boundary moved = boundary;
+                moved.data.set_risk_free(moved_rate(rate, ulps));
+                Result result = po::solve(unbounded_spec(Objective::MaxSharpe), moved.data).value();
+                if (ulps >= 0 || result.status != SolveStatus::Optimal)
+                {
+                    expect_no_point(result, SolveStatus::Unbounded);
+                    continue;
+                }
+                expect_boundary_weights(moved, result, rate - *moved.data.risk_free(),
+                                        po::testing::condition_tolerance(condition));
+            }
+        }
+    }
+}
+
+// The diversification ratio at 1' Sigma^-1 sigma = 0, exact in the data. With Sigma = D C D, D = diag(sigma),
+// Sigma^-1 sigma = D^-1 C^-1 1. The correlation C = [[1, q e, e], [q e, 1, e], [e, e, 1]], e = (1 + q) / 2, has
+// C^-1 1 = (1, 1, -q), so 1' Sigma^-1 sigma = 2 / s - q / sigma_3, which is 0 at sigma = s (1, 1, q / 2). With
+// q = 1 - 2^-k every entry is a dyadic rational of at most 2k + 1 bits, exact in double, and sqrt(Sigma_33) is
+// sigma_3 exactly. C is positive definite for q < 1 (eigenvalues 1 - q e and those of
+// [[1 + q e, sqrt(2) e], [sqrt(2) e, 1]], of determinant (1 - q) / 2); k = 1, 8, 15 and 21 give cond(Sigma) of
+// 1.3e2, 1.0e4, 1.3e6 and 8.5e7. Copies of the block on the diagonal keep the sum at 0.
+Data zero_diversification_problem(int k, double s, std::size_t blocks)
+{
+    double q = 1.0 - std::ldexp(1.0, -k);
+    double e = 0.5 * (1.0 + q);
+    std::array<double, 3> sigma = {s, s, 0.5 * q * s};
+    std::array<std::array<double, 3>, 3> correlation = {{{1.0, q * e, e}, {q * e, 1.0, e}, {e, e, 1.0}}};
+    std::size_t n = 3 * blocks;
+    std::vector<double> covariance(n * n, 0.0);
+    for (std::size_t entry = 0; entry < 9 * blocks; ++entry)
+    {
+        std::size_t block = entry / 9;
+        std::size_t i = (entry % 9) / 3;
+        std::size_t j = entry % 3;
+        covariance[(3 * block + i) * n + 3 * block + j] = sigma[i] * sigma[j] * correlation[i][j];
+    }
+    return Data::create(n, {}, covariance).value();
+}
+
+// Without bounds the supremum is not attained at 1' Sigma^-1 sigma = 0: UNBOUNDED, over the four condition numbers,
+// both scales and one to three blocks.
+TEST(MaxDiversification, InverseCovarianceTimesVolatilitiesSumsToZero)
+{
+    constexpr std::array kBits = {1, 8, 15, 21};
+    constexpr std::array kScales = {0.25, 0.25 / 128.0};
+    for (int k : kBits)
+    {
+        for (double s : kScales)
+        {
+            for (std::size_t blocks = 1; blocks <= 3; ++blocks)
+            {
+                SCOPED_TRACE(testing::Message() << "k " << k << " s " << s << " blocks " << blocks);
+                Data data = zero_diversification_problem(k, s, blocks);
+                Result result = po::solve(unbounded_spec(Objective::MaxDiversification), data).value();
+                expect_no_point(result, SolveStatus::Unbounded);
+            }
+        }
     }
 }
 
