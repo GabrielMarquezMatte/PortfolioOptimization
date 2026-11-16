@@ -32,25 +32,6 @@ struct Homogeneous
     std::size_t kappa_row = 0;
 };
 
-double bound_of(const std::vector<double>& per_weight, double scalar, std::size_t weight)
-{
-    if (per_weight.empty())
-    {
-        return scalar;
-    }
-    return per_weight[weight];
-}
-
-double lower_of(const Spec& spec, std::size_t weight)
-{
-    return bound_of(spec.asset_lower, spec.lower, weight);
-}
-
-double upper_of(const Spec& spec, std::size_t weight)
-{
-    return bound_of(spec.asset_upper, spec.upper, weight);
-}
-
 std::size_t add_row(qp::Problem& problem, std::span<const double> row)
 {
     problem.inequality_rows.insert(problem.inequality_rows.end(), row.begin(), row.end());

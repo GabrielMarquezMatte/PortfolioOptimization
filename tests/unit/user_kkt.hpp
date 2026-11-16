@@ -11,6 +11,7 @@
 #include "core/result.hpp"
 #include "core/spec.hpp"
 #include "kkt.hpp"
+#include "problems/constraints.hpp"
 
 namespace po::testing
 {
@@ -39,23 +40,8 @@ inline std::vector<double> excess_mu(const po::Data& data)
     return excess;
 }
 
-inline double lower_of(const po::Spec& spec, std::size_t weight)
-{
-    if (spec.asset_lower.empty())
-    {
-        return spec.lower;
-    }
-    return spec.asset_lower[weight];
-}
-
-inline double upper_of(const po::Spec& spec, std::size_t weight)
-{
-    if (spec.asset_upper.empty())
-    {
-        return spec.upper;
-    }
-    return spec.asset_upper[weight];
-}
+using po::problems::lower_of;
+using po::problems::upper_of;
 
 inline void expect_user_equalities(const po::Spec& spec, const po::Data& data, const po::Result& result,
                                    double tolerance)

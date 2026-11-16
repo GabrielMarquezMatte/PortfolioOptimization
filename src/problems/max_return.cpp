@@ -7,6 +7,7 @@
 #include <span>
 #include <utility>
 
+#include "problems/constraints.hpp"
 #include "problems/parametric_path.hpp"
 #include "qp/problem.hpp"
 
@@ -15,8 +16,6 @@ namespace po::problems
 namespace
 {
 
-// s within this of sigma_min, relative, is the case s = sigma_min.
-constexpr double kMinimumTolerance = 1e-12;
 // Q(t*) confirms the crossing when it lies on the bracket's segment and its volatility is within this
 // fraction of the bracket's volatility range from s: an error of the affine model is a sizable fraction of
 // the range, while the rounding of vol(Q(t*)) is about 1e-15 cond(Sigma) s (docs/guide/validation.md).
@@ -295,12 +294,12 @@ Result solve_max_return(const Spec& spec, const Data& data)
         return stopped(data, path, start.solution.status);
     }
     double minimum = start.volatility;
-    if (path.cap < minimum * (1.0 - kMinimumTolerance))
+    if (path.cap < minimum * (1.0 - kMinimumVolatilityTolerance))
     {
         return stopped(data, path, qp::Status::Infeasible);
     }
     double first_t = first_step(data, path.base.excess, minimum, path.cap);
-    if (std::fabs(path.cap - minimum) <= kMinimumTolerance * path.cap)
+    if (std::fabs(path.cap - minimum) <= kMinimumVolatilityTolerance * path.cap)
     {
         return at_minimum(data, path, start, first_t);
     }

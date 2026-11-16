@@ -1,5 +1,6 @@
 #pragma once
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -639,8 +641,9 @@ inline std::vector<double> budget_of(const po::Spec& spec, std::size_t n)
     return spec.risk_budget;
 }
 
-inline void expect_risk_parity_equalities(const po::Spec& spec, const po::Data& data, const po::Result& result,
-                                          double tolerance)
+// The equalities at the weights: the budget, the target return and the target volatility, those of spec.
+inline void expect_risk_parity_feasible(const po::Spec& spec, const po::Data& data, const po::Result& result,
+                                        double tolerance)
 {
     double total = 0.0;
     for (double weight : result.weights)
@@ -648,10 +651,6 @@ inline void expect_risk_parity_equalities(const po::Spec& spec, const po::Data& 
         total += weight;
     }
     EXPECT_NEAR(total, 1.0, tolerance);
-    EXPECT_FALSE(std::isnan(result.budget_multiplier));
-    EXPECT_EQ(std::isnan(result.target_return_multiplier), !spec.target_return.has_value());
-    EXPECT_EQ(std::isnan(result.volatility_multiplier), !spec.target_volatility.has_value());
-    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
     if (spec.target_return.has_value())
     {
         double gap = std::fabs(portfolio_return(data, result.weights) - *spec.target_return);
@@ -663,6 +662,48 @@ inline void expect_risk_parity_equalities(const po::Spec& spec, const po::Data& 
         double gap = std::fabs(portfolio_volatility(data, result.weights) - *spec.target_volatility);
         EXPECT_LE(relative_to(gap, *spec.target_volatility), tolerance);
     }
+}
+
+// Finite multipliers for the constraints of spec, NaN for the absent ones.
+inline void expect_risk_parity_multiplier_pattern(const po::Spec& spec, const po::Result& result)
+{
+    EXPECT_TRUE(std::isfinite(result.budget_multiplier));
+    EXPECT_EQ(std::isfinite(result.target_return_multiplier), spec.target_return.has_value());
+    EXPECT_EQ(std::isnan(result.target_return_multiplier), !spec.target_return.has_value());
+    EXPECT_EQ(std::isfinite(result.volatility_multiplier), spec.target_volatility.has_value());
+    EXPECT_EQ(std::isnan(result.volatility_multiplier), !spec.target_volatility.has_value());
+    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
+}
+
+// The relative distance of s to the minimum volatility within which a target volatility is that minimum: the
+// feasibility tolerance of the QP that computes it.
+inline constexpr double kMinimumVolatilityBand = 1e-12;
+
+// A volatility multiplier of -inf says that s is the minimum volatility over the linear rows and the bounds,
+// where the only feasible point is the minimum-variance portfolio, the gradients of the constraints are
+// dependent and no KKT multipliers exist in general: every other multiplier is NaN. Accepted only there: s
+// within kMinimumVolatilityBand of the volatility of MIN_VARIANCE (po::solve, with the bounds and the target
+// return of spec) and w that portfolio.
+inline void expect_minimum_volatility_point(const po::Spec& spec, const po::Data& data,
+                                            const po::Result& result, double tolerance)
+{
+    ASSERT_TRUE(spec.target_volatility.has_value());
+    po::Result minimum = frontier_point(spec, data, spec.target_return);
+    ASSERT_EQ(minimum.status, po::SolveStatus::Optimal);
+    double target = *spec.target_volatility;
+    double distance = std::fabs(target - portfolio_volatility(data, minimum.weights));
+    EXPECT_LE(distance, kMinimumVolatilityBand * target) << "tolerance: s is not the minimum volatility";
+    for (std::size_t k = 0; k < result.weights.size(); ++k)
+    {
+        EXPECT_NEAR(result.weights[k], minimum.weights[k], tolerance) << "weight " << k;
+        EXPECT_TRUE(std::isnan(result.bound_multipliers[k])) << "bound multiplier " << k;
+        EXPECT_GE(result.weights[k], lower_of(spec, k) - tolerance);
+        EXPECT_LE(result.weights[k], upper_of(spec, k) + tolerance);
+    }
+    EXPECT_TRUE(std::isnan(result.budget_multiplier));
+    EXPECT_TRUE(std::isnan(result.target_return_multiplier));
+    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
+    expect_risk_parity_feasible(spec, data, result, tolerance);
 }
 
 // w'grad f = 0, since the contributions are homogeneous of degree 0, relative to sum |w_i| times the
@@ -729,14 +770,21 @@ inline double contribution_gap(const po::Data& data, std::span<const double> bud
 // KKT in the user's variables: equalities, bounds, sign and complementarity of beta, the NaN pattern of the
 // multipliers, and
 //   grad f(w) = budget * 1 + target_return * mu + volatility * Sigma w / vol + beta,
-// with grad f from risk_parity_gradient, and the identity w'grad f = 0.
+// with grad f from risk_parity_gradient, and the identity w'grad f = 0. A volatility multiplier of -inf is
+// the case s = sigma_min, which has no stationarity to check (expect_minimum_volatility_point).
 inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
                                    double tolerance)
 {
     ASSERT_EQ(result.status, po::SolveStatus::Optimal);
     ASSERT_EQ(result.weights.size(), data.weight_count());
     ASSERT_EQ(result.bound_multipliers.size(), data.weight_count());
-    expect_risk_parity_equalities(spec, data, result, tolerance);
+    if (result.volatility_multiplier == -std::numeric_limits<double>::infinity())
+    {
+        expect_minimum_volatility_point(spec, data, result, tolerance);
+        return;
+    }
+    expect_risk_parity_multiplier_pattern(spec, result);
+    expect_risk_parity_feasible(spec, data, result, tolerance);
     expect_user_bounds(spec, result, tolerance);
     std::vector<double> budget = budget_of(spec, data.asset_count());
     ObjectiveGradient gradient = sum_of(risk_parity_gradient_terms(data, budget, result.weights));
@@ -746,6 +794,25 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
     }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
     expect_user_stationarity(data, result, gradient, tolerance);
+}
+
+// The message of every failure of expect_risk_parity_kkt on the result; empty when it passes. The failures
+// are intercepted, not reported.
+inline std::vector<std::string> risk_parity_kkt_failures(const po::Spec& spec, const po::Data& data,
+                                                         const po::Result& result, double tolerance)
+{
+    ::testing::TestPartResultArray failures;
+    {
+        ::testing::ScopedFakeTestPartResultReporter reporter(
+            ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ONLY_CURRENT_THREAD, &failures);
+        expect_risk_parity_kkt(spec, data, result, tolerance);
+    }
+    std::vector<std::string> messages;
+    for (int k = 0; k < failures.size(); ++k)
+    {
+        messages.emplace_back(failures.GetTestPartResult(k).message());
+    }
+    return messages;
 }
 
 } // namespace po::testing

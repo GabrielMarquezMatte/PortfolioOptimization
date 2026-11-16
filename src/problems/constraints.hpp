@@ -7,10 +7,19 @@
 #include "core/data.hpp"
 #include "core/result.hpp"
 #include "core/spec.hpp"
+#include "qp/goldfarb_idnani.hpp"
 #include "qp/problem.hpp"
 
 namespace po::problems
 {
+
+// A target volatility s within this of the minimum volatility of the linear rows, relative, is the case
+// s = sigma_min: the minimum is known to the feasibility tolerance of the QP that computed it.
+inline constexpr double kMinimumVolatilityTolerance = qp::kRelativeTolerance;
+
+// The bound of a weight: its per-asset entry when the spec has them, the scalar bound otherwise.
+double lower_of(const Spec& spec, std::size_t weight);
+double upper_of(const Spec& spec, std::size_t weight);
 
 struct BoundRow
 {

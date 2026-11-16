@@ -5,12 +5,16 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <numeric>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "core/data.hpp"
 #include "core/result.hpp"
 #include "core/spec.hpp"
+#include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "random_covariance.hpp"
 #include "riskparity/spinu.hpp"
@@ -293,6 +297,181 @@ TEST(RiskParityReference, KktRejectsAStationarityErrorAwayFromTheFloor)
     po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10);
     result.bound_multipliers[0] += 1e-8 * largest;
     EXPECT_NONFATAL_FAILURE(po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10), "tolerance");
+}
+
+// expect_risk_parity_kkt fails on the result, with a failure that mentions the reason.
+void expect_rejected(const Spec& spec, const Data& data, const Result& result, const std::string& reason)
+{
+    std::vector<std::string> failures = po::testing::risk_parity_kkt_failures(spec, data, result, 1e-10);
+    auto mentions = [&reason](const std::string& failure)
+    { return failure.find(reason) != std::string::npos; };
+    EXPECT_TRUE(std::ranges::any_of(failures, mentions))
+        << failures.size() << " failures, none about " << reason;
+}
+
+// A point held at its lower bounds (upper bounds 1 above), stationary by construction: beta = grad f -
+// budget 1 - target_return mu, with the budget multiplier below every entry of the rest so that every beta is
+// positive.
+struct LowerBoundPoint
+{
+    Data data;
+    Spec spec;
+    Result result;
+};
+
+LowerBoundPoint lower_bound_point(bool with_target_return)
+{
+    std::size_t n = 6;
+    Data data = covariance_data(n, random_vector(n, 7, 0.03, 0.15), random_covariance(n, 3, 100.0));
+    std::vector<double> weights = normalized(random_vector(n, 13, 0.1, 1.0));
+    Spec spec;
+    spec.risk_budget = normalized(random_vector(n, 11, 0.2, 1.0));
+    spec.asset_lower = weights;
+    spec.asset_upper = weights;
+    for (double& upper : spec.asset_upper)
+    {
+        upper += 1.0;
+    }
+    Result result;
+    result.status = SolveStatus::Optimal;
+    result.weights = weights;
+    result.bound_multipliers = risk_parity_gradient(data, spec.risk_budget, weights);
+    if (with_target_return)
+    {
+        spec.target_return = po::testing::dot(weights, data.mu());
+        result.target_return_multiplier = 0.7;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            result.bound_multipliers[i] -= result.target_return_multiplier * data.mu()[i];
+        }
+    }
+    result.budget_multiplier = *std::ranges::min_element(result.bound_multipliers) - 0.1;
+    for (double& beta : result.bound_multipliers)
+    {
+        beta -= result.budget_multiplier;
+    }
+    return LowerBoundPoint{std::move(data), std::move(spec), std::move(result)};
+}
+
+// The scale of the stationarity check at the point: the largest term of grad f or of the constraints.
+double stationarity_scale(const LowerBoundPoint& point)
+{
+    po::testing::ObjectiveGradient gradient = po::testing::sum_of(
+        po::testing::risk_parity_gradient_terms(point.data, point.spec.risk_budget, point.result.weights));
+    return std::fmax(gradient.scale, po::testing::constraint_terms(point.data, point.result).scale);
+}
+
+// An error of 1e-8 of the scale of the check in one multiplier, 100 times the tolerance.
+TEST(RiskParityReference, KktRejectsAPerturbedBudgetMultiplier)
+{
+    LowerBoundPoint point = lower_bound_point(false);
+    po::testing::expect_risk_parity_kkt(point.spec, point.data, point.result, 1e-10);
+    point.result.budget_multiplier += 1e-8 * stationarity_scale(point);
+    expect_rejected(point.spec, point.data, point.result, "tolerance");
+}
+
+TEST(RiskParityReference, KktRejectsAPerturbedTargetReturnMultiplier)
+{
+    LowerBoundPoint point = lower_bound_point(true);
+    po::testing::expect_risk_parity_kkt(point.spec, point.data, point.result, 1e-10);
+    double largest_mean = po::testing::largest_magnitude(point.data.mu());
+    point.result.target_return_multiplier += 1e-8 * stationarity_scale(point) / largest_mean;
+    expect_rejected(point.spec, point.data, point.result, "tolerance");
+    point = lower_bound_point(true);
+    point.result.target_return_multiplier = std::numeric_limits<double>::quiet_NaN();
+    expect_rejected(point.spec, point.data, point.result, "target_return_multiplier");
+}
+
+// The same stationary point with the budget multiplier above every entry, so that every beta is negative at a
+// lower bound: the stationarity holds exactly and only the sign of beta is wrong.
+TEST(RiskParityReference, KktRejectsAWrongSignBoundMultiplier)
+{
+    LowerBoundPoint point = lower_bound_point(false);
+    double shift = po::testing::largest_magnitude(point.result.bound_multipliers) + 0.1;
+    point.result.budget_multiplier += shift;
+    for (double& beta : point.result.bound_multipliers)
+    {
+        beta -= shift;
+        ASSERT_LT(beta, 0.0);
+    }
+    po::testing::ObjectiveGradient gradient = po::testing::sum_of(
+        po::testing::risk_parity_gradient_terms(point.data, point.spec.risk_budget, point.result.weights));
+    po::testing::expect_user_stationarity(point.data, point.result, gradient, 1e-10);
+    expect_rejected(point.spec, point.data, point.result, "bound_complementarity");
+}
+
+// A weight without a finite bound has beta = 0, never NaN: with the bounds of weight 0 removed, a NaN there
+// must not pass as "no multiplier".
+TEST(RiskParityReference, KktRejectsANaNBoundMultiplierAtAnInfiniteBound)
+{
+    LowerBoundPoint point = lower_bound_point(false);
+    point.spec.asset_lower[0] = -std::numeric_limits<double>::infinity();
+    point.spec.asset_upper[0] = std::numeric_limits<double>::infinity();
+    point.result.bound_multipliers[0] = std::numeric_limits<double>::quiet_NaN();
+    expect_rejected(point.spec, point.data, point.result, "tolerance");
+}
+
+// The result of s = sigma_min: the minimum-variance weights, a volatility multiplier of -inf and every other
+// multiplier NaN.
+struct MinimumVolatilityPoint
+{
+    Data data;
+    Spec spec;
+    Result result;
+};
+
+MinimumVolatilityPoint minimum_volatility_point()
+{
+    std::size_t n = 5;
+    Data data = covariance_data(n, random_vector(n, 7, 0.03, 0.15), random_covariance(n, 3, 100.0));
+    Spec spec;
+    spec.lower = 0.0;
+    spec.upper = 1.0;
+    Result minimum = po::testing::frontier_point(spec, data, std::nullopt);
+    spec.target_volatility = po::testing::portfolio_volatility(data, minimum.weights);
+    Result result;
+    result.status = SolveStatus::Optimal;
+    result.weights = minimum.weights;
+    result.bound_multipliers.assign(n, std::numeric_limits<double>::quiet_NaN());
+    result.volatility_multiplier = -std::numeric_limits<double>::infinity();
+    return MinimumVolatilityPoint{std::move(data), std::move(spec), std::move(result)};
+}
+
+TEST(RiskParityReference, KktAcceptsTheMinimumVolatilityPoint)
+{
+    MinimumVolatilityPoint point = minimum_volatility_point();
+    po::testing::expect_risk_parity_kkt(point.spec, point.data, point.result, 1e-10);
+}
+
+TEST(RiskParityReference, KktRejectsAnInfiniteVolatilityMultiplierAwayFromTheMinimum)
+{
+    MinimumVolatilityPoint point = minimum_volatility_point();
+    *point.spec.target_volatility *= 1.0 + 1e-9;
+    expect_rejected(point.spec, point.data, point.result, "s is not the minimum volatility");
+}
+
+TEST(RiskParityReference, KktRejectsOtherWeightsOrMultipliersAtTheMinimumVolatility)
+{
+    MinimumVolatilityPoint moved = minimum_volatility_point();
+    moved.result.weights[0] += 1e-6;
+    moved.result.weights[1] -= 1e-6;
+    expect_rejected(moved.spec, moved.data, moved.result, "weight 0");
+    MinimumVolatilityPoint finite = minimum_volatility_point();
+    finite.result.budget_multiplier = 0.0;
+    expect_rejected(finite.spec, finite.data, finite.result, "budget_multiplier");
+    MinimumVolatilityPoint bound = minimum_volatility_point();
+    bound.result.bound_multipliers[2] = 0.0;
+    expect_rejected(bound.spec, bound.data, bound.result, "bound multiplier 2");
+}
+
+// Away from the minimum the volatility multiplier is finite: +inf is no multiplier.
+TEST(RiskParityReference, KktRejectsAPositiveInfiniteVolatilityMultiplier)
+{
+    MinimumVolatilityPoint point = minimum_volatility_point();
+    point.result.volatility_multiplier = std::numeric_limits<double>::infinity();
+    point.result.budget_multiplier = 0.0;
+    point.result.bound_multipliers.assign(point.result.weights.size(), 0.0);
+    expect_rejected(point.spec, point.data, point.result, "volatility_multiplier");
 }
 
 TEST(RiskParityReference, ShapesCoverEveryCombination)

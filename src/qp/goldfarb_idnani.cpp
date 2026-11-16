@@ -19,7 +19,6 @@ namespace po::qp
 namespace
 {
 
-constexpr double kRelativeTolerance = 1e-12;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNotANumber = std::numeric_limits<double>::quiet_NaN();
 

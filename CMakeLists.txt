@@ -47,6 +47,9 @@ add_library(portopt_core STATIC
     src/problems/parametric_path.cpp
     src/problems/mean_variance.cpp
     src/problems/tracking_error.cpp
+    src/riskparity/augmented_lagrangian.cpp
+    src/riskparity/kkt.cpp
+    src/riskparity/newton_polish.cpp
     src/riskparity/objective.cpp
     src/riskparity/polyhedral_descent.cpp
     src/riskparity/risk_parity.cpp
@@ -118,12 +121,15 @@ if(PO_BUILD_TESTS)
         tests/unit/fuzz/ratio_fuzz_test.cpp
         tests/unit/fuzz/risk_parity/risk_parity_descent_fuzz_test.cpp
         tests/unit/fuzz/risk_parity/risk_parity_reference_test.cpp
+        tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp
         tests/unit/problems/leverage_test.cpp
         tests/unit/problems/max_return_test.cpp
         tests/unit/problems/max_sharpe_test.cpp
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/utility_test.cpp
         tests/unit/problems/tracking_error_test.cpp
+        tests/unit/riskparity/augmented_lagrangian_test.cpp
+        tests/unit/riskparity/newton_polish_test.cpp
         tests/unit/riskparity/objective_test.cpp
         tests/unit/riskparity/polyhedral_descent_test.cpp
         tests/unit/riskparity/risk_parity_test.cpp

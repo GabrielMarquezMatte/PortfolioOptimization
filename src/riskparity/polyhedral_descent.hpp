@@ -38,6 +38,9 @@ struct DescentOptions
     int max_iterations;
 };
 
+// The first proximal weight of every descent of RISK_PARITY (docs/guide/validation.md).
+inline constexpr double kDescentProximal = 0.05;
+
 enum class DescentStop
 {
     // The relative KKT residual is at most the tolerance.

@@ -26,6 +26,8 @@ double dot(std::span<const double> a, std::span<const double> b)
     return total;
 }
 
+} // namespace
+
 // Dot2 of Ogita, Rump and Oishi (2005): each product and each partial sum is split exactly into its rounded
 // value and its error (TwoProduct by fma, TwoSum), and the errors are added back once, so the result is as
 // accurate as if summed in twice the working precision and then rounded. The splits are exact only when every
@@ -46,8 +48,6 @@ double compensated_dot(std::span<const double> a, std::span<const double> b)
     }
     return sum + correction;
 }
-
-} // namespace
 
 // The entries of Sigma x cancel by up to cond(Sigma), and an error of eps cond(Sigma) in p = Sigma w passes
 // into grad f at the same relative size, above the KKT bands: each entry is a compensated dot product.

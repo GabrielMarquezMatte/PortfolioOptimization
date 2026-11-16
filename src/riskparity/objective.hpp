@@ -9,6 +9,9 @@
 namespace po::riskparity
 {
 
+// a'b accurate to its rounding even when its terms cancel.
+double compensated_dot(std::span<const double> a, std::span<const double> b);
+
 // Sigma x, each entry accurate to its rounding even when its terms cancel.
 std::vector<double> covariance_times(const Data& data, std::span<const double> x);
 

@@ -27,7 +27,8 @@ and diversification ratios of given weights; and a Python package over the C API
         dispatch             and volatility
           |       \              |
         src/riskparity          |
-        Spinu Newton            |
+        Spinu Newton, QP        |
+        sequence, Newton-KKT    |
           |                     |
         src/problems            |
         spec and data           |
@@ -43,9 +44,10 @@ and diversification ratios of given weights; and a Python package over the C API
 
 Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
 tracking_error, max_return, parametric_path, homogeneous, constraints: translate a spec and data
-to a QP and read the solution back) <- `riskparity` (spinu, risk_parity: the positive-orthant solution of
+to a QP and read the solution back) <- `riskparity` (spinu: the positive-orthant solution of
 `RISK_PARITY` by Newton; objective, polyhedral_descent: the derivatives of f and the Gauss-Newton QP sequence over
-the polyhedron) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
+the polyhedron; augmented_lagrangian: the target volatility; kkt, newton_polish: the KKT residual against its
+noise and Newton on the KKT system; risk_parity: the policy over them) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
 objective) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
 only on `linalg`. `core/data.cpp` uses the Cholesky factor to reject a covariance that is not positive definite, and
 `problems` uses `qp`. `metrics` depends on `core` and is used by `riskparity` and `capi`. Nothing in `src/` includes from `src/capi/`
@@ -85,20 +87,23 @@ Build targets (`CMakeLists.txt`):
 | `src/riskparity/spinu.*` | `spinu`: Newton on `F(y) = 1/2 y' Sigma y - b' log y`, `y > 0`, `w = y / 1'y`; Cholesky and two triangular solves per step, Armijo far from the minimizer and the full step near it, the stop on the relative size of the step |
 | `src/riskparity/objective.*` | `linearize`: `f = sum_i (c_i - b_i)^2`, its gradient `2 J'r`, the Jacobian `J` of the risk contributions and the exact Hessian; `value_change`, `f(w + s) - f(w)` computed from `s` |
 | `src/riskparity/polyhedral_descent.*` | `descend`: proximal Gauss-Newton steps over the polyhedron (budget, target return, bounds), each a QP of `qp::solve` posed in the step, with a Levenberg-Marquardt proximal weight in the units of `2 J'J` (so the iterates do not depend on the scale of Sigma), Armijo on the Lagrangian of the step's multipliers, an optional augmented-Lagrangian volatility term and a stop reason; the QP multipliers at the fixed point are the user's |
-| `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, which returns the Spinu point when it is inside the box and no target is set |
+| `src/riskparity/kkt.*` | The KKT system of `RISK_PARITY` at a point (`evaluate_kkt`: the gradients of the equalities, the Hessian of the Lagrangian, the stationarity and the gaps), each residual with its noise (how far one rounding of every weight and of every term moves it), `residual_of` in units of that noise and `is_kkt_point`, the one decision of what counts as a KKT point |
+| `src/riskparity/newton_polish.*` | `newton_polish`: Newton on the KKT system with the exact Hessian of the Lagrangian over the free weights (Householder QR of the system), the multipliers estimated again by least squares at every step, a bound released when its multiplier has the wrong sign, and a step taken only when it decreases the KKT residual in noise units |
+| `src/riskparity/augmented_lagrangian.*` | `augmented_lagrangian`: the multiplier method of Andreani, Birgin, Martinez and Schuverdt (2007, Algorithm 3.1) for the row `vol(w) = s` alone, each subproblem a `descend` over the polyhedron; penalty and multiplier in the units of the relative gap `vol(w) / s - 1` |
+| `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, the policy: the Spinu point (the answer when it is inside the box and no target is set), the minimum-variance QP for feasibility and `sigma_min` (`INFEASIBLE`, or the case `s = sigma_min` with `lambda_vol = -inf`), then the descent or the augmented Lagrangian from the point of the polyhedron nearest to the Spinu point, the polish, and `is_kkt_point` deciding `OPTIMAL` against `MAX_ITER` |
 | `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
 | `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: the shift of the means along a face (the budget, a cash bound or a row of the leverage) and its sign certificate, solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the limit certificate of an inactive cap, the vertex exit, the crossing on a segment |
 | `src/problems/max_return.*` | `MAX_RETURN`: the policy over the path (climb, bisection, the case `s = sigma_min`) and the volatility multiplier `-s / t*` |
 | `src/problems/homogeneous.*` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the homogeneous QP `min y' Sigma y` with `v'y = 1` and the rows `1'y >= 0` and, with a leverage, the family with offset `L 1`; the status from the active set (`INFEASIBLE`, `UNBOUNDED`, `OPTIMAL`) and the multipliers mapped back to `w = y / kappa` |
-| `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers |
+| `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers; `lower_of` and `upper_of`, the bound of a weight, and `kMinimumVolatilityTolerance`, shared by `MAX_RETURN` and `RISK_PARITY` |
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio` and `tracking_error` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
 | `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds and `leverage` included; the bounds canonicalized so that equality and hash work); `Data` and its metrics; `SolveStatus`, `Result` and `solve` |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
 | `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
-| `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `risk_parity/` holds the risk parity references and the `RiskParityDescentFuzz` sweep of the polyhedral descent |
+| `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `risk_parity/` holds the risk parity references, the `RiskParityDescentFuzz` sweep of the polyhedral descent and the `RiskParitySolveSweep` of `po::solve` |
 | `tests/unit/kkt.hpp`, `user_kkt.hpp`, `random_covariance.hpp`, `capi_scope.hpp` | KKT residuals of a QP (the generated rows of the family included), the KKT conditions in the user's variables for every objective, random covariances of a chosen condition number, RAII for C handles |
 | `tests/style/check_style.py` | Style rules that can be checked without a compiler; runs as the `style` ctest |
 | `python/tests` | Python tests; they skip cleanly (pytest exit 5) when the native library is missing |

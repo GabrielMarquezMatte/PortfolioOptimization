@@ -33,24 +33,6 @@ std::vector<double> unit_row(std::size_t n, std::size_t index, double value)
     return row;
 }
 
-double lower_bound(const Spec& spec, std::size_t weight)
-{
-    if (spec.asset_lower.empty())
-    {
-        return spec.lower;
-    }
-    return spec.asset_lower[weight];
-}
-
-double upper_bound(const Spec& spec, std::size_t weight)
-{
-    if (spec.asset_upper.empty())
-    {
-        return spec.upper;
-    }
-    return spec.asset_upper[weight];
-}
-
 void add_equalities(const Spec& spec, const Data& data, qp::Problem& problem, ConstraintRows& rows)
 {
     std::size_t n = data.asset_count();
@@ -75,8 +57,8 @@ void add_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, Con
 {
     for (std::size_t i = 0; i < n; ++i)
     {
-        double lower = lower_bound(spec, i);
-        double upper = upper_bound(spec, i);
+        double lower = lower_of(spec, i);
+        double upper = upper_of(spec, i);
         if (std::isfinite(lower))
         {
             rows.bounds.push_back(BoundRow{i, add_inequality(problem, unit_row(n, i, 1.0), lower), true});
@@ -90,8 +72,8 @@ void add_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, Con
 
 void add_cash_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
 {
-    double lower = lower_bound(spec, n);
-    double upper = upper_bound(spec, n);
+    double lower = lower_of(spec, n);
+    double upper = upper_of(spec, n);
     if (std::isfinite(lower))
     {
         rows.bounds.push_back(BoundRow{n, add_inequality(problem, std::vector<double>(n, -1.0), lower - 1.0), true});
@@ -199,6 +181,24 @@ Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution
 }
 
 } // namespace
+
+double lower_of(const Spec& spec, std::size_t weight)
+{
+    if (spec.asset_lower.empty())
+    {
+        return spec.lower;
+    }
+    return spec.asset_lower[weight];
+}
+
+double upper_of(const Spec& spec, std::size_t weight)
+{
+    if (spec.asset_upper.empty())
+    {
+        return spec.upper;
+    }
+    return spec.asset_upper[weight];
+}
 
 ConstraintRows add_constraint_rows(const Spec& spec, const Data& data, qp::Problem& problem)
 {
