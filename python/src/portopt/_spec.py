@@ -19,6 +19,7 @@ SCALAR_SETTERS = (
     ("importance", "po_spec_set_importance"),
     ("max_volatility", "po_spec_set_max_volatility"),
     ("leverage", "po_spec_set_leverage"),
+    ("target_volatility", "po_spec_set_target_volatility"),
 )
 
 
@@ -63,6 +64,8 @@ class Spec:
     importance: float | None = None
     max_volatility: float | None = None
     leverage: float | None = None
+    target_volatility: float | None = None
+    risk_budget: ArrayLike | None = None
     _handle: _native.Handle = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -75,10 +78,19 @@ class Spec:
             value = getattr(self, name)
             if value is not None:
                 _native.check(getattr(lib, setter)(self.pointer, float(value)))
+        if self.risk_budget is not None:
+            self._set_risk_budget(self.risk_budget)
 
     @property
     def pointer(self) -> int:
         return self._handle.pointer
+
+    def _set_risk_budget(self, budget: ArrayLike) -> None:
+        values = as_doubles(budget)
+        if values.ndim != 1:
+            raise ValueError("risk_budget must be a 1-D array")
+        _native.check(lib.po_spec_set_risk_budget(self.pointer, doubles_pointer(values), values.size))
+        object.__setattr__(self, "risk_budget", tuple(float(value) for value in values))
 
     def _set_bounds(self, lower: float | ArrayLike, upper: float | ArrayLike) -> None:
         low, high = np.asarray(lower, dtype=np.float64), np.asarray(upper, dtype=np.float64)

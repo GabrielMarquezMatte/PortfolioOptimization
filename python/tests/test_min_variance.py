@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import portopt as po
+from portopt import _native
 
 COV = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.012], [0.002, 0.012, 0.16]])
 MU = np.array([0.05, 0.08, 0.11])
@@ -87,9 +88,10 @@ def test_singular_covariance_raises_value_error() -> None:
         po.Data(MU, duplicated)
 
 
-def test_unsupported_objective_raises_not_implemented() -> None:
+def test_unsupported_status_raises_not_implemented() -> None:
+    # Every objective is solved now, so po_solve no longer returns PO_UNSUPPORTED; the mapping stays.
     with pytest.raises(NotImplementedError):
-        po.solve(po.Spec(po.Objective.RISK_PARITY), po.Data(MU, COV))
+        _native.check(_native.PO_UNSUPPORTED)
 
 
 def test_data_accepts_fortran_and_int_arrays() -> None:

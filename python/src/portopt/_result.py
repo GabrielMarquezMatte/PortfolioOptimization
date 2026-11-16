@@ -38,6 +38,7 @@ class Result:
     volatility_multiplier: float
     leverage_multiplier: float
     bound_multipliers: NDArray[np.float64]
+    residual: float
 
 
 def read_vector(function: Callable[..., int], pointer: int, count: int) -> NDArray[np.float64]:
@@ -62,6 +63,7 @@ def read_result(pointer: int) -> Result:
         volatility_multiplier=read_multiplier(pointer, PO_CONSTRAINT_VOLATILITY),
         leverage_multiplier=read_multiplier(pointer, PO_CONSTRAINT_LEVERAGE),
         bound_multipliers=read_vector(lib.po_result_bound_multipliers, pointer, count),
+        residual=float(_native.read_scalar(ctypes.c_double, lib.po_result_residual, pointer)),
     )
 
 

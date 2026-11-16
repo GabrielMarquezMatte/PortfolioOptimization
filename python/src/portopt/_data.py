@@ -121,6 +121,15 @@ class Data:
     def diversification_ratio(self, weights: ArrayLike) -> float:
         return self._metric(lib.po_diversification_ratio, weights)
 
+    def risk_contributions(self, weights: ArrayLike) -> NDArray[np.float64]:
+        """c_i = w_i (Sigma w)_i / w' Sigma w, with 0 for the cash entry; all NaN when the volatility is 0."""
+        w = as_doubles(weights)
+        if w.ndim != 1:
+            raise ValueError("weights must be 1-D")
+        out = np.empty(w.size, dtype=np.float64)
+        _native.check(lib.po_risk_contributions(self.pointer, doubles_pointer(w), w.size, doubles_pointer(out)))
+        return out
+
     def _metric(self, function: Callable[..., int], weights: ArrayLike, *extra: float) -> float:
         w = as_doubles(weights)
         if w.ndim != 1:

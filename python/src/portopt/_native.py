@@ -40,6 +40,8 @@ PROTOTYPES: dict[str, tuple[Any, list[Any]]] = {
     "po_spec_set_importance": (_STATUS, [_HANDLE, _DOUBLE]),
     "po_spec_set_max_volatility": (_STATUS, [_HANDLE, _DOUBLE]),
     "po_spec_set_leverage": (_STATUS, [_HANDLE, _DOUBLE]),
+    "po_spec_set_target_volatility": (_STATUS, [_HANDLE, _DOUBLE]),
+    "po_spec_set_risk_budget": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE]),
     "po_spec_free": (None, [_HANDLE]),
     "po_data_create": (_STATUS, [_SIZE, _IN_DOUBLES, _IN_DOUBLES, _OUT_HANDLE]),
     "po_data_set_risk_free": (_STATUS, [_HANDLE, _DOUBLE]),
@@ -54,6 +56,7 @@ PROTOTYPES: dict[str, tuple[Any, list[Any]]] = {
     "po_result_iterations": (_STATUS, [_HANDLE, _OUT_I32]),
     "po_result_multiplier": (_STATUS, [_HANDLE, _I32, _OUT_DOUBLE]),
     "po_result_bound_multipliers": (_STATUS, [_HANDLE, _OUT_DOUBLE, _SIZE]),
+    "po_result_residual": (_STATUS, [_HANDLE, _OUT_DOUBLE]),
     "po_result_free": (None, [_HANDLE]),
     "po_portfolio_return": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
     "po_portfolio_volatility": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
@@ -61,6 +64,7 @@ PROTOTYPES: dict[str, tuple[Any, list[Any]]] = {
     "po_tracking_error": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
     "po_sharpe_ratio": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
     "po_diversification_ratio": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
+    "po_risk_contributions": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
 }
 
 
