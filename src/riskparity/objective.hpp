@@ -9,6 +9,9 @@
 namespace po::riskparity
 {
 
+// Sigma x, each entry accurate to its rounding even when its terms cancel.
+std::vector<double> covariance_times(const Data& data, std::span<const double> x);
+
 // r(w) = c(w) - b and f = |r|^2, with c_i = w_i (Sigma w)_i / (w'Sigma w) and b the budget. Holds f, its
 // gradient 2 J'r, the Jacobian J of c (n x n, row-major) and, when asked for, the exact Hessian of f,
 // 2 J'J + 2 sum_i r_i hess(c_i) (n x n, row-major; empty otherwise). w'Sigma w must be positive.

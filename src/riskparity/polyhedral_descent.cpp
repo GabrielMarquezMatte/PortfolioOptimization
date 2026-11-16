@@ -134,7 +134,7 @@ void add_volatility_term(const DescentProblem& problem, Iterate& iterate)
         return;
     }
     const VolatilityTerm& term = *problem.volatility;
-    iterate.volatility_gradient = matrix_times(problem.data.covariance(), iterate.weights);
+    iterate.volatility_gradient = covariance_times(problem.data, iterate.weights);
     iterate.volatility = std::sqrt(dot(iterate.weights, iterate.volatility_gradient));
     for (double& entry : iterate.volatility_gradient)
     {

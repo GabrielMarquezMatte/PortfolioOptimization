@@ -537,12 +537,23 @@ difference of two values of `f` loses every digit below about `eps f`. The steps
 because at `abs(s) = 1e-6` the cubic remainder of the expansion was already `9.1e-10` of `abs(g's)`: the band
 would have measured truncation, not rounding.
 
-**`Sigma w` in long double.** `p = Sigma w` (and `Sigma s`) is summed in `long double` and rounded once. Its
-entries cancel by up to `cond(Sigma)`, and an error of `eps cond(Sigma)` in `p` reaches `grad f` at the same
-relative size: summed in `double`, converged descents at `cond(Sigma) = 1e6` and `1e8` (LongOnly, uneven budgets,
-`n = 10`) failed the stationarity of `expect_risk_parity_kkt` by `1.4e-8` and `1.1e-5` against bands of `1e-9`
-and `1e-7`, with the descent's own residual below them; summed in `long double`, none fails. `f` then differs from
-`metrics::risk_budget_residual`, which sums in `double`, by its rounding (`2.4e-15` relative measured).
+**`Sigma w` by a compensated product.** Each entry of `p = Sigma w` (and of `Sigma s`) is the Dot2 of Ogita, Rump
+and Oishi (2005, "Accurate sum and dot product", SIAM J. Sci. Comput. 26(6)): every product and partial sum is
+split exactly into its rounded value and its error (TwoProduct by `std::fma`, TwoSum), and the errors are added
+back once, so the result is as accurate as a sum in twice the working precision, rounded once. Plain `double`,
+portable to every compiler; the accuracy does not come from an extended type (`long double` is `double` on MSVC).
+The entries of `Sigma w` cancel by up to `cond(Sigma)`, and an error of `eps cond(Sigma)` in `p` reaches
+`grad f` at the same relative size: summed plainly in `double`, converged descents at `cond(Sigma) = 1e6` and
+`1e8` (LongOnly, uneven budgets, `n = 10`) failed the stationarity of `expect_risk_parity_kkt` by `1.4e-8` and
+`1.1e-5` against bands of `1e-9` and `1e-7`, with the descent's own residual below them. With the compensated
+product none of the converged runs of the sweep below fails, at any `cond(Sigma)`. `f` differs from
+`metrics::risk_budget_residual`, which sums plainly, by the rounding of the metric (`2.4e-15` relative measured).
+
+The error-free transformations hold only if every operation is rounded as written. `portopt_core` is compiled with
+`-ffp-contract=off` on GCC and Clang: with GCC 16.2 at `-O3 -std=c++23`, `a * b + c` still becomes one `vfmadd`
+when the target has FMA (`-mfma`, `-march=native`), which would fold a product into the following TwoSum; with
+`-ffp-contract=off` it stays `vmulsd` and `vaddsd`. No build uses `-ffast-math` or `-fassociative-math`
+(disabled at `-O3`). MSVC's default `/fp:precise` neither contracts nor reassociates.
 
 ### The polyhedral descent
 
@@ -610,45 +621,46 @@ agree to a few percent, and a stop at the band itself landed at `1.03e-10` again
 | cond(Sigma) | scale | box | converged | cap reached | no decrease | KKT failed | mean (max) iterations | converged, 0.005 |
 |---|---|---|---|---|---|---|---|---|
 | 1e2 | 1 | None | 50 / 50 | 0 | 0 | 0 | 10.1 (14) | 50 |
-| 1e2 | 1 | LongOnly | 98 / 100 | 1 | 1 | 0 | 20.4 (288) | 98 |
+| 1e2 | 1 | LongOnly | 99 / 100 | 1 | 0 | 0 | 18.0 (237) | 98 |
 | 1e2 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 23.8 (166) | 100 |
 | 1e2 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 10.1 (14) | 50 |
-| 1e2 | 1e-4 | LongOnly | 99 / 100 | 1 | 0 | 0 | 18.1 (237) | 97 |
+| 1e2 | 1e-4 | LongOnly | 99 / 100 | 1 | 0 | 0 | 19.6 (237) | 98 |
 | 1e2 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 23.8 (166) | 100 |
 | 1e4 | 1 | None | 50 / 50 | 0 | 0 | 0 | 16.7 (23) | 50 |
-| 1e4 | 1 | LongOnly | 94 / 100 | 3 | 3 | 0 | 16.0 (89) | 94 |
+| 1e4 | 1 | LongOnly | 96 / 100 | 3 | 1 | 0 | 17.8 (157) | 96 |
 | 1e4 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 17.3 (106) | 100 |
 | 1e4 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 16.7 (23) | 50 |
-| 1e4 | 1e-4 | LongOnly | 96 / 100 | 3 | 1 | 0 | 16.5 (89) | 94 |
+| 1e4 | 1e-4 | LongOnly | 96 / 100 | 3 | 1 | 0 | 16.9 (107) | 95 |
 | 1e4 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 17.3 (106) | 100 |
 | 1e6 | 1 | None | 50 / 50 | 0 | 0 | 0 | 25.7 (60) | 50 |
-| 1e6 | 1 | LongOnly | 90 / 100 | 3 | 7 | 0 | 16.8 (60) | 91 |
+| 1e6 | 1 | LongOnly | 91 / 100 | 1 | 8 | 0 | 32.0 (1395) | 90 |
 | 1e6 | 1 | Capped | 100 / 100 | 0 | 0 | 0 | 14.2 (80) | 100 |
 | 1e6 | 1e-4 | None | 50 / 50 | 0 | 0 | 0 | 25.7 (60) | 50 |
-| 1e6 | 1e-4 | LongOnly | 90 / 100 | 2 | 8 | 0 | 17.2 (60) | 89 |
+| 1e6 | 1e-4 | LongOnly | 92 / 100 | 2 | 6 | 0 | 19.6 (180) | 91 |
 | 1e6 | 1e-4 | Capped | 100 / 100 | 0 | 0 | 0 | 14.2 (80) | 100 |
 | 1e8 | 1 | None | 42 / 50 | 8 | 0 | 0 | 296.8 (1521) | 42 |
-| 1e8 | 1 | LongOnly | 87 / 100 | 5 | 8 | 0 | 16.3 (95) | 89 |
+| 1e8 | 1 | LongOnly | 87 / 100 | 3 | 10 | 0 | 16.4 (95) | 88 |
 | 1e8 | 1 | Capped | 99 / 100 | 1 | 0 | 0 | 13.3 (116) | 99 |
 | 1e8 | 1e-4 | None | 42 / 50 | 8 | 0 | 0 | 296.8 (1521) | 42 |
-| 1e8 | 1e-4 | LongOnly | 87 / 100 | 3 | 10 | 0 | 16.3 (95) | 88 |
+| 1e8 | 1e-4 | LongOnly | 88 / 100 | 3 | 9 | 0 | 16.7 (95) | 88 |
 | 1e8 | 1e-4 | Capped | 99 / 100 | 1 | 0 | 0 | 13.3 (116) | 99 |
 
 | n | converged | cap reached | no decrease | mean (max) iterations | converged, 0.005 |
 |---|---|---|---|---|---|
 | 3 | 400 / 400 | 0 | 0 | 8.3 (104) | 400 |
 | 5 | 400 / 400 | 0 | 0 | 20.9 (1329) | 400 |
-| 10 | 379 / 400 | 3 | 18 | 33.4 (1521) | 380 |
-| 20 | 391 / 400 | 6 | 3 | 32.9 (523) | 391 |
-| 50 | 353 / 400 | 30 | 17 | 55.0 (1429) | 351 |
+| 10 | 381 / 400 | 2 | 17 | 33.9 (1521) | 379 |
+| 20 | 392 / 400 | 6 | 2 | 32.9 (523) | 392 |
+| 50 | 357 / 400 | 27 | 16 | 58.9 (1429) | 355 |
 
-In total 1923 of 2000 converge at `proximal = 0.05` and 1922 at `0.005`, so 0.05 is kept. No run failed to factor
-`Q` or to solve the QP, and no converged run fails `expect_risk_parity_kkt`. The other 77 stop at the cap (39) or
-with no decrease (38), all LongOnly or `cond(Sigma) = 1e8`; they are left to the Newton-KKT polish that follows
-the descent. The small differences between the scales on LongOnly are rounding: the two scales start from
-minimum-variance points that differ in their last digits. `RiskParityDescentFuzz.ConvergedRunsAreKkt` runs the
-same grid at `n` in {3, 5, 10, 20} and seeds 1 and 2 (640 runs, 0.2 s), checks every converged run with
-`expect_risk_parity_kkt` and requires the 624 converged runs measured there.
+In total 1930 of 2000 converge at `proximal = 0.05` and 1926 at `0.005`, so 0.05 is kept. No run failed to factor
+`Q` or to solve the QP, and no converged run at `0.05` fails `expect_risk_parity_kkt` (at `0.005` one does:
+`cond(Sigma) = 1e2`, scale 1, LongOnly, `n = 20`). The other 70 stop at the cap (35) or with no decrease (35), all
+LongOnly or `cond(Sigma) = 1e8`; they are left to the Newton-KKT polish that follows the descent. The small
+differences between the scales on LongOnly are rounding: the two scales start from minimum-variance points that
+differ in their last digits. `RiskParityDescentFuzz.ConvergedRunsAreKkt` runs the same grid at `n` in
+{3, 5, 10, 20} and seeds 1 and 2 (640 runs, 0.2 s), checks every converged run with `expect_risk_parity_kkt` and
+requires the 625 converged runs measured there.
 
 **The identity `w'grad f = 0`** in `expect_risk_parity_kkt` is checked relative to `sum_i abs(w_i)` times the
 largest term of `grad f`, not to `sum_i abs(w_i grad f_i)`. At a KKT point where the active bounds are `w_i = 0`,
@@ -657,7 +669,8 @@ itself makes `budget` vanish to the KKT residual. With the old scale, 6 converge
 on it (relative residual `4.8e-6` to `4.5e-4`, all LongOnly with uneven budgets); with the new one none does. A
 wrong gradient still fails: with the second of the three terms of the reference gradient scaled by 1.001, 394 of
 the 624 converged runs of `ConvergedRunsAreKkt` fail the identity (the rest sit at `f = 0`, where every term
-vanishes and an error proportional to the gap cannot be seen). Windows, GCC 16.2 (MSYS2 UCRT64).
+vanishes and an error proportional to the gap cannot be seen). `RiskParityDescentFuzz.HomogeneityIdentityCatchesAWrongGradient`
+keeps that check on one converged LongOnly point with four weights at 0 (`n = 10`, `cond(Sigma) = 1e6`). Windows, GCC 16.2 (MSYS2 UCRT64).
 
 ## Fuzz battery
 

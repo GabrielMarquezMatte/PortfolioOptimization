@@ -1,5 +1,7 @@
 #include "riskparity/objective.hpp"
 
+#include <cmath>
+
 namespace po::riskparity
 {
 namespace
@@ -24,24 +26,44 @@ double dot(std::span<const double> a, std::span<const double> b)
     return total;
 }
 
-// Summed in long double: the entries of Sigma x cancel, by up to cond(Sigma), and an error of
-// eps cond(Sigma) in p = Sigma w passes into grad f at the same relative size, above the KKT bands.
+// Dot2 of Ogita, Rump and Oishi (2005): each product and each partial sum is split exactly into its rounded
+// value and its error (TwoProduct by fma, TwoSum), and the errors are added back once, so the result is as
+// accurate as if summed in twice the working precision and then rounded. The splits are exact only when every
+// operation is rounded as written: no contraction into fma and no reassociation.
+double compensated_dot(std::span<const double> a, std::span<const double> b)
+{
+    double sum = 0.0;
+    double correction = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        double product = a[i] * b[i];
+        double product_error = std::fma(a[i], b[i], -product);
+        double total = sum + product;
+        double carried = total - sum;
+        double sum_error = (sum - (total - carried)) + (product - carried);
+        sum = total;
+        correction += sum_error + product_error;
+    }
+    return sum + correction;
+}
+
+} // namespace
+
+// The entries of Sigma x cancel by up to cond(Sigma), and an error of eps cond(Sigma) in p = Sigma w passes
+// into grad f at the same relative size, above the KKT bands: each entry is a compensated dot product.
 std::vector<double> covariance_times(const Data& data, std::span<const double> x)
 {
     std::size_t n = data.asset_count();
     std::vector<double> product(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        long double total = 0.0L;
-        std::span<const double> row = data.covariance().subspan(i * n, n);
-        for (std::size_t j = 0; j < n; ++j)
-        {
-            total += static_cast<long double>(row[j]) * x[j];
-        }
-        product[i] = static_cast<double>(total);
+        product[i] = compensated_dot(data.covariance().subspan(i * n, n), x);
     }
     return product;
 }
+
+namespace
+{
 
 Moments moments_of(const Data& data, std::span<const double> budget, std::span<const double> w)
 {

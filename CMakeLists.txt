@@ -57,6 +57,11 @@ add_library(portopt_core STATIC
 set_target_properties(portopt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(portopt_core PUBLIC src include)
 target_compile_options(portopt_core PRIVATE ${PO_WARNING_FLAGS})
+# The compensated products need every a * b + c rounded as written. GCC and Clang contract it into an fma by
+# default when the target has one (-march=native), even under -std=c++23; MSVC's default /fp:precise does not.
+if(NOT MSVC)
+    target_compile_options(portopt_core PRIVATE -ffp-contract=off)
+endif()
 
 # The C entry points are compiled once and shared by the shared library and the tests, so that po_last_error() and
 # po::capi::guard() in the tests see the same thread-local error as the entry points they call.

@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -29,7 +30,7 @@ using Shape = po::testing::RiskParityShape;
 constexpr int kMaxIterations = 2000;
 // Converged runs of ConvergedRunsAreKkt out of 640, as measured; the descent is deterministic, so fewer is a
 // regression.
-constexpr int kConvergedFloor = 624;
+constexpr int kConvergedFloor = 625;
 constexpr double kToleranceFraction = 0.1;
 
 double band_of(double condition)
@@ -238,6 +239,30 @@ TEST(RiskParityDescentFuzz, ConvergedRunsAreKkt)
     }
     EXPECT_EQ(runs.size(), 640u);
     EXPECT_GE(converged, kConvergedFloor);
+}
+
+// At a converged LongOnly point with weights at 0 the identity w'grad f = 0 holds at the band with the
+// reference gradient, and fails when one of its three terms is off by 0.1%: its scale is not so loose that it
+// accepts a wrong gradient.
+TEST(RiskParityDescentFuzz, HomogeneityIdentityCatchesAWrongGradient)
+{
+    Shape shape{10, 1e6, 1.0, Shape::Budget::Uneven, Shape::Box::LongOnly, false, false, 3 * 7919 + 10};
+    DescentRun run = run_shape(shape, 0.05);
+    ASSERT_EQ(run.result.stop, DescentStop::Converged);
+    EXPECT_TRUE(run.kkt_failure.empty()) << run.kkt_failure;
+    const std::vector<double>& weights = run.result.weights;
+    ASSERT_TRUE(std::ranges::any_of(weights, [](double weight) { return std::fabs(weight) <= 1e-12; }));
+    po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+    std::vector<std::vector<double>> terms =
+        po::testing::risk_parity_gradient_terms(generated.data, generated.spec.risk_budget, weights);
+    double band = band_of(shape.condition);
+    po::testing::expect_homogeneity_identity(weights, po::testing::sum_of(terms), band);
+    for (double& entry : terms[1])
+    {
+        entry *= 1.001;
+    }
+    po::testing::ObjectiveGradient wrong = po::testing::sum_of(terms);
+    EXPECT_NONFATAL_FAILURE(po::testing::expect_homogeneity_identity(weights, wrong, band), "tolerance");
 }
 
 // The measurement of docs/guide/validation.md: run with --gtest_also_run_disabled_tests.
