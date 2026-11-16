@@ -219,8 +219,9 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   (`t` from 1.8e8 to 1.2e12) by 1.6e-3 to 0.23. Those 9 were returned as `OPTIMAL` with `lambda_vol < 0` and a
   volatility up to 23% below `s`. 1e-5 is 140 times the largest rounding and 160 times below the smallest wrong
   deviation. An accepted adjacent end is therefore guaranteed only to `|vol - s| <= 1e-5 s`, not to the band of its
-  condition number; none was accepted between that band and 1e-5 on the battery before the leverage. One is now, in
-  `MaxReturnFuzz.LeverageFuzz` (the remaining case, in "Fuzz battery").
+  condition number: `kAdjacentEnd` is looser than the band of 1e-7 at `cond(Sigma) = 1e8`, and the battery holds one
+  end accepted between the band and 1e-5, the known residual of `MaxReturnFuzz.LeverageFuzz` (in "Fuzz battery", at
+  1.006e-7). No end of `AgainstFrontierReference` or of the unit suite lies there.
 - **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
   `INFEASIBLE`.
 
@@ -361,14 +362,17 @@ with the family), and over 54 larger solves outside the battery (n = 50, 150 and
   1057 bind the leverage, 763 of them with the cap. The worst agreement with the reference is 1.5e-12 at
   `cond <= 1e4`, 4.2e-12 at 1e6 and 5.2e-10 at 1e8. `gcc-debug` runs the first 256 shapes (every combination once) at
   the caps 0.1, 0.5 and 0.9: 407 cases bind the leverage, 278 with the cap.
-- **The remaining case.** One case of `LeverageFuzz` misses its band, and it is not pinned: shape seed
+- **The known residual.** One case of `MaxReturnFuzz.LeverageFuzz` misses its band and is pinned by name: shape seed
   3963545680699380072 (n 24, `cond(Sigma) = 1e8`, annual scale, nearly equal means, no box, cash, the shape's leverage
-  2.154), cap 858.4 (fraction 0.7). The cap is reached at `t = 6.7e15` on the leverage face, shifted, with 23 generated
+  2.154), cap fraction 0.7 (cap 858.4). It is an acceptance at an adjacent end by `kAdjacentEnd`, not an error of the
+  face shift. The pin asserts `OPTIMAL`, the return of the reference within the band, `vol <= s (1 + tol)` and a
+  volatility complementarity of at most 1.1e-7; every other case keeps its full band, and any other miss fails. The cap is reached at `t = 6.7e15` on the leverage face, shifted, with 23 generated
   rows active; there `vol(Q(t))` varies by 1.5e-7 relative between `t` that differ in the last digits (858.428732 to
   858.428857), the rounding of `1e-15 cond(Sigma)`. The bisection never holds one active set across a bracket and ends
   at adjacent doubles, whose lower end is accepted (`kAdjacentEnd`) with `vol = s (1 - 1.006e-7)`: the volatility
   complementarity of `expect_user_kkt` is 1.006e-7 against the band of 1e-7. The return agrees with the reference to
-  6e-14 relative and `lambda_vol = -1.3e-13`. Task 0's pinned case of `AgainstFrontierReference` (shape seed
+  6e-14 relative and `lambda_vol = -1.3e-13`. The case runs in `gcc-release` only (the debug run has no cap fraction
+  0.7). Task 0's pinned case of `AgainstFrontierReference` (shape seed
   11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
 - **Runtime.** In `gcc-release` `AgainstFrontierReference` 1.3 s, `NeverSilentlyWrong` 0.8 s, `MaxReturnFuzz.LeverageFuzz`
