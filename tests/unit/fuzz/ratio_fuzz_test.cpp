@@ -33,6 +33,22 @@ struct Counts
     std::size_t binding = 0;
 };
 
+// No point: every weight, bound multiplier, the budget and leverage multipliers and the residual are NaN.
+void expect_no_point(const Result& result)
+{
+    for (double weight : result.weights)
+    {
+        EXPECT_TRUE(std::isnan(weight));
+    }
+    for (double multiplier : result.bound_multipliers)
+    {
+        EXPECT_TRUE(std::isnan(multiplier));
+    }
+    EXPECT_TRUE(std::isnan(result.budget_multiplier));
+    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
+    EXPECT_TRUE(std::isnan(result.residual));
+}
+
 // The status of the reference; when OPTIMAL, the ratio of the reference within the band, the cash weight
 // exactly 0 and KKT in the user's variables.
 void check_case(const Spec& spec, const Data& data, double tolerance, Counts& counts)
@@ -45,7 +61,10 @@ void check_case(const Spec& spec, const Data& data, double tolerance, Counts& co
     {
         counts.infeasible += result.status == SolveStatus::Infeasible ? 1 : 0;
         counts.unbounded += result.status == SolveStatus::Unbounded ? 1 : 0;
-        EXPECT_TRUE(std::isnan(result.weights.front()));
+        if (result.status != SolveStatus::Optimal)
+        {
+            expect_no_point(result);
+        }
         return;
     }
     ++counts.optimal;

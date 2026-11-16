@@ -81,7 +81,7 @@ Build targets (`CMakeLists.txt`):
 | `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers |
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio` and `tracking_error` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
-| `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds and `leverage` included, canonicalized so that equality and hash work); `Data` and its metrics; `SolveStatus`, `Result` and `solve` |
+| `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds and `leverage` included; the bounds canonicalized so that equality and hash work); `Data` and its metrics; `SolveStatus`, `Result` and `solve` |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
 | `tests/unit/{capi,core,linalg,metrics,problems,qp}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
 | `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites |

@@ -713,7 +713,7 @@ qp::Solution moved_along(const PathPoint& point, const Slope& shifted, double t)
 qp::Solution slope_solution(const PathPoint& point, const Slope& shifted)
 {
     Slope slope = unshifted(shifted, point);
-     qp::Solution solution = point.solution;
+    qp::Solution solution = point.solution;
     solution.equality_multipliers = slope.equality;
     for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
     {

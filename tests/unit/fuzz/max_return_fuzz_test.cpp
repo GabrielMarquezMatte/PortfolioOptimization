@@ -318,8 +318,9 @@ std::vector<Cap> caps_of(const GeneratedProblem& problem)
 // (kAdjacentEnd, 1e-5 s), not an error of the face shift. Cash, nearly equal means, no box, cond(Sigma) = 1e8, the
 // shape's leverage 2.154, cap fraction 0.7: the cap is reached at t = 6.7e15 on the leverage face, where vol(Q(t))
 // is known only to 1.5e-7 and no bracket keeps one active set, and the lower adjacent end has vol = s (1 - 1.006e-7).
-// It must stay OPTIMAL, with the return of the reference within the band, vol <= s (1 + tol) and a volatility
-// complementarity of at most 1.1e-7 (1.006e-7 measured, against the band of 1e-7). Every other case keeps its band.
+// It must stay OPTIMAL, with the return of the reference, the equalities, the bounds, the leverage, the
+// stationarity and vol <= s (1 + tol) within the band; only the volatility complementarity is relaxed, to at most
+// 1.1e-7 (1.006e-7 measured, against the band of 1e-7). Every other case keeps its band.
 struct KnownResidual
 {
     std::uint64_t seed;
@@ -339,8 +340,15 @@ std::optional<Result> pinned_against_reference(const GeneratedProblem& problem, 
     }
     double achieved = po::testing::portfolio_return(problem.data, result.weights);
     EXPECT_NEAR(achieved, reference, tolerance * return_scale(problem.data, reference));
+    Spec spec = max_return(problem.spec, cap);
+    EXPECT_EQ(result.residual, 0.0);
+    po::testing::expect_user_equalities(spec, problem.data, result, tolerance);
+    po::testing::expect_user_bounds(spec, result, tolerance);
+    po::testing::expect_user_leverage(spec, problem.data, result, tolerance);
+    po::testing::expect_user_stationarity(problem.data, result, max_return_gradient(problem.data), tolerance);
     double volatility = po::testing::portfolio_volatility(problem.data, result.weights);
     EXPECT_LE(volatility, cap * (1.0 + tolerance));
+    EXPECT_LE(result.volatility_multiplier, 0.0);
     EXPECT_LE(po::testing::complementarity_of_row(result.volatility_multiplier, volatility - cap, cap),
               kKnownResidual.complementarity);
     return result;

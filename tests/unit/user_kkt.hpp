@@ -252,12 +252,13 @@ inline void expect_user_stationarity(const po::Data& data, const po::Result& res
     EXPECT_LE(relative_to(largest_magnitude(residual), scale), tolerance);
 }
 
-// With a leverage L and a finite multiplier: sum_i |w_i| <= L (1 + tolerance) over the risky weights (cash is not
-// counted), lambda_lev <= 0, and lambda_lev (sum_i |w_i| - L) small relative to |lambda_lev| L.
+// With a leverage L: sum_i |w_i| <= L (1 + tolerance) over the risky weights (cash is not counted), whatever the
+// multiplier (NaN at a vertical frontier); with a finite multiplier, also lambda_lev <= 0 and
+// lambda_lev (sum_i |w_i| - L) small relative to |lambda_lev| L.
 inline void expect_user_leverage(const po::Spec& spec, const po::Data& data, const po::Result& result,
                                  double tolerance)
 {
-    if (!spec.leverage.has_value() || !std::isfinite(result.leverage_multiplier))
+    if (!spec.leverage.has_value())
     {
         return;
     }
@@ -268,6 +269,10 @@ inline void expect_user_leverage(const po::Spec& spec, const po::Data& data, con
         gross += std::fabs(weight);
     }
     EXPECT_LE(gross, leverage * (1.0 + tolerance));
+    if (!std::isfinite(result.leverage_multiplier))
+    {
+        return;
+    }
     EXPECT_LE(result.leverage_multiplier, 0.0);
     EXPECT_LE(complementarity_of_row(result.leverage_multiplier, gross - leverage, leverage), tolerance);
 }

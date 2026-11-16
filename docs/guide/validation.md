@@ -94,8 +94,9 @@ so that a problem whose objective is scaled by 1e-4 is held to the same relative
   (which is 0 at a bound of 0).
 - **The volatility cap**, when its multiplier is finite: `vol(w) <= s (1 + tol)`, `lambda_vol <= 0`, and
   `|lambda_vol (vol - s)|` relative to `|lambda_vol| s`.
-- **The leverage**, when its multiplier is finite: `sum_i |w_i| <= L (1 + tol)` over the risky weights,
-  `lambda_lev <= 0`, and `|lambda_lev (sum_i |w_i| - L)|` relative to `|lambda_lev| L`. In the stationarity, the
+- **The leverage**: `sum_i |w_i| <= L (1 + tol)` over the risky weights whatever the multiplier (also where it is
+  NaN, at a vertical frontier of `MAX_RETURN`), and when the multiplier is finite `lambda_lev <= 0` and
+  `|lambda_lev (sum_i |w_i| - L)|` relative to `|lambda_lev| L`. In the stationarity, the
   term is `lambda_lev sign(w_i)` where `w_i` is not 0; where `w_i` is 0, `g_i` may be any value in [-1, 1], so the
   residual there is the part of its magnitude beyond `|lambda_lev|`. A weight within `tol |w|max` of 0 counts as 0:
   the family holds such a weight at 0 only to rounding, and its sign is the rounding's.
@@ -220,17 +221,35 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   (within the 1e-12 of the table, also at 1e7).
 - **Adjacent ends across a breakpoint.** When the bracket shrinks to adjacent doubles on two active sets, the lower end
   is the answer only when `|vol - s| <= 1e-5 s` (`kAdjacentEnd`); otherwise the path has broken down (`MAX_ITER`).
-  `vol(t)` is continuous, so at an end that is the answer the deviation is the rounding of `vol(Q(t))`. Measured on
-  the fuzz battery and the unit suite: with every bisection forced to adjacent doubles, the 692 ends whose result
-  passed every check of `AgainstFrontierReference` deviated by at most 7.2e-8 (at `cond(Sigma) = 1e8`, in line with
-  `1e-15 cond(Sigma)`); in the normal search, the one legitimate end across a breakpoint
-  (`MaxReturn.EqualMeansWithCash`) deviated by 1.6e-15, and the 9 ends reached where `Q(t)` is lost in its rounding
-  (`t` from 1.8e8 to 1.2e12) by 1.6e-3 to 0.23. Those 9 were returned as `OPTIMAL` with `lambda_vol < 0` and a
-  volatility up to 23% below `s`. 1e-5 is 140 times the largest rounding and 160 times below the smallest wrong
-  deviation. An accepted adjacent end is therefore guaranteed only to `|vol - s| <= 1e-5 s`, not to the band of its
-  condition number: `kAdjacentEnd` is looser than the band of 1e-7 at `cond(Sigma) = 1e8`, and the battery holds one
-  end accepted between the band and 1e-5, the known residual of `MaxReturnFuzz.LeverageFuzz` (in "Fuzz battery", at
-  1.006e-7). No end of `AgainstFrontierReference` or of the unit suite lies there.
+  `vol(t)` is continuous, so at an end that is the answer the deviation is the rounding of `vol(Q(t))`. Measured
+  with an instrumented copy of the policy that accepts every end and labels it by the checks of its case:
+  - **Correct ends.** 1865 ends whose result passed every check, the volatility complementarity of
+    `expect_user_kkt` included: the 101 of `MaxReturnFuzz.LeverageFuzz` in the normal search, and, with every
+    bisection forced to adjacent doubles, 725 of `AgainstFrontierReference` and 1039 of `LeverageFuzz`. The largest
+    deviation is 1.01e-7, the known residual below (`t = 6.7e15`, `cond(Sigma) = 1e8`); the largest of the forced
+    ends of `AgainstFrontierReference` is 7.98e-8, in line with `1e-15 cond(Sigma)`. The two ends of the unit suite
+    in the normal search (`MaxReturn.EqualMeansWithCash`) deviate by 1.6e-15 and 2.9e-15.
+  - **Wrong ends.** The 9 ends of `NeverSilentlyWrong` in the normal search, reached where `Q(t)` is lost in its
+    rounding (`t` from 1.8e8 to 6.1e10), deviate by 1.6e-3 to 0.23. Accepted, they are `OPTIMAL` with `lambda_vol < 0`
+    and a volatility up to 23% below `s` (that test checks the return, the bounds and `vol <= s`, which nearly equal
+    means let them pass, so the policy and not the test has to reject them).
+  - **The constant.** 1e-5 is 99 times the largest correct deviation (125 times the largest forced one) and 160 times
+    below the smallest wrong one, a separation of 1.6e4.
+  - **Noise-relative forms tried, none of which separates.** Each form `F` was divided into the deviation, and the
+    separation is the smallest `dev / F` of a wrong end over the largest of a correct one (it must be above 1, and
+    about 2e4 for a margin of 140 on each side): `F1`, the weight noise of the path
+    `n eps (max(1, |w|max) + t |v|max)` mapped through the factor, times `||(|L'| 1)||` over `s`: 0.087;
+    `F2`, the residual noise of the stationarity mapped through the factor, `n eps ||L^-1 (|Sigma||w| + t |v|)|| / s`:
+    0.0026; `F2b`, the same without the `t |v|` term: 36; `F3`, `n eps (max L_jj / min L_jj)^2`, a cheap estimate of
+    `cond(Sigma)`: 0.0077. The forms with `t |v|` fail because the wrong ends sit at large `t`, where that term makes
+    the noise as large as their deviation; `F3` fails because they come from covariances of condition number up to
+    1e16 (the nearly riskless asset), where a noise proportional to the condition number exceeds them; `F2b` orders
+    the two groups but leaves a margin of 6 on each side. `kAdjacentEnd` therefore stays a constant.
+  - **What it guarantees.** An accepted adjacent end is guaranteed only to `|vol - s| <= 1e-5 s`, not to the band of
+    its condition number: `kAdjacentEnd` is 1e5 times the band at `cond(Sigma) <= 1e4`, where the rounding of
+    `vol(Q(t))` is about 1e-13, and looser than the band of 1e-7 at `cond(Sigma) = 1e8`. The battery holds one end
+    accepted between the band and 1e-5, the known residual of `MaxReturnFuzz.LeverageFuzz` (in "Fuzz battery", at
+    1.006e-7). No end of `AgainstFrontierReference` or of the unit suite lies there.
 - **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
   `INFEASIBLE`.
 
@@ -441,7 +460,8 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
 - **`RatioFuzz.AgainstFrontierReference`**: `fuzz_shapes(300, 3)` for `MAX_SHARPE` and `MAX_DIVERSIFICATION`, at each
   shape without a leverage and with `with_leverage`. The status must be that of `max_ratio_reference`. An `OPTIMAL`
   result must have the reference's ratio, the cash weight exactly 0 and `expect_user_kkt` with the gradient written in
-  the test, `-v / vol + (v'w) Sigma w / vol^3`, and cash held to the bounds [0, 0]; all within the band. All 1200 cases
+  the test, `-v / vol + (v'w) Sigma w / vol^3`, and cash held to the bounds [0, 0]; all within the band. A result
+  without a point has every weight and bound multiplier, the budget and leverage multipliers and the residual NaN. All 1200 cases
   pass, with no case pinned. 1039 are `OPTIMAL` (91 bind the leverage), 133 `INFEASIBLE` (`rf` above every mean with a
   box, and a leverage below 1) and 28 `UNBOUNDED` (24 `MAX_SHARPE`, 4 `MAX_DIVERSIFICATION`, all without a box or a
   leverage). The worst agreement of the ratio is 1.4e-12 at `cond <= 1e4`, 2.0e-11 at 1e6 and 2.5e-9 at 1e8 (at most
@@ -450,8 +470,10 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
 - **The known residual.** One case of `MaxReturnFuzz.LeverageFuzz` misses its band and is pinned by name: shape seed
   3963545680699380072 (n 24, `cond(Sigma) = 1e8`, annual scale, nearly equal means, no box, cash, the shape's leverage
   2.154), cap fraction 0.7 (cap 858.4). It is an acceptance at an adjacent end by `kAdjacentEnd`, not an error of the
-  face shift. The pin asserts `OPTIMAL`, the return of the reference within the band, `vol <= s (1 + tol)` and a
-  volatility complementarity of at most 1.1e-7; every other case keeps its full band, and any other miss fails. The cap is reached at `t = 6.7e15` on the leverage face, shifted, with 23 generated
+  face shift. The pin asserts `OPTIMAL`, the return of the reference, `expect_user_equalities`,
+  `expect_user_bounds`, `expect_user_leverage` and `expect_user_stationarity` within the band, `vol <= s (1 + tol)`
+  and `lambda_vol <= 0`, and relaxes only the volatility complementarity, to at most 1.1e-7; every other case keeps
+  its full band, and any other miss fails. The cap is reached at `t = 6.7e15` on the leverage face, shifted, with 23 generated
   rows active; there `vol(Q(t))` varies by 1.5e-7 relative between `t` that differ in the last digits (858.428732 to
   858.428857), the rounding of `1e-15 cond(Sigma)`. The bisection never holds one active set across a bracket and ends
   at adjacent doubles, whose lower end is accepted (`kAdjacentEnd`) with `vol = s (1 - 1.006e-7)`: the volatility

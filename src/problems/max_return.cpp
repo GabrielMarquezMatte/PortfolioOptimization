@@ -22,8 +22,9 @@ constexpr double kMinimumTolerance = 1e-12;
 // the range, while the rounding of vol(Q(t*)) is about 1e-15 cond(Sigma) s (docs/guide/validation.md).
 constexpr double kCrossingSanity = 1e-6;
 // Across a breakpoint at adjacent doubles, the end is the answer when its volatility is within this of s,
-// relative: 140 times the largest measured rounding of vol(Q(t)) (at cond(Sigma) = 1e8), and 160 times below
-// the smallest deviation measured where Q(t) is lost in its rounding (docs/guide/validation.md).
+// relative: 99 times the largest deviation of an end whose result passed every check (1.01e-7, at
+// cond(Sigma) = 1e8), and 160 times below the smallest deviation measured where Q(t) is lost in its rounding.
+// No noise-relative form separated the two groups (docs/guide/validation.md).
 constexpr double kAdjacentEnd = 1e-5;
 constexpr int kMaxDoublings = 200;
 constexpr int kMaxBisections = 200;
