@@ -33,7 +33,7 @@ inline double portfolio_return(const po::Data& data, std::span<const double> wei
     return total;
 }
 
-// MIN_VARIANCE over the bounds of spec, with a target return when target is given.
+// MIN_VARIANCE over the bounds and the leverage of spec, with a target return when target is given.
 inline po::Result frontier_point(const po::Spec& spec, const po::Data& data, std::optional<double> target)
 {
     po::Spec frontier;
@@ -41,6 +41,7 @@ inline po::Result frontier_point(const po::Spec& spec, const po::Data& data, std
     frontier.upper = spec.upper;
     frontier.asset_lower = spec.asset_lower;
     frontier.asset_upper = spec.asset_upper;
+    frontier.leverage = spec.leverage;
     frontier.target_return = target;
     return po::solve(frontier, data).value();
 }
@@ -110,7 +111,8 @@ inline void narrow(const po::Spec& spec, const po::Data& data, double cap, Targe
 
 // MAX_RETURN by another route: the largest target return r with MIN_VARIANCE(target_return = r) feasible and of
 // volatility <= cap, by bisection on r to 1e-13 relative, as the return of that portfolio; NaN when no feasible
-// portfolio has volatility <= cap. The bounds are those of spec.
+// portfolio has volatility <= cap. The bounds and the leverage are those of spec; the frontier volatility is still
+// increasing above the minimum-variance return, since the leverage is a convex constraint.
 inline double max_return_reference(const po::Spec& spec, const po::Data& data, double cap)
 {
     po::Result minimum = frontier_point(spec, data, std::nullopt);

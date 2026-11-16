@@ -45,12 +45,12 @@ Result broke_down(const Data& data, const Path& path)
     return stopped(data, path, qp::Status::MaxIterations);
 }
 
-// The QP budget multiplier over multiplier_scale is that of v = mu~ - shift 1, so the user's is shift lower.
+// The path reports the multipliers of Q(t) whatever the shift a point was solved with: over multiplier_scale they
+// are the user's.
 Result answer(const Data& data, const Path& path, const qp::Solution& solution, double multiplier_scale,
               double volatility_multiplier)
 {
     Result result = to_result(data, path.translation.rows, solution, multiplier_scale);
-    result.budget_multiplier -= path.shift;
     result.volatility_multiplier = volatility_multiplier;
     result.iterations = path.iterations;
     return result;
@@ -78,6 +78,7 @@ Result vertical(const Data& data, const Path& path, const PathPoint& start)
     Result result = to_result(data, path.translation.rows, start.solution);
     result.budget_multiplier = kNaN;
     result.target_return_multiplier = kNaN;
+    result.leverage_multiplier = kNaN;
     std::ranges::fill(result.bound_multipliers, kNaN);
     result.volatility_multiplier = -kInfinity;
     result.iterations = path.iterations;
@@ -172,7 +173,7 @@ Result bisect(const Data& data, Path& path, Bracket bracket)
 bool stays_beyond(const Path& path, const PathPoint& point, Slope& slope)
 {
     slope = multiplier_slope(path, point);
-    return vertex_exit(path, point, slope) == kInfinity && limit_holds(path, point, slope);
+    return vertex_exit(point, slope) == kInfinity && limit_holds(path, point, slope);
 }
 
 Result climb(const Data& data, Path& path, PathPoint lower, double first_t)
@@ -208,7 +209,7 @@ Result leave_minimum(const Data& data, const Path& path, const PathPoint& start,
                      double moved)
 {
     Slope slope = multiplier_slope(path, point);
-    double exit = vertex_exit(path, point, slope);
+    double exit = vertex_exit(point, slope);
     if (moved == kInfinity && exit == kInfinity && !limit_holds(path, point, slope))
     {
         return broke_down(data, path);
@@ -240,7 +241,7 @@ Result at_minimum(const Data& data, Path& path, const PathPoint& start, double f
         {
             return leave_minimum(data, path, start, point, moved);
         }
-        if (same_segment(start, point) && weights_moved(path, start, point))
+        if (same_segment(start, point) && weights_moved(start, point))
         {
             moved = t;
         }
@@ -297,7 +298,7 @@ Result solve_max_return(const Spec& spec, const Data& data)
     {
         return stopped(data, path, qp::Status::Infeasible);
     }
-    double first_t = first_step(data, path.excess, minimum, path.cap);
+    double first_t = first_step(data, path.base.excess, minimum, path.cap);
     if (std::fabs(path.cap - minimum) <= kMinimumTolerance * path.cap)
     {
         return at_minimum(data, path, start, first_t);

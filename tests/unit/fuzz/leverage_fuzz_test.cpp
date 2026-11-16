@@ -31,7 +31,7 @@ using po::testing::ProblemShape;
 using po::testing::condition_tolerance;
 using po::testing::describe;
 
-// The QP objectives that take a leverage in this version; MAX_RETURN joins with its path.
+// The QP objectives checked here against the sign patterns; MAX_RETURN is checked by MaxReturnFuzz.LeverageFuzz.
 constexpr std::array kObjectives = {Objective::MinVariance, Objective::Utility, Objective::Importance,
                                     Objective::Kelly, Objective::TrackingError};
 

@@ -125,14 +125,9 @@ double slack(const Constraints& constraints, const State& state, std::size_t ind
     return dot(row(constraints, index), state.x) - rhs_of(constraints, index);
 }
 
-double tolerance_of(double rhs, double row_norm, double x_scale)
-{
-    return kRelativeTolerance * std::max({1.0, std::fabs(rhs), row_norm * x_scale});
-}
-
 double tolerance(const Constraints& constraints, std::size_t index, double x_scale)
 {
-    return tolerance_of(rhs_of(constraints, index), row_norm_of(constraints, index), x_scale);
+    return feasibility_tolerance(rhs_of(constraints, index), row_norm_of(constraints, index), x_scale);
 }
 
 Constraints gather_constraints(const Problem& problem)
@@ -226,13 +221,21 @@ std::vector<double> sign_vector(std::span<const double> x)
     return signs;
 }
 
-bool is_generated_active(const Constraints& constraints, const State& state, std::span<const double> signs)
+// The generated row (a - s)'x >= b duplicates an active row: a generated row of the same signs, or an explicit row
+// with the same normal and right-hand side (an equality that holds a row of the family, as the MAX_RETURN path
+// does). Its violation is then the rounding of that row, and the two normals would be dependent.
+bool duplicates_active(const Constraints& constraints, const State& state, std::span<const double> signs,
+                       std::span<const double> normal)
 {
     return std::ranges::any_of(state.set.active,
                                [&](const ActiveConstraint& constraint)
                                {
-                                   return is_generated(constraints, constraint.index) &&
-                                          std::ranges::equal(signs_of(constraints, constraint.index), signs);
+                                   if (is_generated(constraints, constraint.index))
+                                   {
+                                       return std::ranges::equal(signs_of(constraints, constraint.index), signs);
+                                   }
+                                   return rhs_of(constraints, constraint.index) == constraints.family->rhs &&
+                                          std::ranges::equal(row(constraints, constraint.index), normal);
                                });
 }
 
@@ -261,8 +264,8 @@ std::optional<ActiveConstraint> most_violated_inequality(Constraints& constraint
         }
         double value = dot(normal, state.x) - constraints.family->rhs;
         double norm = std::sqrt(dot(normal, normal));
-        double limit = tolerance_of(constraints.family->rhs, norm, max_abs(state.x));
-        if (value < -limit && value < worst.slack && !is_generated_active(constraints, state, signs))
+        double limit = feasibility_tolerance(constraints.family->rhs, norm, max_abs(state.x));
+        if (value < -limit && value < worst.slack && !duplicates_active(constraints, state, signs, normal))
         {
             return ActiveConstraint{append_generated(constraints, normal, signs), 1.0, 0.0};
         }
@@ -544,6 +547,11 @@ void validate_sizes(const Problem& problem)
 }
 
 } // namespace
+
+double feasibility_tolerance(double rhs, double row_norm, double x_scale)
+{
+    return kRelativeTolerance * std::max({1.0, std::fabs(rhs), row_norm * x_scale});
+}
 
 Solution solve(const Problem& problem)
 {

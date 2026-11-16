@@ -44,7 +44,7 @@ std::optional<Requirements> requirements_of(Objective objective)
     case Objective::MinVariance:
         return Requirements{"MIN_VARIANCE", true, false, false, true, false, false, false};
     case Objective::MaxReturn:
-        return Requirements{"MAX_RETURN", false, false, false, false, true, true, false};
+        return Requirements{"MAX_RETURN", false, false, false, true, true, true, false};
     case Objective::Utility:
         return Requirements{"UTILITY", false, true, false, true, false, true, false};
     case Objective::Importance:

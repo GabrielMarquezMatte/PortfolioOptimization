@@ -514,4 +514,165 @@ TEST(MaxReturn, EqualMeansWithCash)
     }
 }
 
+Spec leveraged(double leverage)
+{
+    Spec spec;
+    spec.leverage = leverage;
+    return spec;
+}
+
+std::size_t best_asset(const Data& data)
+{
+    return static_cast<std::size_t>(std::ranges::max_element(data.mu()) - data.mu().begin());
+}
+
+std::size_t worst_asset(const Data& data)
+{
+    return static_cast<std::size_t>(std::ranges::min_element(data.mu()) - data.mu().begin());
+}
+
+// max mu'w over 1'w = 1 and sum_i |w_i| <= L: (L + 1) / 2 in the best asset, (L - 1) / 2 short in the worst.
+std::vector<double> leverage_vertex(const Data& data, double leverage)
+{
+    std::vector<double> weights(data.asset_count(), 0.0);
+    weights[best_asset(data)] = 0.5 * (leverage + 1.0);
+    weights[worst_asset(data)] = -0.5 * (leverage - 1.0);
+    return weights;
+}
+
+// A cap above the volatility of the vertex of the leverage: w(t) reaches the vertex and stays there, the cap is
+// inactive, and -mu = budget 1 + lambda_lev g with g = 1 at the best asset and -1 at the worst gives
+// lambda_lev = (mu_worst - mu_best) / 2 and budget = -(mu_best + mu_worst) / 2.
+TEST(MaxReturn, LeverageActiveAlongPath)
+{
+    constexpr std::size_t n = 8;
+    constexpr double kLeverage = 1.5;
+    for (std::uint64_t seed = 31; seed <= 34; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = random_data(n, seed);
+        std::vector<double> vertex = leverage_vertex(data, kLeverage);
+        ASSERT_LT(volatility(data, vertex), 2.0 * largest_asset_volatility(data));
+        Result result = solve_checked(max_return(leveraged(kLeverage), 2.0 * largest_asset_volatility(data)), data);
+        expect_near_relative(result.weights, vertex, 1e-12);
+        EXPECT_EQ(result.volatility_multiplier, 0.0);
+        double best = data.mu()[best_asset(data)];
+        double worst = data.mu()[worst_asset(data)];
+        EXPECT_LT(result.leverage_multiplier, 0.0);
+        EXPECT_NEAR(result.leverage_multiplier, 0.5 * (worst - best), 1e-12 * best);
+        EXPECT_NEAR(result.budget_multiplier, -0.5 * (best + worst), 1e-12 * best);
+    }
+}
+
+double max_return_value(const Data& data, double cap, double leverage)
+{
+    return -excess_return(data, solve_checked(max_return(leveraged(leverage), cap), data));
+}
+
+// A cap between the minimum volatility under the leverage and the volatility of the vertex of the leverage, where
+// both bind: each multiplier is the derivative of the optimum of f = -mu'w in its right-hand side.
+TEST(MaxReturn, LeverageAndVolatilityBothActive)
+{
+    constexpr std::size_t n = 8;
+    constexpr double kLeverage = 1.5;
+    constexpr double kLeverageStep = 1e-4 * kLeverage;
+    for (std::uint64_t seed = 31; seed <= 34; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = random_data(n, seed);
+        double minimum = minimum_volatility(leveraged(kLeverage), data);
+        double cap = minimum + 0.8 * (volatility(data, leverage_vertex(data, kLeverage)) - minimum);
+        Result result = solve_checked(max_return(leveraged(kLeverage), cap), data);
+        EXPECT_LT(result.volatility_multiplier, 0.0);
+        EXPECT_LT(result.leverage_multiplier, 0.0);
+        EXPECT_NEAR(volatility(data, result.weights), cap, kVolatilityTolerance * cap);
+        double step = 1e-6 * cap;
+        double cap_derivative = (max_return_value(data, cap + step, kLeverage) -
+                                 max_return_value(data, cap - step, kLeverage)) /
+                                (2.0 * step);
+        EXPECT_NEAR(result.volatility_multiplier, cap_derivative, 1e-5 * std::fabs(cap_derivative));
+        double leverage_derivative = (max_return_value(data, cap, kLeverage + kLeverageStep) -
+                                      max_return_value(data, cap, kLeverage - kLeverageStep)) /
+                                     (2.0 * kLeverageStep);
+        EXPECT_NEAR(result.leverage_multiplier, leverage_derivative, 1e-6 * std::fabs(leverage_derivative));
+    }
+}
+
+// Means 0.1 (1 + 1e-6 u_i), u_i uniform in [-1, 1], with cash at kRiskFree: once a face that holds the whole
+// portfolio binds (the leverage, or the cash bound of long-only), only the spread of 1e-7 moves w(t), the cap is
+// reached at t near 1e8 and the path solves Q(t) shifted along that face (docs/guide/validation.md).
+Data nearly_equal_with_cash(std::size_t n, std::uint64_t seed)
+{
+    std::vector<double> mu = po::testing::random_vector(n, seed + 500, -1.0, 1.0);
+    for (double& value : mu)
+    {
+        value = 0.1 * (1.0 + 1e-6 * value);
+    }
+    Data data = Data::create(n, mu, po::testing::random_covariance(n, seed, 1e4)).value();
+    data.set_risk_free(kRiskFree);
+    return data;
+}
+
+// Under the leverage with cash, the inactive cap leaves w = L e_best, where -mu~ = lambda_lev g with g_best = 1:
+// lambda_lev = -mu~_best, the face multiplier mapped back from the shifted Q(t). At a cap below the volatility of
+// that vertex both bind, and expect_user_kkt checks lambda_lev with lambda_vol.
+TEST(MaxReturn, FaceShiftLeverageMultiplier)
+{
+    constexpr std::size_t n = 6;
+    constexpr double kLeverage = 1.3;
+    for (std::uint64_t seed = 41; seed <= 44; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = nearly_equal_with_cash(n, seed);
+        std::size_t best = best_asset(data);
+        double vertex = kLeverage * std::sqrt(data.covariance()[best * n + best]);
+        Result limit = solve_checked(max_return(leveraged(kLeverage), 2.0 * vertex), data);
+        EXPECT_EQ(limit.volatility_multiplier, 0.0);
+        EXPECT_NEAR(limit.weights[best], kLeverage, 1e-12);
+        EXPECT_NEAR(limit.leverage_multiplier, -(data.mu()[best] - kRiskFree), 1e-12 * data.mu()[best]);
+        Result crossing = solve_checked(max_return(leveraged(kLeverage), 0.9 * vertex), data);
+        EXPECT_LT(crossing.volatility_multiplier, 0.0);
+        EXPECT_LT(crossing.leverage_multiplier, 0.0);
+        EXPECT_NEAR(volatility(data, crossing.weights), 0.9 * vertex, kVolatilityTolerance * vertex);
+    }
+}
+
+// Every weight nonnegative with cash: the cash bound w_cash >= 0 is the face. At the inactive cap w = e_best and cash = 0, where
+// -mu~_i = beta_i - beta_0 gives beta_0 = mu~_best and beta_i = mu~_best - mu~_i: the cash multiplier is the face
+// multiplier mapped back. Just below the volatility of the best asset (the end of the path, reached fully invested)
+// both the cap and the cash bound bind in 5 of the 8 seeds; in the others (42 among them) the path runs from all cash
+// straight to the best asset.
+TEST(MaxReturn, FaceShiftCashMultiplier)
+{
+    constexpr std::size_t n = 6;
+    int on_face = 0;
+    for (std::uint64_t seed = 41; seed <= 48; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = nearly_equal_with_cash(n, seed);
+        std::size_t best = best_asset(data);
+        double vertex = std::sqrt(data.covariance()[best * n + best]);
+        Result limit = solve_checked(max_return(nonnegative(), 2.0 * vertex), data);
+        EXPECT_EQ(limit.volatility_multiplier, 0.0);
+        EXPECT_NEAR(limit.weights[best], 1.0, 1e-12);
+        double best_excess = data.mu()[best] - kRiskFree;
+        EXPECT_NEAR(limit.bound_multipliers[n], best_excess, 1e-12 * best_excess);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            EXPECT_NEAR(limit.bound_multipliers[i], data.mu()[best] - data.mu()[i], 1e-12 * best_excess);
+        }
+        double cap = 0.999 * vertex;
+        Result crossing = solve_checked(max_return(nonnegative(), cap), data);
+        EXPECT_LT(crossing.volatility_multiplier, 0.0);
+        EXPECT_NEAR(volatility(data, crossing.weights), cap, kVolatilityTolerance * cap);
+        if (crossing.weights[n] > 0.0)
+        {
+            continue;
+        }
+        ++on_face;
+        EXPECT_GT(crossing.bound_multipliers[n], 0.0);
+    }
+    EXPECT_EQ(on_face, 5);
+}
+
 } // namespace

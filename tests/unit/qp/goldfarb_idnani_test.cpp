@@ -11,10 +11,12 @@
 #include <stdexcept>
 #include <vector>
 
+#include "fuzz/random_problems.hpp"
 #include "fuzz/sign_pattern_reference.hpp"
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
 #include "random_covariance.hpp"
+#include "user_kkt.hpp"
 
 namespace
 {
@@ -477,6 +479,35 @@ TEST(GoldfarbIdnani, GrossExposureWithOffset)
             EXPECT_NEAR(homogeneous.x[i], plain.x[i], 1e-12 * scale);
         }
     }
+}
+
+// The MAX_RETURN path holds the face 1'x <= L of the family as the equality -1'x = -L (Q(t) at t = 1e10 of a shape
+// with cash and nearly equal means, shifted along that face). The steps from the start far away leave a residual on
+// the equality well above the tolerance of the final x, and the family, evaluated at sign(x) = 1, regenerated the
+// equality's own row: dependent and violated, the problem was declared infeasible. A generated row equal to an
+// active explicit row is never generated.
+TEST(GoldfarbIdnani, FamilyRowHeldAsEquality)
+{
+    po::testing::ProblemShape shape{5,    1e6,  1.0, po::testing::ProblemShape::Means::NearlyEqual,
+                                    po::testing::ProblemShape::Box::None, true, 5609355878685293435ULL,
+                                    1.1024736465921829};
+    po::Data data = po::testing::generate(shape).data;
+    std::size_t n = shape.n;
+    constexpr double t = 1e10;
+    Problem problem;
+    problem.n = n;
+    problem.hessian.assign(data.covariance().begin(), data.covariance().end());
+    problem.hessian_factor.assign(data.covariance_factor().begin(), data.covariance_factor().end());
+    std::vector<double> excess = po::testing::excess_mu(data);
+    auto [low, high] = std::ranges::minmax(excess);
+    for (double value : excess)
+    {
+        problem.linear.push_back(-t * (value - 0.5 * (low + high)));
+    }
+    problem.equality_rows.assign(n, -1.0);
+    problem.equality_rhs.push_back(-*shape.leverage);
+    problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(n, 0.0), -*shape.leverage};
+    po::testing::expect_kkt(problem, po::qp::solve(problem), 1e-9);
 }
 
 } // namespace

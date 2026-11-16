@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -67,32 +69,29 @@ double return_scale(const Data& data, double reference)
     return std::max(std::fabs(reference), po::testing::largest_magnitude(data.mu()));
 }
 
-void expect_against_reference(const GeneratedProblem& problem, double cap, double tolerance)
+// INFEASIBLE exactly when the reference is NaN; otherwise OPTIMAL with the return of the reference, KKT and
+// vol <= s. Returns the result when it is OPTIMAL.
+std::optional<Result> checked_against_reference(const GeneratedProblem& problem, double cap, double tolerance)
 {
     double reference = po::testing::max_return_reference(problem.spec, problem.data, cap);
     Result result = po::solve(max_return(problem.spec, cap), problem.data).value();
     if (std::isnan(reference))
     {
         EXPECT_EQ(result.status, SolveStatus::Infeasible);
-        return;
+        return std::nullopt;
     }
-    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    EXPECT_EQ(result.status, SolveStatus::Optimal);
+    if (result.status != SolveStatus::Optimal)
+    {
+        return std::nullopt;
+    }
     double achieved = po::testing::portfolio_return(problem.data, result.weights);
     EXPECT_NEAR(achieved, reference, tolerance * return_scale(problem.data, reference));
     po::testing::expect_user_kkt(max_return(problem.spec, cap), problem.data, result,
                                  max_return_gradient(problem.data), tolerance);
     EXPECT_LE(po::testing::portfolio_volatility(problem.data, result.weights), cap * (1.0 + tolerance));
+    return result;
 }
-
-// The one known residual of the battery (docs/guide/validation.md): cash, nearly equal means, cond(Sigma) = 1e8
-// at the daily scale, where the cap is reached near t = 1e12 and Q(t) is lost in its own rounding. It stops at
-// MAX_ITER; no other case may.
-struct KnownResidual
-{
-    std::uint64_t seed;
-    double fraction;
-};
-constexpr KnownResidual kKnownResidual{11394049047870518593ULL, 0.9};
 
 TEST(MaxReturnFuzz, AgainstFrontierReference)
 {
@@ -110,13 +109,7 @@ TEST(MaxReturnFuzz, AgainstFrontierReference)
         {
             SCOPED_TRACE(fraction);
             double cap = minimum + fraction * (largest - minimum);
-            if (shape.seed == kKnownResidual.seed && fraction == kKnownResidual.fraction)
-            {
-                EXPECT_EQ(po::solve(max_return(problem.spec, cap), problem.data).value().status,
-                          SolveStatus::MaxIterations);
-                continue;
-            }
-            expect_against_reference(problem, cap, condition_tolerance(shape.condition));
+            checked_against_reference(problem, cap, condition_tolerance(shape.condition));
         }
     }
 }
@@ -223,6 +216,129 @@ TEST(MaxReturnFuzz, NeverSilentlyWrong)
             }
         }
     }
+}
+
+double risky_gross_exposure(const Data& data, const Result& result)
+{
+    double total = 0.0;
+    for (double weight : std::span<const double>(result.weights).first(data.asset_count()))
+    {
+        total += std::fabs(weight);
+    }
+    return total;
+}
+
+// A leverage below the gross exposure of the MAX_RETURN optimum at cap without leverage: a fraction in [0.2, 0.9],
+// drawn from seed, of the way to it from the least the budget allows (1 without cash, 0 with cash); none when that
+// optimum is not OPTIMAL or within 1e-6 of the least. It binds, or the cap is below the minimum volatility under it.
+std::optional<double> binding_leverage(const GeneratedProblem& problem, double cap, std::uint64_t seed)
+{
+    Spec spec = problem.spec;
+    spec.leverage.reset();
+    Result free = po::solve(max_return(spec, cap), problem.data).value();
+    if (free.status != SolveStatus::Optimal)
+    {
+        return std::nullopt;
+    }
+    double least = 1.0;
+    if (problem.data.risk_free().has_value())
+    {
+        least = 0.0;
+    }
+    double gross = risky_gross_exposure(problem.data, free);
+    if (!(gross - least > 1e-6))
+    {
+        return std::nullopt;
+    }
+    return least + po::testing::random_vector(1, seed, 0.2, 0.9)[0] * (gross - least);
+}
+
+struct LeverageCount
+{
+    std::size_t leverage = 0;
+    std::size_t both = 0;
+};
+
+void count_binding(const std::optional<Result>& result, LeverageCount& count)
+{
+    if (!result.has_value() || !(result->leverage_multiplier < 0.0))
+    {
+        return;
+    }
+    ++count.leverage;
+    if (result->volatility_multiplier < 0.0)
+    {
+        ++count.both;
+    }
+}
+
+// gcc-release runs LeverageFuzz in full. gcc-debug, where it took 117 s, runs the first 256 shapes (every combination
+// once) at three of the five caps, 38 s, where 407 cases bind the leverage, 278 with the cap
+// (docs/guide/validation.md).
+#ifdef NDEBUG
+constexpr std::size_t kLeverageShapes = 400;
+constexpr std::array kCapFractions = {0.1, 0.3, 0.5, 0.7, 0.9};
+constexpr std::size_t kLeverageBinds = 1000;
+constexpr std::size_t kBothBind = 700;
+#endif
+#ifndef NDEBUG
+constexpr std::size_t kLeverageShapes = 256;
+constexpr std::array kCapFractions = {0.1, 0.5, 0.9};
+constexpr std::size_t kLeverageBinds = 400;
+constexpr std::size_t kBothBind = 270;
+#endif
+
+// The caps of AgainstFrontierReference (kCapFractions of them), from the minimum volatility under the leverage of
+// spec; the largest asset volatility alone when no portfolio is feasible under it.
+std::vector<double> caps_of(const GeneratedProblem& problem)
+{
+    double largest = largest_asset_volatility(problem.data);
+    std::vector<double> caps;
+    Result minimum = po::testing::frontier_point(problem.spec, problem.data, std::nullopt);
+    if (minimum.status != SolveStatus::Optimal)
+    {
+        caps.push_back(largest);
+        return caps;
+    }
+    double lowest = po::testing::portfolio_volatility(problem.data, minimum.weights);
+    for (double fraction : kCapFractions)
+    {
+        caps.push_back(lowest + fraction * (largest - lowest));
+    }
+    return caps;
+}
+
+// Every shape of fuzz_shapes(kLeverageShapes, 3) without the fixed box, at the leverage of with_leverage (uniform in [0.8, 3]:
+// infeasible, inactive or binding) and at a leverage below the gross exposure of the optimum without it, against
+// the frontier reference whose MIN_VARIANCE has the same leverage. In gcc-release, of the 2314 cases, 1057 bind the
+// leverage, 763 of them with the cap (docs/guide/validation.md).
+TEST(MaxReturnFuzz, LeverageFuzz)
+{
+    LeverageCount count;
+    for (const ProblemShape& shape : po::testing::with_leverage(po::testing::fuzz_shapes(kLeverageShapes, 3)))
+    {
+        if (shape.box == ProblemShape::Box::Fixed)
+        {
+            continue;
+        }
+        SCOPED_TRACE(describe(shape));
+        GeneratedProblem problem = po::testing::generate(shape);
+        double tolerance = condition_tolerance(shape.condition);
+        for (double cap : caps_of(problem))
+        {
+            SCOPED_TRACE(cap);
+            count_binding(checked_against_reference(problem, cap, tolerance), count);
+            GeneratedProblem binding = problem;
+            binding.spec.leverage = binding_leverage(problem, cap, shape.seed + 1000);
+            if (binding.spec.leverage.has_value())
+            {
+                SCOPED_TRACE(testing::Message() << "binding leverage " << *binding.spec.leverage);
+                count_binding(checked_against_reference(binding, cap, tolerance), count);
+            }
+        }
+    }
+    EXPECT_GE(count.leverage, kLeverageBinds);
+    EXPECT_GE(count.both, kBothBind);
 }
 
 } // namespace

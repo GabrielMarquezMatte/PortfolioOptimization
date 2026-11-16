@@ -168,7 +168,7 @@ TEST(Requirements, LeverageAcceptedByQpObjectives)
     Spec spec = spec_of(Objective::MaxReturn);
     spec.max_volatility = 0.2;
     spec.leverage = 1.5;
-    expect_invalid(spec, full_data(), "leverage does not apply to MAX_RETURN");
+    expect_accepted(spec, full_data());
 }
 
 TEST(Requirements, MinVarianceRequiresCovariance)
