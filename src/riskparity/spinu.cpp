@@ -17,7 +17,7 @@ constexpr int kMaxIterations = 200;
 constexpr double kStepFactor = 16.0;
 constexpr double kFullStepRegion = 0.25;
 constexpr double kStallRatio = 0.5;
-constexpr double kStallCeiling = 1e-6;
+constexpr double kStallCeiling = 1e-8;
 constexpr double kBoundaryFraction = 0.99;
 constexpr double kSufficientDecrease = 1e-4;
 constexpr int kMaxHalvings = 60;
@@ -132,8 +132,8 @@ std::optional<NewtonStep> newton_step(const Problem& problem, const Point& point
     return step;
 }
 
-// The largest step that keeps y positive, shortened to a fraction of the way to the boundary and capped at the
-// full Newton step.
+// The largest step that keeps y positive, shortened to a fraction of the way to the boundary and capped at
+// the full Newton step.
 double boundary_step(const Point& point, std::span<const double> direction)
 {
     double longest = std::numeric_limits<double>::infinity();
@@ -157,14 +157,16 @@ std::vector<double> moved(const Point& point, std::span<const double> direction,
     return y;
 }
 
-// Armijo backtracking; nullopt when no step of the sequence decreases F enough, which is the rounding floor of F.
+// Armijo backtracking; nullopt when no step of the sequence decreases F enough. The caller then takes the step
+// to the boundary fraction anyway (advance), so this is not a stop.
 std::optional<Point> armijo(const Problem& problem, const Point& point, const NewtonStep& step)
 {
     double length = boundary_step(point, step.direction);
     for (int halving = 0; halving < kMaxHalvings; ++halving)
     {
         Point candidate = evaluate(problem, moved(point, step.direction, length));
-        if (candidate.value < point.value && candidate.value <= point.value + kSufficientDecrease * length * step.slope)
+        double sufficient = point.value + kSufficientDecrease * length * step.slope;
+        if (candidate.value < point.value && candidate.value <= sufficient)
         {
             return candidate;
         }
@@ -185,8 +187,8 @@ double relative_size(const Point& point, std::span<const double> direction)
     return largest;
 }
 
-// Close to the minimizer the full Newton step is taken without testing F, which no longer changes at the rounding
-// of its value while the weights still do; far from it the step is damped by Armijo.
+// Close to the minimizer the full Newton step is taken without testing F, which no longer changes at the
+// rounding of its value while the weights still do; far from it the step is damped by Armijo.
 Point advance(const Problem& problem, const Point& point, const NewtonStep& step, double size)
 {
     if (size <= kFullStepRegion)

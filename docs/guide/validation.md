@@ -492,8 +492,10 @@ relative error of a weight at `cond(Sigma) = 1e4` and `1e8`; the 960 runs with `
 The error does not depend on the constant up to 4096, because it is the floor of the step that decides; the constant
 only trades the iterations spent at the floor (0.9 per run between 1 and 4096). 16 is kept as the smallest multiple
 of `eps` that is above the rounding of a step in the well-conditioned runs. At the stall the largest step size
-measured was `2.1e-9`, so the `1e-6` ceiling on the stall exit leaves 500 times of room without accepting a step that
-is still converging.
+measured was `2.1e-9`, so the `1e-8` ceiling on the stall exit is above every measured stall (by a factor of 4.8)
+without accepting a step that is still converging. The ceiling was `1e-6` before; it was lowered because the Spinu
+point is the one `OPTIMAL` answer that does not pass the final KKT gate, and with `1e-8` every test outcome is
+unchanged.
 
 Largest relative error of a weight against the long double reference, and largest `|c_i - b_i|` of the contributions
 (both at `n` up to 100), against the bands of the tests:
