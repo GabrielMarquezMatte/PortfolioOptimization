@@ -285,6 +285,26 @@ TEST(RiskParity, VolatilityEqualMinimumIsMinimumVariance)
     }
 }
 
+// The same at cond(Sigma) = 1e8, where Sigma w cancels by eight digits: s is the minimum volatility computed
+// without that loss, as the solver computes it, and the check must not lose it either.
+TEST(RiskParity, VolatilityEqualMinimumAtCondition1e8)
+{
+    std::size_t n = 10;
+    Data data = Data::create(n, random_vector(n, 513, 0.03, 0.15), random_covariance(n, 13, 1e8)).value();
+    for (Spec spec : {risk_parity_spec(), long_only_spec()})
+    {
+        SCOPED_TRACE(spec.lower);
+        Result minimum = po::testing::frontier_point(spec, data, std::nullopt);
+        ASSERT_EQ(minimum.status, SolveStatus::Optimal);
+        spec.target_volatility = po::testing::wide_volatility(data, minimum.weights);
+        Result result = solved(spec, data);
+        ASSERT_EQ(result.status, SolveStatus::Optimal);
+        EXPECT_EQ(result.weights, minimum.weights);
+        EXPECT_EQ(result.volatility_multiplier, -kInfinity);
+        po::testing::expect_risk_parity_kkt(spec, data, result, 1e-7);
+    }
+}
+
 TEST(RiskParity, VolatilityBelowMinimumInfeasible)
 {
     Data data = sample_data(5, 13);

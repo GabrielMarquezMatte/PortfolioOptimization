@@ -943,7 +943,7 @@ that the policy solves those shapes, not that the polish repaired those 70 runs.
 **Cost.** One solve at `n = 50`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 9.7 s and
 59 027 iterations: every subproblem of the augmented Lagrangian is a descent that converges slowly there (296.8
 iterations on average for the descent alone at `cond(Sigma) = 1e8` without a box, in the table above), and the
-second effort starts the multiplier method again. At `n <= 20` the longest solve of the sweep is 0.28 s.
+second effort starts the multiplier method again. At `n <= 20` the longest solve of the sweep is 0.12 s.
 
 ## Fuzz battery
 
