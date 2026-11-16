@@ -863,8 +863,76 @@ through the rounding floor, which the settled multipliers satisfy at the rounded
 **Future work (a hypothesis, not measured).** Keep the `dlambda` of the last Newton solve of the polish instead
 of re-estimating `lambda` by least squares at the rounded weights, so that the `H dw` correction survives in
 `lambda`. The re-estimation was introduced because the Newton `dlambda` refused steps near `s = sigma_min` (the
-section on the polish); whether keeping it at the last step only fixes the multipliers without that failure is to
-be measured, with the test above as the measure.
+section on the polish); the measurement below, at the returned point, says that keeping it at the last step
+fixes the multipliers; whether it does so without that failure near `sigma_min` is not measured yet.
+
+**The Newton multipliers at the returned point (measured, not derived).**
+`RiskParityMultiplierMeasure.DISABLED_MeasureNewtonMultipliers`
+(`tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp`, 1.2 s, run with
+`--gtest_also_run_disabled_tests`) takes the point `po::solve` returns, builds on it the Newton system of
+`newton_polish` from the current `evaluate_kkt` (rows of `A` scaled to the largest entry of `H`, one Householder
+QR) and keeps `lambda_LS + dlambda` with `w` unchanged, `lambda_LS` being the multipliers of the result. Both are
+compared with the KKT point refined in `long double` from the result: `lambda_vol` relative to `abs(lambda_vol*)`,
+`lambda_budget` relative to `max(abs(lambda_budget*), abs(lambda_vol*) s)`. The cases are those of the 80-digit
+probe of `docs/research/2026-11-16-multiplier-accuracy.md` (no box, equal budget, `s = 1.2 sigma_min`) on the
+covariances of `random_covariance` (not the probe's), and the 8 shapes of
+`RiskParityFuzz.TargetVolatilityMultipliersByCondition` (`n` in {5, 8}, seeds 402 to 405), each at
+`cond(Sigma)` in {1e4, 1e6, 1e8, 1e10}. One run (Windows, GCC 16.2, MSYS2 UCRT64); the probe cases:
+
+| cond(Sigma) | n, seed | weight error | `lambda_LS` vol / budget | `lambda_LS + dlambda` vol / budget | `abs(dlambda) / abs(lambda_LS)` | stationarity over floor, `lambda_LS` / Newton | eta |
+|---|---|---|---|---|---|---|---|
+| 1e4 | 5, 7 | 9.3e-16 | 1.0e-11 / 1.3e-11 | 1.9e-14 / 2.6e-14 | 1.1e-11 | 0.62 / 0.11 | 1.7e-16 |
+| 1e4 | 5, 11 | 2.8e-17 | 5.3e-12 / 1.5e-11 | 2.7e-14 / 7.7e-15 | 5.6e-12 | 0.12 / 0.05 | 2.2e-16 |
+| 1e4 | 8, 3 | 4.7e-16 | 2.8e-11 / 9.7e-12 | 6.0e-15 / 9.9e-15 | 2.7e-11 | 0.18 / 0.17 | 1.0e-16 |
+| 1e6 | 5, 7 | 1.1e-16 | 6.6e-7 / 1.3e-6 | 3.2e-12 / 7.5e-13 | 8.9e-7 | 0.87 / 0.07 | 1.2e-16 |
+| 1e6 | 5, 11 | 3.1e-17 | 9.1e-8 / 3.0e-7 | 1.1e-13 / 3.6e-13 | 9.9e-8 | 0.15 / 0.05 | 4.5e-16 |
+| 1e6 | 8, 3 | 4.3e-15 | 4.7e-8 / 6.1e-9 | 2.8e-13 / 1.2e-12 | 4.6e-8 | 0.02 / 0.02 | 1.5e-16 |
+| 1e8 | 5, 7 | 1.4e-16 | 1.8e-3 / 7.0e-3 | 7.1e-10 / 7.6e-10 | 4.2e-3 | 0.97 / 0.08 | 3.7e-16 |
+| 1e8 | 5, 11 | 4.4e-17 | 3.1e-4 / 1.5e-3 | 4.6e-12 / 5.9e-11 | 3.7e-4 | 0.38 / 0.13 | 7.2e-17 |
+| 1e8 | 8, 3 | 1.4e-14 | 3.3e-3 / 3.5e-4 | 3.3e-11 / 5.5e-11 | 3.3e-3 | 0.12 / 0.09 | 2.2e-16 |
+| 1e10 | 5, 7 | 1.3e-15 | 0.19 / 8.1 | 1.0e-8 / 4.0e-8 | 0.88 | 1.44 / 0.10 | 6.5e-17 |
+| 1e10 | 5, 11 | 1.2e-16 | 0.86 / 6.7 | 3.3e-9 / 4.8e-9 | 0.60 | 0.22 / 0.08 | 3.2e-16 |
+| 1e10 | 8, 3 | 1.2e-15 | 61 / 2.5 | 1.9e-10 / 4.0e-10 | 0.98 | 0.04 / 0.03 | 3.0e-16 |
+
+The 8 shapes of the fuzz test, largest by `cond(Sigma)` (combined is the error of that test,
+`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`):
+
+| cond(Sigma) | `lambda_LS`, combined | `lambda_LS + dlambda`, combined | `lambda_LS + dlambda`, either multiplier | `abs(dlambda) / abs(lambda_LS)` | stationarity over floor, Newton | eta |
+|---|---|---|---|---|---|---|
+| 1e4 | 4.8e-10 | 2.0e-14 | 2.0e-14 | 5.1e-10 | 0.21 | 5.1e-16 |
+| 1e6 | 3.3e-7 | 5.2e-11 | 1.1e-10 | 3.7e-7 | 0.09 | 5.1e-16 |
+| 1e8 | 3.7e-2 | 5.3e-10 | 5.3e-10 | 4.3e-2 | 0.27 | 3.7e-16 |
+| 1e10 (`n = 5` only) | 89 | 6.3e-7 | 2.3e-6 | 1.2 | 0.17 | 1.3e-15 |
+
+The `lambda_LS` column reproduces the table above (4.8e-10, 3.3e-7, 3.7e-2). At `cond(Sigma) = 1e10` the four
+shapes with `n = 8` give no correction: the scaled KKT matrix fails the rank test of the QR (`kRankFactor`), as
+`newton_step` would find it.
+
+- **The Newton correction recovers the multipliers.** One solve at the returned point, all in `double`, brings
+  them to at most `2.7e-14` at 1e4, `1.1e-10` at 1e6 (`3.2e-12` on the probe cases), `7.6e-10` at 1e8 and
+  `2.3e-6` at 1e10, from `6.6e-10`, `1.3e-6`, `1.4e-1` and `O(100)` (at 1e8 by 6 to 9 orders of magnitude in
+  every case), with the weights untouched. That is the prediction of the research note at 1e8 (its model put
+  it at `1e-10` to `5e-10` on its own cases).
+- **The 80-digit check.** An independent refinement of the dumped cases (`PORTOPT_MULTIPLIER_DUMP=path` writes
+  each problem, the point and the analytic Hessian in `%.17g`; a script outside the repository refines
+  `(w, lambda_LS)` by 12 Newton steps in 80-digit decimal arithmetic, Jacobian by forward differences of step
+  `1e-35`, the method of section 0 of the research note) agrees with the `long double` reference within
+  `1.2e-16` in either multiplier in all 44 cases, `1e10` included, so the errors above are also those against
+  80 digits.
+- **eta, the error of the analytic Hessian.** The Lagrangian Hessian `evaluate_kkt` returns at
+  `(w, lambda_LS)` differs from the 80-digit one at the same point by at most `1.3e-15` of its largest entry
+  (`1.6e-15` entry by entry) at every `cond(Sigma)` up to 1e10: it is right to its rounding at these points,
+  not off by `eps cond(Sigma)` as the research note modelled it. What limits `lambda_LS + dlambda` is the
+  residual, evaluated in `double`, amplified by the KKT system, not `H`. (The `3.6e-8` of the difference check
+  above, at random weights, was not split between the two Hessians.)
+- **The stationarity with the new multipliers.** At `(w, lambda_LS + dlambda)` the stationarity is at most 0.27
+  of its rounding floor in every case, at most that of `lambda_LS` in each (up to 1.13 at 1e8 and 3.14 at 1e10),
+  and the same in units of the noise of `kkt.cpp`: both the gate of `is_kkt_point` and that of
+  `expect_risk_parity_kkt` would pass with them.
+- **For a safeguard.** `abs(dlambda) / abs(lambda_LS)` is the error of `lambda_LS`: up to `4.3e-2` at 1e8 (two
+  of the 11 cases above `1e-2`) and 0.6 to 1.2 at 1e10. A second solve from `(w, lambda_LS + dlambda)` changes
+  the multipliers by at most `8.9e-4` of the first correction (at 1e4, where the correction is itself at the
+  rounding), `3.7e-9` at 1e6 and `3.4e-12` from 1e8 up.
 
 ### The Newton polish
 
@@ -1271,6 +1339,7 @@ Verified means the text was read for the claim it supports. The full list, with 
 | `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
 | `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit) |
+| `tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp` | Disabled measurement only: the multipliers of the target-volatility path at the point `po::solve` returns, least squares and after one Newton-KKT solve, against the refined KKT point, with an optional dump for the 80-digit reference |
 | `tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp` | `po::solve` over 576 shapes: no status other than `OPTIMAL` carries a point, every `OPTIMAL` passes `expect_risk_parity_kkt` at the band of its `cond(Sigma)` (the stationarity at the band or within twice its rounding floor), and every one above the band agrees in weights and in `f` with the KKT point of its active set refined in `long double` |
 | `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives that take it, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`; `RISK_PARITY` takes `target_return`, `target_volatility` and `risk_budget` and no cash), its messages and the order of the checks |
 | `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |
