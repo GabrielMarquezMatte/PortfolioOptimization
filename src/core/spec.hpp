@@ -23,6 +23,9 @@ struct Spec
     std::optional<double> max_volatility;
     // sum_i |w_i| <= leverage over the risky weights; cash is not counted.
     std::optional<double> leverage;
+    // RISK_PARITY: one entry per asset, empty means 1 / n.
+    std::vector<double> risk_budget;
+    std::optional<double> target_volatility;
 };
 
 } // namespace po
