@@ -276,7 +276,7 @@ used by `problems`. `metrics` (portfolio return and volatility) depends on `core
 `src/` includes from `src/capi/` except `capi` itself.
 
 ```cpp
-// NOT OK: src/problems/solve.cpp
+// NOT OK: src/solve/solve.cpp
 #include "capi/error.hpp"
 
 // OK: src/capi/solve_api.cpp

@@ -3,7 +3,7 @@
 
 #include "capi/error.hpp"
 #include "capi/handles.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 
 using po::capi::guard;
 using po::capi::null_argument;

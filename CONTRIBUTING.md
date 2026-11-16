@@ -59,7 +59,7 @@ skipped and pytest exits with status 5.
   CI runs it over `src/`; locally, after configuring with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON`:
 
   ```
-  clang-tidy -p build/gcc-release src/problems/solve.cpp
+  clang-tidy -p build/gcc-release src/solve/solve.cpp
   ```
 
 ## Documentation

@@ -580,8 +580,8 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
-| `tests/unit/problems/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives solved, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`), its messages and the order of the checks |
-| `tests/unit/problems/solve_test.cpp` | Argument checks of `po::solve` and their messages |
+| `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives solved, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`), its messages and the order of the checks |
+| `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
 | `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, the new setters and `po_data_set_returns`, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |
 | `python/tests/test_min_variance.py`, `test_qp_objectives.py` | The Python package against closed forms, `numpy` and the status contract; the frozen `Spec`, the objective identities, `MAX_RETURN` on the capital market line, the input checks of `Data` |

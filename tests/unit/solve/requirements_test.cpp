@@ -1,4 +1,4 @@
-#include "problems/requirements.hpp"
+#include "solve/requirements.hpp"
 
 #include <gtest/gtest.h>
 
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "random_covariance.hpp"
 
 namespace

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "capi_scope.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "random_covariance.hpp"
 
 namespace

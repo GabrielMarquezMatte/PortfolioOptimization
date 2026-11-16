@@ -1,4 +1,4 @@
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 
 #include <gtest/gtest.h>
 

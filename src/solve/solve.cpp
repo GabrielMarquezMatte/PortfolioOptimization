@@ -1,4 +1,4 @@
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 
 #include <optional>
 #include <utility>
@@ -6,7 +6,7 @@
 #include "problems/homogeneous.hpp"
 #include "problems/max_return.hpp"
 #include "problems/mean_variance.hpp"
-#include "problems/requirements.hpp"
+#include "solve/requirements.hpp"
 #include "problems/tracking_error.hpp"
 
 namespace po

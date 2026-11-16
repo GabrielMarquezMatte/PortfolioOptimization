@@ -8,7 +8,7 @@
 
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "linalg/cholesky.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "random_covariance.hpp"
 
 namespace

@@ -10,7 +10,7 @@
 #include "core/result.hpp"
 #include "core/spec.hpp"
 #include "kkt.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace po::testing

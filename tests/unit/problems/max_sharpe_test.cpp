@@ -13,7 +13,7 @@
 #include "fuzz/ratio_reference.hpp"
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "random_covariance.hpp"
 #include "user_kkt.hpp"
 

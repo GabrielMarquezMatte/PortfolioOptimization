@@ -71,8 +71,8 @@ Build targets (`CMakeLists.txt`):
 | `src/qp/problem.hpp` | `qp::Problem` (G, an optional precomputed factor of G, g, equality and inequality rows, and the optional `GrossExposure` family) and `qp::Solution` (with the sign vectors and multipliers of the active generated rows), with the stationarity convention |
 | `src/qp/goldfarb_idnani.*` | `qp::solve`: the dual active-set loop, the tolerances, the generation of the rows of the gross exposure family and the final refinement |
 | `src/qp/active_set.hpp` | The active-set factorization (J, R), Givens rotations, the add and drop updates and the refinement step |
-| `src/problems/solve.*` | `po::solve`: `check_request`, then dispatch to the objective |
-| `src/problems/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
+| `src/solve/solve.*` | `po::solve`: `check_request`, then dispatch to the objective |
+| `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
 | `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: the shift of the means along a face (the budget, a cash bound or a row of the leverage) and its sign certificate, solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the limit certificate of an inactive cap, the vertex exit, the crossing on a segment |
@@ -123,7 +123,7 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    `po_data_set_risk_free` adds cash as the last weight and `po_data_set_returns` stores the return series and the
    benchmark of `TRACKING_ERROR`.
 2. **Validation.** `po_solve` (`src/capi/solve_api.cpp`) sets `*out` to NULL, checks the handles inside `guard` and
-   calls `po::solve` (`src/problems/solve.cpp`). Its `check_request` (`src/problems/requirements.cpp`) rejects, in
+   calls `po::solve` (`src/solve/solve.cpp`). Its `check_request` (`src/solve/requirements.cpp`) rejects, in
    this order, an objective this version does not solve (`PO_UNSUPPORTED`), a setter outside the objective's row of
    the matrix, data the objective requires and per-asset bounds whose size is not the weight count, cash included
    (`PO_INVALID_ARGUMENT`). Each is an error status, not a result. `solve` then dispatches on the objective.

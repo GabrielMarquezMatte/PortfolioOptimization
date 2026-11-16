@@ -8,7 +8,7 @@
 #include "core/result.hpp"
 #include "fuzz/random_problems.hpp"
 #include "fuzz/ratio_reference.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace

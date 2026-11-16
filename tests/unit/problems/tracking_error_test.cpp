@@ -11,7 +11,7 @@
 
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "qp/goldfarb_idnani.hpp"
 #include "random_covariance.hpp"
 #include "user_kkt.hpp"

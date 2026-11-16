@@ -46,8 +46,8 @@ add_library(portopt_core STATIC
     src/problems/max_return.cpp
     src/problems/parametric_path.cpp
     src/problems/mean_variance.cpp
-    src/problems/requirements.cpp
-    src/problems/solve.cpp
+    src/solve/requirements.cpp
+    src/solve/solve.cpp
     src/problems/tracking_error.cpp
     src/metrics/portfolio.cpp)
 set_target_properties(portopt_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -112,9 +112,9 @@ if(PO_BUILD_TESTS)
         tests/unit/problems/max_return_test.cpp
         tests/unit/problems/max_sharpe_test.cpp
         tests/unit/problems/min_variance_test.cpp
-        tests/unit/problems/solve_test.cpp
+        tests/unit/solve/solve_test.cpp
         tests/unit/problems/utility_test.cpp
-        tests/unit/problems/requirements_test.cpp
+        tests/unit/solve/requirements_test.cpp
         tests/unit/problems/tracking_error_test.cpp
         tests/unit/metrics/portfolio_test.cpp)
     target_include_directories(portopt_tests PRIVATE tests/unit)

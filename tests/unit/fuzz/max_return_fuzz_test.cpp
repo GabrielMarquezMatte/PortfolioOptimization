@@ -12,7 +12,7 @@
 #include "core/result.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/random_problems.hpp"
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 #include "random_covariance.hpp"
 #include "user_kkt.hpp"
 
