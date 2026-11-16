@@ -166,7 +166,8 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   (`MaxReturn.EqualMeansWithCash`) deviated by 1.6e-15, and the 9 ends reached where `Q(t)` is lost in its rounding
   (`t` from 1.8e8 to 1.2e12) by 1.6e-3 to 0.23. Those 9 were returned as `OPTIMAL` with `lambda_vol < 0` and a
   volatility up to 23% below `s`. 1e-5 is 140 times the largest rounding and 160 times below the smallest wrong
-  deviation.
+  deviation. An accepted adjacent end is therefore guaranteed only to `|vol - s| <= 1e-5 s`, not to the band of its
+  condition number; none was accepted between that band and 1e-5 on the battery.
 - **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
   `INFEASIBLE`.
 
@@ -237,6 +238,33 @@ equality at the objective scale 1e-4, and G and g scaled by 1e-4 and 1e8.
   budget row and no shift of the means, so nothing removes the common mean from the start `t Sigma^-1 mu~`. Any other
   `MAX_ITER` fails the test.
 - **Runtime.** 1.3 s and 0.7 s in `gcc-release`, 15.6 s and 8.8 s in `gcc-debug`; both presets run the full counts.
+
+**Plan-2 scripts against the fixed DLL.** The Python probes of the plan-2 review (`MAX_RETURN` against Clarabel, an
+SOCP reference, and an independent KKT check) were run against the DLL before and after these changes. Their
+thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, return gap 1e-9.
+
+- The re-review cases (30 assets and a nearly riskless one of variance 1e-10, nearly equal means, long-only with
+  `upper = 0.3`, `s = 10 sigma_min`): on HEAD, `OPTIMAL` with a weight of -0.031 below its bound of 0 and, in the other
+  case, a return of 0.0800162 against 0.0800174; now both agree with the reference (lowest weight -1.4e-18, return
+  within 2.4e-12 relative).
+- The probes of fixed weights (`lower == upper`), slow motion of `w` and a nearly riskless asset at its cap: cases
+  beyond the scripts' thresholds fell from 27 and 34 on HEAD to 5 and 5 (the second probe repeats the first). The 5:
+  - four cases with n = 40, `cond(Sigma) = 1e8`, `s = 2 sigma_min` and `mu` spread from 1e-4 to 1e-7 relative, where
+    `vol / s` is 1 + 1.5e-9, 1 + 2.2e-9, 1 + 1.7e-9 and 1 + 1.9e-9 (feasibility and volatility complementarity of the
+    same size; stationarity at most 5.6e-13, return gap at most 7.3e-12). That is inside the band of 1e-7 for
+    `cond(Sigma) = 1e8`, the rounding of the crossing. On HEAD these cases returned `lambda_vol = 0` with a
+    stationarity of 1e-7 to 1e-4: silently wrong.
+  - one case with fixed weights (n = 30, one weight fixed) at `s = sigma_min (1 + 1e-9)`: return gap 2.1e-5 against a
+    Clarabel solution marked `AlmostSolved`, with stationarity 9.2e-12 and feasibility 3.5e-18; the same gap as on
+    HEAD, from the reference.
+- `MAX_ITER`: 1 case (n = 30, variance 1e-10, means spread by 1e-9, `s = 10 sigma_min`), also `MAX_ITER` on HEAD, where
+  Clarabel reports `AlmostSolved`; HEAD had 3.
+- The broader fuzz scripts are unchanged or better: 300 of 300 correct with a nearly riskless asset; 400 of 400
+  `OPTIMAL` against Clarabel, worst stationarity 2.3e-9 (2.6e-9 on HEAD) and the same entries flagged against
+  `AlmostSolved` references; 600 of 600 with cash; 240 of 240 `OPTIMAL` per condition number from 1e2 to 1e8; the
+  equal-mean cases at `sigma_min`; 300-asset and 120-asset sample covariances all `OPTIMAL` (longest solve 0.82 s, 0.76 s
+  on HEAD); `TRACKING_ERROR` identical. One script, `repro5.py`, stops with an error of its own: it passes
+  `max_volatility = 0` for a case with cash (`sigma_min = 0`), which the setter rejects, on HEAD too.
 
 ## Where the tests are
 
