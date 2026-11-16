@@ -359,7 +359,9 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
     `kappa_noise = n eps (|z|'|Sigma||y| + sigma_y^2 |z|'m)`, with `z` from two triangular solves on the factor of
     `Data` (`kappa_noise` in `src/problems/homogeneous.cpp`). On an unbounded cone, `kappa <= 16 kappa_noise`
     (`kKappaNoiseFactor`) with the row inactive is the closure point `kappa = 0`: `UNBOUNDED`. It replaces the former
-    rule `kappa <= 0`, which it contains.
+    rule `kappa <= 0`, which it contains. The model is a first-order bound in the spirit of Higham, with `|Sigma|` where the
+    rigorous backward error of a Cholesky solve is stated with `|R'||R|`, `R` the factor (stated from memory, not verified in
+    the book); the margin that the measurements below show (0.040 `kappa_noise` at the boundary) is what the guard rests on.
   - **Only on unbounded cones.** `kappa_noise` grows like `n^2 eps cond(Sigma) kappa`. For box-feasible points
     (`n = 150`), `16 kappa_noise / kappa` has a median of 2e-4 at `cond(Sigma) = 1e8`, 1.5e-2 at 1e10 and 2.0 at 1e12.
     Applied everywhere, the threshold returned `UNBOUNDED` on bounded feasible sets, where it is impossible:
@@ -604,7 +606,8 @@ The first rule measured, `tau = 0.05 tr(Sigma) / (2n)` (the `riskParityPortfolio
 `target_return` included, tolerance `1e-12`): at scale 1 and `cond(Sigma) = 1e8`, `tau` dominated `2 J'J`, every
 step was a short gradient step and 22 of 300 runs converged within 2000 iterations; at scale `1e-4` and
 `cond(Sigma) = 1e8`, `tau` fell below the rounding of `2 J'J` and `qp::solve` threw on 16 of 300 runs. In total
-1640 of 2400 converged. A fixed scale-free `tau = 0.05 tr(2 J'J) / n` converged on 1470 (1568 with 0.005): the
+1640 of 2400 converged. That is the rule of the plan, `tau = 0.05 tr(Sigma) / (2n)`, and the Levenberg-Marquardt `tau`
+above replaces it. A fixed scale-free `tau = 0.05 tr(2 J'J) / n` converged on 1470 (1568 with 0.005): the
 adaptive update, not only the units, is what makes the descent converge.
 
 **Sweep** (`RiskParityDescentFuzz.DISABLED_MeasureSweep`, run with `--gtest_also_run_disabled_tests`; 27 s).
@@ -804,8 +807,8 @@ double` wider than `double`; where it is not (MSVC) that part is skipped.
 **The weights at `cond(Sigma) = 1e8` with a target volatility are a conditioning limit.** With a target
 volatility and few or no active bounds at `cond(Sigma)` around `1e8`, the weights are determined only to the
 rounding of the KKT residual amplified by the conditioning of the reduced problem. A result at the rounding
-floor can differ from the exact KKT point of its active set by up to about `1e-5` relative, while its objective
-value is right to its band. Measured over the class (no box, target volatility, uneven budget, `cond(Sigma) =
+floor can differ from the exact KKT point of its active set by up to about `1e-4` relative (the measured maximum
+is `3.7e-5`, below), while its objective value is right to its band. Measured over the class (no box, target volatility, uneven budget, `cond(Sigma) =
 1e8`; `RiskParityFuzz.DISABLED_MeasureWeightErrorDistribution`, one run):
 
 | n | OPTIMAL | weight error: median | 90% | 99% | max | above `1e-7` | value error over `band (1 + f)`, max |
@@ -1027,7 +1030,8 @@ descends), and `n = 20`, Capped, equal budget, seed 31696 (not a seed of the sol
 `po::solve` both scales of the latter are `MAX_ITER` with every number NaN
 (`RiskParityFuzz.UnrepairedDescentShapesThroughSolve`), so all 70 are accounted for: 66 repaired, 2 never
 descended by the solver, 2 `MAX_ITER` without a point. Those 2 are a bounded problem without a target that the
-solver does not solve.
+solver does not solve: **a known limitation**, documented and not fixed (Capped box, equal budget, `n = 20`,
+`cond(Sigma) = 1e8`, seed 31696: `MAX_ITER`, no point).
 
 **Cost.** One solve at `n = 50`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 9.2 s and
 55 323 iterations (19.6 s and 21 190 at `n = 100`): every subproblem of the augmented Lagrangian is a descent
@@ -1190,6 +1194,24 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
   equal-mean cases at `sigma_min`; 300-asset and 120-asset sample covariances all `OPTIMAL` (longest solve 0.82 s, 0.76 s
   on HEAD); `TRACKING_ERROR` identical. One script, `repro5.py`, stops with an error of its own: it passes
   `max_volatility = 0` for a case with cash (`sigma_min = 0`), which the setter rejects, on HEAD too.
+
+## Sources of RISK_PARITY and of the earlier numerical decisions
+
+Verified means the text was read for the claim it supports. The full list, with the pages, is in
+`docs/research/2026-11-16-risk-parity-and-numerics.md`; [math.md](math.md#sources) repeats it by objective.
+
+- Bruder and Roncalli (2012, section 2.3.3): the positive-orthant solution exists and is unique. Verified.
+- Bai, Scheinberg and Tütüncü (2016), lemmas 2.1 to 2.3 and examples 3.1 and 3.2: at most `2^(n-1)` normalized solutions,
+  and an indefinite Hessian. Verified on the 2013 preprint; the published version was not read.
+- Andreani, Birgin, Martinez and Schuverdt (2007), algorithm 3.1: the augmented Lagrangian of the volatility. Verified.
+  Its penalty rule (halving test, growth factor 10) is the one used; the plan had attributed a different rule
+  (a factor 4 instead of 2) to Nocedal and Wright, section 17.4.
+- Feng and Palomar (2015, SCRIP) and Spinu (2013): not read. The convergence theorem of SCRIP is not verified; Spinu's
+  algorithm is taken from Griveau-Billion, Richard and Roncalli (2013), which was read.
+- Ogita, Rump and Oishi (2005): the compensated dot product. Not verified against the paper; its effect is measured above.
+- Tibshirani (1996, section 6): the family of the leverage rows. Verified. Niedermayer and Niedermayer (2007), proposition
+  1 and corollary 1: the path of `MAX_RETURN`. Verified.
+- Higham's rounding-error analysis of Cholesky: not verified in the book (above).
 
 ## Where the tests are
 

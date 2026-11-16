@@ -7,15 +7,18 @@ written from the paper; the library has no dependency besides GoogleTest (for it
 
 ## Status
 
-Version 0.1.0 (pre-release). Eight objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
+Version 0.1.0 (pre-release). Nine objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
 volatility cap (`MAX_RETURN`), the maximum Sharpe ratio (`MAX_SHARPE`), mean-variance utility (`UTILITY`), the same
 with an importance weight between risk and return (`IMPORTANCE`), the Kelly criterion (`KELLY`), tracking error
-against a benchmark (`TRACKING_ERROR`) and the maximum diversification ratio (`MAX_DIVERSIFICATION`). All take a box on
+against a benchmark (`TRACKING_ERROR`), the maximum diversification ratio (`MAX_DIVERSIFICATION`) and risk parity with
+a risk budget (`RISK_PARITY`, a local method: its result is a KKT point, not a proven global minimum). All take a box on
 the weights (one pair for all of them or one pair per asset), an optional gross exposure limit (the leverage,
 `sum |w_i| <= L` over the risky weights) and an optional risk-free asset (cash, always the last weight);
-`MIN_VARIANCE` and `TRACKING_ERROR` also take a target return. The result carries the weights and the multipliers of
+`MIN_VARIANCE` and `TRACKING_ERROR` also take a target return, and `RISK_PARITY` takes neither cash nor a leverage but a
+target return and a target volatility. The result carries the weights and the multipliers of
 the budget, target-return, volatility and leverage constraints and of the bounds, under the convention in
-[docs/guide/math.md](docs/guide/math.md). `RISK_PARITY` returns `PO_UNSUPPORTED`. A `MAX_SHARPE` or
+[docs/guide/math.md](docs/guide/math.md). A solve that ends without a point it can vouch for has status `MAX_ITER`,
+with NaN weights, multipliers and residual, for every objective. A `MAX_SHARPE` or
 `MAX_DIVERSIFICATION` problem whose supremum is not attained, such as `MAX_SHARPE` with unbounded short selling and a
 risk-free rate above the minimum-variance return, has status `UNBOUNDED` and NaN weights. Portfolio return, volatility,
 utility, tracking error and the Sharpe and diversification ratios of a weight vector are available too. Until 1.0 the C
@@ -61,22 +64,38 @@ print(np.abs(free.weights[:3]).sum())          # 4.0926 (rounded): the tangency 
 print(capped.weights)                          # [ 1.3631 -0.5  0.1369  0. ] (rounded): cash weight 0
 print(data.sharpe_ratio(capped.weights))       # 0.7211 (rounded), against 1.0906 uncapped
 print(capped.leverage_multiplier)              # -0.3105 (rounded): the change of -Sharpe per unit of L
+
+# Risk parity with a risk budget (50% / 30% / 20% of the risk) and the volatility fixed at 17%
+# (the minimum volatility of this covariance is 16.4%, so a target below it is INFEASIBLE)
+cov = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.012], [0.002, 0.012, 0.16]])
+data = po.Data(None, cov)
+budget = [0.5, 0.3, 0.2]
+spec = po.Spec(po.Objective.RISK_PARITY, risk_budget=budget, target_volatility=0.17)
+result = po.solve(spec, data)
+print(result.status.name, result.weights)      # OPTIMAL [0.4754 0.3046 0.22  ] (rounded)
+print(data.volatility(result.weights))         # 0.17
+print(data.risk_contributions(result.weights)) # [0.3501 0.3468 0.3031] (rounded): the best the target volatility allows
+print(result.residual)                         # 0.0353 (rounded), the sum of (c_i - b_i)^2; 0 without the target
+exact = po.solve(po.Spec(po.Objective.RISK_PARITY, risk_budget=budget), data)
+print(data.risk_contributions(exact.weights), exact.residual)   # [0.5 0.3 0.2], ~0
 ```
 
 `Spec` is a frozen dataclass: `dataclasses.replace` builds a new, validated spec (`from dataclasses import replace`).
 Its keyword fields are `bounds`, `target_return`, `risk_aversion` (`UTILITY`), `importance` (`IMPORTANCE`),
-`max_volatility` (`MAX_RETURN`) and `leverage` (every objective but `RISK_PARITY`); a value the C setter rejects
+`max_volatility` (`MAX_RETURN`), `leverage` (every objective but `RISK_PARITY`), `target_volatility` and `risk_budget`
+(`RISK_PARITY`; the budget is stored as a tuple, so a `Spec` still compares and hashes by value); a value the C setter rejects
 raises `ValueError` when the spec is built, and a
 setter or input that does not apply to the objective raises it from `po.solve`. `TRACKING_ERROR` takes the
 return series instead of `mu` and `cov`: `po.Data(None, None, returns=returns, benchmark=benchmark)`, with `returns`
 a periods-by-assets array. `data.utility(weights, risk_aversion)`, `data.tracking_error(weights)`,
-`data.sharpe_ratio(weights)` and `data.diversification_ratio(weights)` evaluate the metrics, and the result has
-`leverage_multiplier` next to the other multipliers (NaN without a leverage, 0 when it is inactive).
+`data.sharpe_ratio(weights)`, `data.diversification_ratio(weights)` and `data.risk_contributions(weights)` evaluate the
+metrics, and the result has `leverage_multiplier` next to the other multipliers (NaN without a leverage, 0 when it is
+inactive) and `residual`, the `RISK_PARITY` sum of squares `sum_i (c_i - b_i)^2` (0 for the other objectives).
 
 An infeasible or unbounded problem is a result with `status == po.SolveStatus.INFEASIBLE` or
 `po.SolveStatus.UNBOUNDED` and NaN weights, not an exception. With
 `po.Data(mu, cov, risk_free=0.02)` the weights have one more entry, the cash, last. Invalid input raises
-`ValueError`, an objective that is not implemented `NotImplementedError`.
+`ValueError`. `RISK_PARITY` with cash (`risk_free`) or a `leverage` is invalid input too.
 
 ## Build
 
@@ -107,7 +126,7 @@ Without `PORTOPT_LIB` it looks in `python/src/portopt/_lib`.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): the layers, the files and the anatomy of a solve
 - [docs/guide/math.md](docs/guide/math.md): notation, the QP of each objective, the leverage, the parametric path of
-  `MAX_RETURN`, the homogenization of `MAX_SHARPE` and `MAX_DIVERSIFICATION` and the multiplier convention
+  `MAX_RETURN`, the homogenization of `MAX_SHARPE` and `MAX_DIVERSIFICATION`, `RISK_PARITY` and the multiplier convention
 - [docs/guide/validation.md](docs/guide/validation.md): how results are checked, the tolerances and the fuzz battery
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLEGUIDE.md](STYLEGUIDE.md)
 

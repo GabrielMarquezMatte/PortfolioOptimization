@@ -132,8 +132,12 @@ Notas por objetivo:
   (R − rf·1·1')w + rf·1 − b sobre N variáveis (uma coluna constante rf deixaria R'R singular com rf = 0). A matriz
   que precisa ter posto coluna completo é a dos retornos em excesso, R − rf·1·1' (ou R sem caixa); se não tiver,
   `INVALID_ARGUMENT`. Σ não é usada: `cov` pode ser NULL nos dados.
-- **RISK_PARITY**: sem bounds, o problema tem uma solução por ortante; a biblioteca devolve a de pesos positivos,
-  que é a que o R encontrava partindo de pesos iguais. Com `target_return`, `target_volatility` ou bounds ativos, o
+- **RISK_PARITY**: sem bounds, há no máximo 2^(N−1) soluções normalizadas de cᵢ = bᵢ com 1'w = 1, uma por par de
+  ortantes opostos, e nenhuma quando a soma dos pesos do raio é 0 (Bai, Scheinberg e Tütüncü 2016, Lema 2.2); a de
+  pesos positivos sempre existe e é única para Σ definida positiva (Bruder e Roncalli 2012, §2.3.3). A biblioteca
+  devolve a de pesos positivos, que é a que o R encontrava partindo de pesos iguais. O resultado é local: `OPTIMAL`
+  é um ponto de KKT alcançado a partir da solução de Spinu, e com bounds que admitem pesos negativos pode perder uma
+  solução exata de outro ortante. Com `target_return`, `target_volatility` ou bounds ativos, o
   problema é o do `equal_risk_cont` do R: min Σ(cᵢ − bᵢ)² com essas restrições como igualdades (vol-alvo com
   1'w = 1, sem escalar a carteira). Ele é sobredeterminado e o resíduo ótimo em geral é maior que 0: é um
   compromisso, não um risk parity exato (decisão do autor, 2026-11-15). O status é `OPTIMAL` quando o solver
@@ -166,7 +170,7 @@ Quase tudo se reduz a um único QP estritamente convexo:
 | MAX_RETURN com vol ≤ s | sequência de QPs de utilidade com busca em δ até √(w'Σw) = s (o builder escolhe bissecção ou outra raiz) |
 | leverage | família implícita de restrições s'w ≤ L, s ∈ {±1}ᴺ. O Goldfarb-Idnani é dual e adiciona a restrição mais violada a cada passo; a mais violada é s = sign(w), com violação ‖w‖₁ − L. Exato e mantém a Hessiana definida positiva (dividir w = w⁺ − w⁻ deixaria a Hessiana singular, que o Goldfarb-Idnani não aceita). O builder pode escolher outro tratamento exato |
 | RISK_PARITY sem target_return/target_volatility, bounds inativos | Newton sobre a forma convexa de Spinu: min ½ y'Σy − Σ bᵢ log yᵢ, y > 0; w = y/1'y |
-| RISK_PARITY com target_return, target_volatility ou bounds ativos | Lagrangiano aumentado (com L-BFGS-B ou equivalente para os bounds) sobre Σ(cᵢ − bᵢ)², partindo da solução de Spinu |
+| RISK_PARITY com target_return, target_volatility ou bounds ativos | Sequência de QPs de Gauss-Newton proximal (Levenberg-Marquardt) sobre o poliedro {orçamento, target_return, bounds}, cada QP pelo Goldfarb-Idnani, partindo do ponto do poliedro mais próximo da solução de Spinu; Lagrangiano aumentado só para vol(w) = s (Andreani-Birgin-Martínez-Schuverdt 2007, Alg. 3.1); polimento por Newton no sistema KKT; `OPTIMAL` só se o resíduo de KKT e a viabilidade estiverem dentro do ruído de arredondamento do problema |
 
 ### 4.3 Peças do núcleo
 
@@ -251,9 +255,9 @@ void po_result_free(po_result* r);
 - Status do resultado (`OPTIMAL`, `INFEASIBLE`, `MAX_ITER`) é sobre o problema bem formado: restrições
   incompatíveis, vol-alvo abaixo da mínima, Sharpe sem excesso positivo, risk parity sem convergir. Um resultado
   com status diferente de `OPTIMAL` existe e pode ser lido. Pesos e multiplicadores são NaN quando o status não
-  fornece ponto: sempre em `INFEASIBLE` e `UNBOUNDED`, e em `MAX_ITER` dos objetivos resolvidos por QP (todos da v1
-  exceto `RISK_PARITY`), porque o iterado dual do solver não é primal viável; a semântica de `MAX_ITER` do
-  `RISK_PARITY` é documentada quando ele for acrescentado.
+  fornece ponto: sempre em `INFEASIBLE` e `UNBOUNDED`, e em `MAX_ITER` de todo objetivo (nos resolvidos por QP porque
+  o iterado dual do solver não é primal viável; no `RISK_PARITY` porque o iterado não é um ponto que o solver possa
+  garantir). O resíduo do `RISK_PARITY` também é NaN nesse caso.
 - A spec e os dados são copiados no `po_solve`; mudá-los depois não muda nenhum resultado. `po_result` é imutável e
   pode ser lido de várias threads. `po_solve` pode ser chamado concorrentemente com handles diferentes ou com os
   mesmos handles somente leitura.

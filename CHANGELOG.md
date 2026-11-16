@@ -55,6 +55,22 @@ library whose ABI version differs).
   weights with an infinite upper and an infinite lower bound) is never `PO_SOLVE_UNBOUNDED`. `PO_SOLVE_INFEASIBLE`
   also covers the problem with no feasible portfolio of positive numerator, and cash bounds that exclude 0.
 - `po_sharpe_ratio` and `po_diversification_ratio`.
+- `PO_OBJECTIVE_RISK_PARITY`: minimizes `sum_i (c_i - b_i)^2` over the budget row, the bounds and, optionally, a target
+  return (`po_spec_set_target_return`, needs `mu`) and a target volatility. New functions `po_spec_set_risk_budget` (the
+  budget `b`, default `1 / n`), `po_spec_set_target_volatility` and `po_risk_contributions` (`c`, cash entry 0, NaN when
+  the volatility is 0), with `po_result_residual` as the value of `f`. Without a target and with the Spinu point inside
+  the box the answer is that point (Newton on the convex Spinu form); otherwise a Gauss-Newton sequence of QPs over the
+  polyhedron of the linear rows, an augmented Lagrangian only for `vol(w) = s`, a Newton polish on the KKT system and a
+  KKT and feasibility gate relative to the rounding noise of the problem. No cash and no leverage
+  (`"risk_free does not apply to RISK_PARITY"`, `"leverage does not apply to RISK_PARITY"`); `target_volatility` and
+  `risk_budget` apply to `RISK_PARITY` only. `PO_CONSTRAINT_VOLATILITY` is `df*/ds` (NaN without a target volatility;
+  `-inf` when `s` equals the minimum volatility, where the minimum-variance portfolio is the only feasible point and the
+  other multipliers are NaN). `PO_SOLVE_INFEASIBLE` only when certified. See
+  [docs/guide/math.md](docs/guide/math.md#risk_parity).
+- Python: `Spec.target_volatility`, `Spec.risk_budget` (stored as a tuple, so a `Spec` still compares and hashes by
+  value), `Data.risk_contributions` and `Result.residual`.
+- Every objective is now solved: `po_solve` no longer returns `PO_UNSUPPORTED` for a valid objective (the status and the
+  Python `NotImplementedError` mapping remain).
 - Python: `Spec.leverage`, `Data.sharpe_ratio`, `Data.diversification_ratio` and `Result.leverage_multiplier`; `Spec`
   with a leverage and array bounds still compares and hashes by value.
 - The fuzz battery (`tests/unit/fuzz`): problem shapes over the condition number of the covariance (1e2 to 1e8), the
@@ -64,6 +80,12 @@ library whose ABI version differs).
 
 ### Changed
 
+- `PO_SOLVE_MAX_ITER` carries no point for every objective: weights, multipliers and `po_result_residual` are NaN (the
+  header had left the case of `RISK_PARITY` open). For `RISK_PARITY` it is the status of a target volatility the
+  iteration cannot reach, of a target return with no bounds (no minimizer) and of a solution whose gross exposure
+  (above about 4.5e3) leaves the budget row unresolvable in double.
+- The stationarity formula of the header has a volatility term for `RISK_PARITY` with a target volatility, as it had
+  for `MAX_RETURN`.
 - `MAX_RETURN` solves `Q(t)` shifted along a face of the rows (the budget, a cash bound or a row of the leverage), and
   an inactive cap is decided by a limit certificate (the KKT conditions of the linear program over the rows) rather
   than by comparing weights between two points of the path. The QP solver checks every row again at the final point.
@@ -71,3 +93,16 @@ library whose ABI version differs).
   [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery).
 
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.
+
+### Known limitations
+
+- `RISK_PARITY` is a local method: `OPTIMAL` is a KKT point reached from the Spinu solution, not the global minimum
+  (there are up to `2^(n-1)` normalized solutions of `c = b`; with negative lower bounds one in another orthant can be
+  missed).
+- With a target volatility and few or no active bounds at `cond(Sigma)` around 1e8, the weights are determined only to
+  the rounding of the KKT residual amplified by the conditioning: up to about 1e-4 relative (measured up to 3.7e-5)
+  from the exact KKT point, while the objective value is right to its band. Such a solve at `n = 50` can take about
+  10 s; at `n <= 20` at most about 0.15 s.
+- A bounded problem with the budget row only (Capped box, equal budget, `n = 20`, `cond(Sigma) = 1e8`, seed 31696) ends
+  as `MAX_ITER`, without a point. Documented, not fixed.
+- A target return without bounds has no minimizer in general and is `MAX_ITER`.

@@ -464,3 +464,43 @@ Contexto da revisão (`docs/research/…`, itens 1 e 5). O Lagrangiano aumentado
   - `check_style.py` limpo;
   - `ctest` PASS em `gcc-release`.
 - [ ] **Step 6: Commit** — `feat(python): RISK_PARITY, risk budget and target volatility; docs for plan 4`
+
+---
+
+## Desvios do plano (registro)
+
+O que mudou durante a execução, em relação ao texto das Tasks 2 a 7 acima. Onde este registro e o texto divergem, vale
+o registro; as medições estão em `docs/guide/validation.md` e a pesquisa em `docs/research/2026-11-16-risk-parity-and-numerics.md`.
+
+1. **Tasks 3 e 4 refeitas a partir da pesquisa.** O L-BFGS-B projetado (`box_lbfgs`) foi trocado por funções do objetivo
+   (f, ∇f, J, Hessiana exata) e uma sequência de QPs de Gauss-Newton proximal sobre o poliedro {orçamento, target_return,
+   bounds} com o `qp::solve` existente. O Lagrangiano aumentado ficou só para vol(w) = s (regra de ρ de ABMS 2007, Alg. 3.1,
+   com a atribuição do plano a N&W §17.4 corrigida), e a Task 4 ganhou o polimento por Newton no sistema KKT.
+2. **Peso proximal τ.** A fórmula do plano, τ = 0,05·tr(Σ)/(2n), mistura unidades (J'J é homogênea de grau 0 em Σ):
+   com escala 1 e cond(Σ) = 1e8 convergiram 22 de 300 execuções, e com escala 1e-4 o `qp::solve` lançou exceção em 16 de
+   300. Foi substituída por τ₀ = 0,05·tr(2J'J)/n, sem escala, com atualização de Levenberg-Marquardt (τ /= 3 após passo
+   cheio, τ *= 4 após encurtar, piso 100·n·ε·max (2J'J)ᵢᵢ) e Cholesky próprio de Q (τ *= 10 em vez de exceção).
+3. **Produto Σw compensado.** A soma em `long double` não vale em MSVC (`long double` = `double`), então Σw e os produtos
+   do KKT usam o produto escalar compensado Dot2 (Ogita-Rump-Oishi 2005, `std::fma` e TwoSum) em `double`. O oráculo dos
+   testes também deixou de depender de precisão estendida (as partes que ainda a usam são puladas onde ela não existe).
+4. **`-ffp-contract=off`.** O GCC 16 com `-mfma` fundia a·b+c e quebrava a compensação; a opção entrou em `portopt_core`
+   para GCC e Clang.
+5. **Piso de arredondamento derivado no verificador de KKT.** A banda de estacionaridade do plano é inalcançável quando o
+   resíduo tem o seu próprio piso (H·dw com H ≈ 2J'J, que cresce como cond^2,3). O verificador usa um piso derivado
+   (κ = 2) da perturbação de um arredondamento de cada peso e de cada termo, e a decisão `OPTIMAL` do solver é a mesma
+   medida (fator 16, parada interna com fator 2), mais a linha do orçamento resolvida (exposição bruta ≤ ~4,5e3).
+   Nenhuma banda foi afrouxada.
+6. **Sem carregar (λ, ρ) para o segundo esforço.** O plano previa continuar o multiplicador; a medição mostrou que
+   carregar só λ ou o par transforma 9 ou 10 dos 72 `OPTIMAL` em `MAX_ITER` (todos n = 50), então cada esforço reinicia o método.
+7. **s = σ_min.** Com |s − σ_min| ≤ 1e-12·s (`qp::kRelativeTolerance`, promovida de `kMinimumTolerance`), o único ponto viável
+   é a carteira de mínima variância: `OPTIMAL` com λ_vol = −∞ e os demais multiplicadores NaN (a LICQ falha), como o
+   `MAX_RETURN` na fronteira vertical.
+8. **`MAX_ITER` sem ponto, uniforme.** Pesos, multiplicadores e resíduo NaN em todo objetivo; inclui target_return sem
+   bounds (sem minimizador) e a linha do orçamento não resolvível em `double`.
+9. **Limitação da precisão dos pesos.** Com vol-alvo e poucos bounds ativos em cond(Σ) ≈ 1e8 os pesos só são determinados até
+   cerca de 1e-4 relativo (medido até 3,7e-5; o valor do objetivo fica dentro da banda). Um problema só com o orçamento e
+   bounds (Capped, orçamento igual, n = 20, cond 1e8, semente 31696) é `MAX_ITER`. Documentado, não corrigido. Custo: n = 50,
+   cond 1e8, sem box e vol-alvo leva cerca de 10 s por solve; n ≤ 20, no máximo cerca de 0,15 s.
+10. **Tasks 6 e 7 numa só entrega.** Sem mudança de interface. Os testes de `MAX_ITER` de objetivos QP não alcançam o limite
+    de iterações em problemas de teste, então a regra uniforme é verificada em `to_result`, onde ela é feita
+    (`CapiSolve.MaxIterHasNoPointForQpObjectives`). Os testes de métricas do C ficaram em `CapiMetrics.*`.

@@ -5,13 +5,15 @@ the code carries its own meaning through naming and flow. What it deliberately d
 behind a decision (measurements, rejected approaches); that lives in `docs/`, and
 [STYLEGUIDE.md](STYLEGUIDE.md#comments) says why.
 
-This document describes what exists today: eight objectives (`MIN_VARIANCE`, `MAX_RETURN`, `MAX_SHARPE`, `UTILITY`,
-`IMPORTANCE`, `KELLY`, `TRACKING_ERROR` and `MAX_DIVERSIFICATION`) with scalar or per-asset weight bounds, an optional
-gross exposure limit (the leverage) and an optional risk-free asset (cash), each reduced to a dense Goldfarb-Idnani
-quadratic program behind a C API (`MAX_RETURN` along a parametric family of them, `MAX_SHARPE` and
-`MAX_DIVERSIFICATION` through a homogeneous one); portfolio return, volatility, utility, tracking error and the Sharpe
-and diversification ratios of given weights; and a Python package over the C API. `RISK_PARITY` returns
-`PO_UNSUPPORTED`.
+This document describes what exists today: nine objectives (`MIN_VARIANCE`, `MAX_RETURN`, `MAX_SHARPE`, `UTILITY`,
+`IMPORTANCE`, `KELLY`, `TRACKING_ERROR`, `MAX_DIVERSIFICATION` and `RISK_PARITY`) with scalar or per-asset weight
+bounds, an optional gross exposure limit (the leverage) and an optional risk-free asset (cash; `RISK_PARITY` takes
+neither), eight of them reduced to a dense Goldfarb-Idnani quadratic program behind a C API (`MAX_RETURN` along a
+parametric family of them, `MAX_SHARPE` and `MAX_DIVERSIFICATION` through a homogeneous one), and `RISK_PARITY`, a
+non-convex least squares, solved by Newton on the Spinu form and, with a target or a bound that cuts it off, by a
+sequence of such QPs and an augmented Lagrangian; portfolio return, volatility, utility, tracking error, the Sharpe and
+diversification ratios and the risk contributions of given weights; and a Python package over the C API. Every
+objective is solved: `PO_UNSUPPORTED` no longer occurs for a valid objective.
 
 ## Layers
 
@@ -42,13 +44,15 @@ and diversification ratios of given weights; and a Python package over the C API
         src/linalg   Cholesky, triangular solves, Householder QR
 ```
 
-Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
+Dependencies point one way, in the order `core` and `qp` <- `problems` <- `riskparity` <- `solve` <- `capi`:
+`core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
 tracking_error, max_return, parametric_path, homogeneous, constraints: translate a spec and data
 to a QP and read the solution back) <- `riskparity` (spinu: the positive-orthant solution of
 `RISK_PARITY` by Newton; objective, polyhedral_descent: the derivatives of f and the Gauss-Newton QP sequence over
 the polyhedron; augmented_lagrangian: the target volatility; kkt, newton_polish: the KKT residual against its
-noise and Newton on the KKT system; risk_parity: the policy over them) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
-objective) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
+noise and Newton on the KKT system; risk_parity: the policy over them, 7 modules, one below the limit of 8 per folder)
+<- `solve` (requirements, solve: the checks of the request and the dispatch to an objective, including the one to
+`riskparity`) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
 only on `linalg`. `core/data.cpp` uses the Cholesky factor to reject a covariance that is not positive definite, and
 `problems` uses `qp`. `metrics` depends on `core` and is used by `riskparity` and `capi`. Nothing in `src/` includes from `src/capi/`
 except `capi` itself. Everything below the C API is internal and may change in any release; only the header is a
@@ -74,7 +78,7 @@ Build targets (`CMakeLists.txt`):
 | `src/capi/error.hpp`, `error.cpp` | Thread-local `po_last_error()`, `set_error`, and `guard`, the one place exceptions are caught |
 | `src/capi/spec_api.cpp`, `data_api.cpp`, `solve_api.cpp`, `result_api.cpp`, `metrics_api.cpp`, `version_api.cpp` | The `extern "C"` functions, one file per handle family |
 | `src/core/objective.hpp` | `po::Objective`, matching the `PO_OBJECTIVE_*` values |
-| `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-asset bounds, optional target return, risk aversion, importance, maximum volatility and leverage; a copyable value |
+| `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-asset bounds, optional target return, risk aversion, importance, maximum volatility, leverage, target volatility and risk budget; a copyable value |
 | `src/core/data.hpp`, `data.cpp` | `po::Data`: mu, covariance, its Cholesky factor, the optional risk-free rate and the optional return series with its benchmark; `Data::create` validates and symmetrizes the covariance and factors it once |
 | `src/core/result.hpp` | `po::Result` and `SolveStatus`: weights, status, multipliers, iterations; the multiplier convention is stated there |
 | `src/core/failure.hpp` | `Failure` (kind and message), the error type of `std::expected` below the C API |
@@ -98,16 +102,16 @@ Build targets (`CMakeLists.txt`):
 | `src/problems/max_return.*` | `MAX_RETURN`: the policy over the path (climb, bisection, the case `s = sigma_min`) and the volatility multiplier `-s / t*` |
 | `src/problems/homogeneous.*` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the homogeneous QP `min y' Sigma y` with `v'y = 1` and the rows `1'y >= 0` and, with a leverage, the family with offset `L 1`; the status from the active set (`INFEASIBLE`, `UNBOUNDED`, `OPTIMAL`) and the multipliers mapped back to `w = y / kappa` |
 | `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers; `lower_of` and `upper_of`, the bound of a weight, and `kMinimumVolatilityTolerance`, shared by `MAX_RETURN` and `RISK_PARITY` |
-| `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio` and `tracking_error` for a weight vector (cash last) |
+| `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio`, `tracking_error`, `risk_contributions` and `risk_budget_residual` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
-| `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds and `leverage` included; the bounds canonicalized so that equality and hash work); `Data` and its metrics; `SolveStatus`, `Result` and `solve` |
+| `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds, `leverage`, `target_volatility` and `risk_budget` included; the bounds and the budget canonicalized to tuples so that equality and hash work); `Data` and its metrics (`risk_contributions` too); `SolveStatus`, `Result` and `solve` |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
 | `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
-| `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `risk_parity/` holds the risk parity references (the KKT check with its rounding floor, and the refinement of a result in `long double` that measures its forward error), the `RiskParityDescentFuzz` sweep of the polyhedral descent and the `RiskParitySolveSweep` of `po::solve` |
+| `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `tests/unit/fuzz/risk_parity/` holds the risk parity references (the scan of the feasible curve, the KKT check with its rounding floor, and the refinement of a result in `long double` that measures its forward error), the `RiskParityDescentFuzz` sweep of the polyhedral descent, the `RiskParitySolveSweep` of `po::solve` and the `RiskParityFuzz` battery |
 | `tests/unit/kkt.hpp`, `user_kkt.hpp`, `random_covariance.hpp`, `capi_scope.hpp` | KKT residuals of a QP (the generated rows of the family included), the KKT conditions in the user's variables for every objective, random covariances of a chosen condition number, RAII for C handles |
 | `tests/style/check_style.py` | Style rules that can be checked without a compiler; runs as the `style` ctest |
 | `python/tests` | Python tests; they skip cleanly (pytest exit 5) when the native library is missing |
-| `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION and the multiplier convention |
+| `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION, RISK_PARITY (Spinu, the QP sequence, the augmented Lagrangian, the multipliers) and the multiplier convention |
 | `docs/guide/validation.md` | Validation policy, tolerances, the numerical decisions of the solver and of each objective, and the fuzz battery |
 
 ## Stability rules of the C API
@@ -134,7 +138,7 @@ output pointer or a null required input array `PO_INVALID_ARGUMENT` (the one exc
 The Python `solve` builds the handles below and then makes one call; any C client does the same.
 
 1. **Handles.** `po_spec_create` and the spec setters validate bounds, the target return, the risk aversion, the
-   importance, the maximum volatility and the leverage as they are set (a rejected call leaves the spec unchanged). `po_data_create` copies mu and the covariance, rejects a non-finite
+   importance, the maximum volatility, the leverage, the target volatility and the risk budget as they are set (a rejected call leaves the spec unchanged). `po_data_create` copies mu and the covariance, rejects a non-finite
    entry, a covariance asymmetric beyond 1e-10 of the larger diagonal entry or one that is not positive definite
    (`Data::create`, by Cholesky, with a pivot floor relative to the diagonal; see
    [docs/guide/validation.md](docs/guide/validation.md#positive-definiteness)), and stores the covariance
@@ -143,9 +147,10 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    benchmark of `TRACKING_ERROR`.
 2. **Validation.** `po_solve` (`src/capi/solve_api.cpp`) sets `*out` to NULL, checks the handles inside `guard` and
    calls `po::solve` (`src/solve/solve.cpp`). Its `check_request` (`src/solve/requirements.cpp`) rejects, in
-   this order, an objective this version does not solve (`PO_UNSUPPORTED`), a setter outside the objective's row of
-   the matrix, data the objective requires and per-asset bounds whose size is not the weight count, cash included
-   (`PO_INVALID_ARGUMENT`). Each is an error status, not a result. `solve` then dispatches on the objective.
+   this order, a setter outside the objective's row of the matrix, data the objective requires (`RISK_PARITY` rejects
+   cash too) and per-asset bounds whose size is not the weight count, cash included, or a risk budget whose size is not
+   the asset count (`PO_INVALID_ARGUMENT`; a core `Unsupported` failure remains for an objective without a row, which no
+   valid objective is). Each is an error status, not a result. `solve` then dispatches on the objective.
 3. **Translation to a QP.** `mean_variance_problem` (`src/problems/mean_variance.cpp`) takes the risky weights as
    the QP variables, with G = a Sigma (passed with its factor sqrt(a) L) and g = -b mu~; `(a, b)` is (2, 0) for
    `MIN_VARIANCE`, (delta, 1) for `UTILITY`, (2 (1 - lambda), lambda) for `IMPORTANCE` and (1 / (1 + rf), 1) for
@@ -153,6 +158,9 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    of R~) and g = -2 R~'(b - rf 1) from the return series, and `solve_max_return` does not build one QP but `Q(t)`,
    with G = Sigma and g = -t (mu~ - c r), shifted along a face r of the rows (the budget, a cash bound or a row of the
    leverage; c the midrange of the r_i mu~_i), solved at several `t` (`src/problems/parametric_path.cpp`).
+   `solve_risk_parity` (`src/riskparity/risk_parity.cpp`) builds no single QP: it solves Spinu's convex problem by Newton,
+   and otherwise a sequence of QPs over the polyhedron of the linear rows (see
+   [docs/guide/math.md](docs/guide/math.md#risk_parity)).
    `solve_max_sharpe` and `solve_max_diversification` (`src/problems/homogeneous.cpp`) build the homogeneous QP in
    y = kappa w: G = 2 Sigma, v'y = 1 as the equality, one row per finite bound written over y and the row 1'y >= 0, and
    with a leverage the family with offset L 1. The leverage of any other objective is the same `GrossExposure` on the
@@ -178,7 +186,7 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    equality rows (NaN when the constraint does not exist); each bound multiplier is the lower-row multiplier minus the
    upper-row multiplier, 0 for a weight with no finite bound. A status other than `Optimal` (for a QP, `Infeasible`
    or `MaxIterations`, whose dual iterate is not primal feasible) gives NaN weights, NaN multipliers and a NaN
-   residual, never a partial point. The QP objective equals the user's minimization form up to a constant, so
+   residual, never a partial point; the same rule holds for the `MaxIterations` of `RISK_PARITY`. The QP objective equals the user's minimization form up to a constant, so
    the multipliers need no rescaling, with one exception: `MAX_RETURN` divides the multipliers of `Q(t*)` by `t*`
    (`multiplier_scale`) and sets the volatility multiplier to `-s / t*`; for an inactive cap the multipliers are
    the slope `b` of `N b = -mu~`, with scale 1. The leverage multiplier is `-sum_j zeta_j` over the multipliers of the

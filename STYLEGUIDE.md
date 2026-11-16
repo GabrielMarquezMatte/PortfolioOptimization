@@ -270,9 +270,10 @@ configuration for a value that never changes.
 
 ## Layers
 
-Dependencies point one way: `core` (spec, data, result, failure) <- `problems` (translates spec and data to a QP and
-solves it) <- `capi`. `linalg` (Cholesky) depends on nothing; `qp` (Goldfarb-Idnani) depends only on `linalg` and is
-used by `problems`. `metrics` (portfolio return and volatility) depends on `core` and is used by `capi`. Nothing in
+Dependencies point one way: `core` (spec, data, result, failure) and `qp` <- `problems` (translates spec and data to a
+QP and solves it) <- `riskparity` (the `RISK_PARITY` solver) <- `solve` (checks the request and dispatches) <- `capi`.
+`linalg` (Cholesky) depends on nothing; `qp` (Goldfarb-Idnani) depends only on `linalg` and is used by `problems` and
+`riskparity`. `metrics` (portfolio metrics) depends on `core` and is used by `riskparity` and `capi`. Nothing in
 `src/` includes from `src/capi/` except `capi` itself.
 
 ```cpp
@@ -280,7 +281,7 @@ used by `problems`. `metrics` (portfolio return and volatility) depends on `core
 #include "capi/error.hpp"
 
 // OK: src/capi/solve_api.cpp
-#include "problems/solve.hpp"
+#include "solve/solve.hpp"
 ```
 
 ---
