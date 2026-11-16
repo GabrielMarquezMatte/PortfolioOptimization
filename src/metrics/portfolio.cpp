@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <vector>
 
 namespace po::metrics
 {
@@ -74,6 +75,17 @@ double squared_tracking_gaps(const Data& data, std::span<const double> weights)
     return total;
 }
 
+std::vector<double> contributions_from_variance(const Data& data, std::span<const double> weights, double total)
+{
+    std::size_t n = data.asset_count();
+    std::vector<double> contributions(weights.size(), 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        contributions[i] = weights[i] * row_dot(data.covariance().subspan(i * n, n), weights) / total;
+    }
+    return contributions;
+}
+
 } // namespace
 
 double portfolio_return(const Data& data, std::span<const double> weights)
@@ -114,6 +126,28 @@ double diversification_ratio(const Data& data, std::span<const double> weights)
 double tracking_error(const Data& data, std::span<const double> weights)
 {
     return std::sqrt(squared_tracking_gaps(data, weights) / static_cast<double>(data.observation_count()));
+}
+
+std::vector<double> risk_contributions(const Data& data, std::span<const double> weights)
+{
+    double total = variance(data, weights);
+    if (total == 0.0)
+    {
+        return std::vector<double>(weights.size(), std::numeric_limits<double>::quiet_NaN());
+    }
+    return contributions_from_variance(data, weights, total);
+}
+
+double risk_budget_residual(const Data& data, std::span<const double> weights, std::span<const double> budget)
+{
+    std::vector<double> contributions = risk_contributions(data, weights);
+    double total = 0.0;
+    for (std::size_t i = 0; i < budget.size(); ++i)
+    {
+        double gap = contributions[i] - budget[i];
+        total += gap * gap;
+    }
+    return total;
 }
 
 } // namespace po::metrics

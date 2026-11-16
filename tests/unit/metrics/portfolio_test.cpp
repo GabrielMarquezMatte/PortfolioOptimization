@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "linalg/cholesky.hpp"
 #include "problems/solve.hpp"
 #include "random_covariance.hpp"
@@ -42,6 +43,73 @@ TEST(Metrics, AllCashHasZeroVolatility)
     std::vector<double> weights = {0.0, 0.0, 1.0};
     EXPECT_EQ(po::metrics::portfolio_return(data, weights), 0.02);
     EXPECT_EQ(po::metrics::portfolio_volatility(data, weights), 0.0);
+}
+
+po::Data two_assets_for_risk_contributions()
+{
+    return po::Data::create(2, std::vector<double>{0.1, 0.2}, std::vector<double>{0.04, 0.006, 0.006, 0.09}).value();
+}
+
+TEST(Metrics, RiskContributionsByHand)
+{
+    po::Data data = two_assets_for_risk_contributions();
+    std::vector<double> weights = {0.6, 0.4};
+    std::vector<double> contributions = po::metrics::risk_contributions(data, weights);
+    ASSERT_EQ(contributions.size(), 2U);
+    EXPECT_NEAR(contributions[0], 0.01584 / 0.03168, 1e-15);
+    EXPECT_NEAR(contributions[1], 0.01584 / 0.03168, 1e-15);
+    std::vector<double> other = {0.3, 0.7};
+    contributions = po::metrics::risk_contributions(data, other);
+    double variance = 0.04 * 0.3 * 0.3 + 2.0 * 0.3 * 0.7 * 0.006 + 0.49 * 0.09;
+    EXPECT_NEAR(contributions[0], 0.3 * (0.3 * 0.04 + 0.7 * 0.006) / variance, 1e-15);
+    EXPECT_NEAR(contributions[1], 0.7 * (0.3 * 0.006 + 0.7 * 0.09) / variance, 1e-15);
+}
+
+TEST(Metrics, RiskContributionsSumToOneAndScaleInvariant)
+{
+    po::Data data = two_assets_for_risk_contributions();
+    std::vector<double> weights = {0.3, 0.7};
+    std::vector<double> scaled = {0.9, 2.1};
+    std::vector<double> base = po::metrics::risk_contributions(data, weights);
+    std::vector<double> times_three = po::metrics::risk_contributions(data, scaled);
+    EXPECT_NEAR(base[0] + base[1], 1.0, 1e-15);
+    EXPECT_NEAR(times_three[0], base[0], 1e-15);
+    EXPECT_NEAR(times_three[1], base[1], 1e-15);
+}
+
+TEST(Metrics, RiskContributionsCashEntryIsZero)
+{
+    po::Data data = two_assets_for_risk_contributions();
+    data.set_risk_free(0.02);
+    std::vector<double> weights = {0.3, 0.5, 0.2};
+    std::vector<double> contributions = po::metrics::risk_contributions(data, weights);
+    ASSERT_EQ(contributions.size(), 3U);
+    EXPECT_EQ(contributions[2], 0.0);
+    EXPECT_NEAR(contributions[0] + contributions[1], 1.0, 1e-15);
+}
+
+TEST(Metrics, RiskContributionsZeroVolatilityIsNaN)
+{
+    po::Data data = two_assets_for_risk_contributions();
+    data.set_risk_free(0.02);
+    std::vector<double> weights = {0.0, 0.0, 1.0};
+    std::vector<double> contributions = po::metrics::risk_contributions(data, weights);
+    ASSERT_EQ(contributions.size(), 3U);
+    for (double contribution : contributions)
+    {
+        EXPECT_TRUE(std::isnan(contribution));
+    }
+}
+
+TEST(Metrics, RiskBudgetResidualZeroAtEqualContribution)
+{
+    po::Data data = two_assets_for_risk_contributions();
+    double rho = 0.006 / (0.2 * 0.3);
+    std::vector<double> budget = {0.3, 0.7};
+    std::vector<double> weights = po::testing::two_asset_risk_parity(0.2, 0.3, rho, budget[0]);
+    EXPECT_LT(po::metrics::risk_budget_residual(data, weights, budget), 1e-28);
+    std::vector<double> off = {0.5, 0.5};
+    EXPECT_GT(po::metrics::risk_budget_residual(data, off, budget), 1e-4);
 }
 
 constexpr std::size_t kPeriods = 3;
