@@ -19,6 +19,7 @@ struct Requirements
     bool accepts_target_return;
     bool accepts_risk_aversion;
     bool accepts_importance;
+    bool accepts_leverage;
     bool requires_max_volatility;
     bool requires_mu;
     bool requires_returns;
@@ -41,17 +42,17 @@ std::optional<Requirements> requirements_of(Objective objective)
     switch (objective)
     {
     case Objective::MinVariance:
-        return Requirements{"MIN_VARIANCE", true, false, false, false, false, false};
+        return Requirements{"MIN_VARIANCE", true, false, false, true, false, false, false};
     case Objective::MaxReturn:
-        return Requirements{"MAX_RETURN", false, false, false, true, true, false};
+        return Requirements{"MAX_RETURN", false, false, false, false, true, true, false};
     case Objective::Utility:
-        return Requirements{"UTILITY", false, true, false, false, true, false};
+        return Requirements{"UTILITY", false, true, false, true, false, true, false};
     case Objective::Importance:
-        return Requirements{"IMPORTANCE", false, false, true, false, true, false};
+        return Requirements{"IMPORTANCE", false, false, true, true, false, true, false};
     case Objective::Kelly:
-        return Requirements{"KELLY", false, false, false, false, true, false};
+        return Requirements{"KELLY", false, false, false, true, false, true, false};
     case Objective::TrackingError:
-        return Requirements{"TRACKING_ERROR", true, false, false, false, false, true};
+        return Requirements{"TRACKING_ERROR", true, false, false, true, false, false, true};
     default:
         return std::nullopt;
     }
@@ -64,6 +65,7 @@ std::optional<Failure> check_setters(const Spec& spec, const Requirements& requi
         Setter{"risk_aversion", spec.risk_aversion.has_value(), requirements.accepts_risk_aversion},
         Setter{"importance", spec.importance.has_value(), requirements.accepts_importance},
         Setter{"max_volatility", spec.max_volatility.has_value(), requirements.requires_max_volatility},
+        Setter{"leverage", spec.leverage.has_value(), requirements.accepts_leverage},
     };
     for (const Setter& setter : setters)
     {

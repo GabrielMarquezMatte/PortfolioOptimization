@@ -21,6 +21,8 @@ struct Spec
     std::optional<double> risk_aversion;
     std::optional<double> importance;
     std::optional<double> max_volatility;
+    // sum_i |w_i| <= leverage over the risky weights; cash is not counted.
+    std::optional<double> leverage;
 };
 
 } // namespace po

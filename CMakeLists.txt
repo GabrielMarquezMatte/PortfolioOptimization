@@ -103,7 +103,9 @@ if(PO_BUILD_TESTS)
         tests/unit/linalg/qr_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
+        tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
+        tests/unit/problems/leverage_test.cpp
         tests/unit/problems/max_return_test.cpp
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/solve_test.cpp

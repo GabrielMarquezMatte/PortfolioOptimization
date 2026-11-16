@@ -154,6 +154,23 @@ TEST(Requirements, MaxVolatilityOnlyForMaxReturn)
     expect_invalid(spec, full_data(), "target_return does not apply to MAX_RETURN");
 }
 
+TEST(Requirements, LeverageAcceptedByQpObjectives)
+{
+    constexpr std::array kAccepting = {Objective::MinVariance, Objective::Utility, Objective::Importance,
+                                       Objective::Kelly, Objective::TrackingError};
+    for (Objective objective : kAccepting)
+    {
+        SCOPED_TRACE(static_cast<int>(objective));
+        Spec spec = spec_of(objective);
+        spec.leverage = 1.5;
+        expect_accepted(spec, full_data());
+    }
+    Spec spec = spec_of(Objective::MaxReturn);
+    spec.max_volatility = 0.2;
+    spec.leverage = 1.5;
+    expect_invalid(spec, full_data(), "leverage does not apply to MAX_RETURN");
+}
+
 TEST(Requirements, MinVarianceRequiresCovariance)
 {
     expect_invalid(Spec{}, without_covariance(), "MIN_VARIANCE requires covariance");

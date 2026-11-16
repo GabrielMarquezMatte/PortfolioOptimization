@@ -168,6 +168,23 @@ Result without_point(const Data& data, const qp::Solution& solution)
     return result;
 }
 
+// The family row (-s_j)'x >= -L enters the QP stationarity as -sum_j zeta_j s_j = lambda_lev g, with
+// g = sum_j zeta_j s_j / sum_j zeta_j in the subdifferential of ||w||_1: lambda_lev = -sum_j zeta_j, 0 when no
+// generated row is active.
+double leverage_multiplier(const ConstraintRows& rows, const qp::Solution& solution, double scale)
+{
+    if (!rows.gross_exposure)
+    {
+        return kNaN;
+    }
+    double multiplier = 0.0;
+    for (double zeta : solution.gross_exposure_multipliers)
+    {
+        multiplier -= zeta;
+    }
+    return multiplier / scale;
+}
+
 Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution& solution, double scale)
 {
     Result result;
@@ -176,6 +193,7 @@ Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution
     result.budget_multiplier = multiplier_at(rows.budget, solution.equality_multipliers, scale);
     result.target_return_multiplier = multiplier_at(rows.target_return, solution.equality_multipliers, scale);
     result.bound_multipliers = bound_multipliers(data, rows, solution.inequality_multipliers, scale);
+    result.leverage_multiplier = leverage_multiplier(rows, solution, scale);
     result.iterations = solution.iterations;
     return result;
 }
@@ -190,6 +208,13 @@ ConstraintRows add_constraint_rows(const Spec& spec, const Data& data, qp::Probl
     if (data.risk_free().has_value())
     {
         add_cash_bounds(spec, data.asset_count(), problem, rows);
+    }
+    if (spec.leverage.has_value())
+    {
+        // sum_i |w_i| <= L over the risky weights, the QP variables: 0'x - ||x||_1 >= -L.
+        std::vector<double> offset(data.asset_count(), 0.0);
+        problem.gross_exposure = qp::GrossExposure{std::move(offset), -*spec.leverage};
+        rows.gross_exposure = true;
     }
     return rows;
 }

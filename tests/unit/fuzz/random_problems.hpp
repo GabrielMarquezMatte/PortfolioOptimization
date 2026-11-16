@@ -1,10 +1,13 @@
 #pragma once
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -39,6 +42,8 @@ struct ProblemShape
     } box;
     bool cash;
     std::uint64_t seed;
+    // sum_i |w_i| <= leverage over the risky weights; none from fuzz_shapes.
+    std::optional<double> leverage;
 };
 
 // spec holds the bounds only; the objective and its setters are the caller's.
@@ -163,13 +168,16 @@ inline po::Spec shape_box(const ProblemShape& shape, std::size_t weight_count)
 inline GeneratedProblem generate(const ProblemShape& shape)
 {
     po::Data data = shape_data(shape);
-    return GeneratedProblem{shape_box(shape, data.weight_count()), data};
+    po::Spec spec = shape_box(shape, data.weight_count());
+    spec.leverage = shape.leverage;
+    return GeneratedProblem{spec, data};
 }
 
 // Shape k takes combination k mod 256 of cond(Sigma) in {1e2, 1e4, 1e6, 1e8}, the two scales, the four mean
-// patterns, the four boxes and cash, so any 256 consecutive shapes cover every combination; n (3 to 24) and the
-// seed are drawn from seed.
-inline std::vector<ProblemShape> fuzz_shapes(std::size_t count, std::uint64_t seed)
+// patterns, the four boxes and cash, so any 256 consecutive shapes cover every combination; n (3 to largest_n) and
+// the seed are drawn from seed.
+inline std::vector<ProblemShape> fuzz_shapes(std::size_t count, std::uint64_t seed,
+                                             std::size_t largest_n = 24)
 {
     constexpr std::array<double, 4> kConditions = {1e2, 1e4, 1e6, 1e8};
     constexpr std::array<double, 2> kScales = {1.0, 1e-4};
@@ -184,9 +192,48 @@ inline std::vector<ProblemShape> fuzz_shapes(std::size_t count, std::uint64_t se
         shape.means = static_cast<ProblemShape::Means>((k / 8) % 4);
         shape.box = static_cast<ProblemShape::Box>((k / 32) % 4);
         shape.cash = (k / 128) % 2 == 1;
-        shape.n = 3 + static_cast<std::size_t>(engine() % 22);
+        shape.n = 3 + static_cast<std::size_t>(engine() % (largest_n - 2));
         shape.seed = engine();
         shapes.push_back(shape);
+    }
+    return shapes;
+}
+
+// KKT residuals and agreement with the reference, relative, by cond(Sigma) of the covariance solved; above 1e8,
+// the tolerance of 1e8.
+inline double condition_tolerance(double condition)
+{
+    if (condition <= 1e4)
+    {
+        return 1e-10;
+    }
+    if (condition <= 1e6)
+    {
+        return 1e-9;
+    }
+    return 1e-7;
+}
+
+inline ::testing::Message describe(const ProblemShape& shape)
+{
+    ::testing::Message message;
+    message << "n " << shape.n << " cond " << shape.condition << " scale " << shape.scale << " means "
+            << static_cast<int>(shape.means) << " box " << static_cast<int>(shape.box) << " cash "
+            << shape.cash << " seed " << shape.seed;
+    if (shape.leverage.has_value())
+    {
+        message << " leverage " << *shape.leverage;
+    }
+    return message;
+}
+
+// A leverage on every shape, uniform in [0.8, 3] from the shape's seed, so that the other draws are those of the
+// shapes given: below 1 without cash it is infeasible, since sum_i |w_i| >= |1'w| = 1.
+inline std::vector<ProblemShape> with_leverage(std::vector<ProblemShape> shapes)
+{
+    for (ProblemShape& shape : shapes)
+    {
+        shape.leverage = random_vector(1, shape.seed + 800, 0.8, 3.0)[0];
     }
     return shapes;
 }

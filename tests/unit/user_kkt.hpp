@@ -15,16 +15,6 @@
 namespace po::testing
 {
 
-inline double dot(std::span<const double> a, std::span<const double> b)
-{
-    double sum = 0.0;
-    for (std::size_t i = 0; i < a.size(); ++i)
-    {
-        sum += a[i] * b[i];
-    }
-    return sum;
-}
-
 // Sigma w over the risky weights; a cash entry past the first n weights is ignored.
 inline std::vector<double> covariance_times(const po::Data& data, std::span<const double> weights)
 {
@@ -79,7 +69,7 @@ inline void expect_user_equalities(const po::Spec& spec, const po::Data& data, c
     EXPECT_EQ(std::isnan(result.budget_multiplier), data.risk_free().has_value());
     EXPECT_EQ(std::isnan(result.target_return_multiplier), !spec.target_return.has_value());
     EXPECT_EQ(std::isnan(result.volatility_multiplier), !spec.max_volatility.has_value());
-    EXPECT_TRUE(std::isnan(result.leverage_multiplier));
+    EXPECT_EQ(std::isnan(result.leverage_multiplier), !spec.leverage.has_value());
     if (!spec.target_return.has_value())
     {
         return;
@@ -215,6 +205,31 @@ inline ConstraintTerms constraint_terms(const po::Data& data, const po::Result& 
     return terms;
 }
 
+// The leverage term lambda_lev g, g in the subdifferential of ||w||_1, taken out of the residual r of the other
+// terms: where w_i is not 0, r_i - lambda_lev sign(w_i); where w_i is 0, the part of |r_i| beyond |lambda_lev|,
+// since g_i may be any value in [-1, 1]. A weight within tolerance |w|max of 0 counts as 0, the rounding of a
+// weight that the family holds at 0. Without a finite leverage multiplier, r is left as it is.
+inline void remove_leverage_term(const po::Data& data, const po::Result& result, double tolerance,
+                                 std::vector<double>& residual)
+{
+    double lambda = result.leverage_multiplier;
+    if (!std::isfinite(lambda))
+    {
+        return;
+    }
+    std::span<const double> risky = std::span<const double>(result.weights).first(data.asset_count());
+    double zero = tolerance * largest_magnitude(risky);
+    for (std::size_t i = 0; i < risky.size(); ++i)
+    {
+        if (std::fabs(risky[i]) <= zero)
+        {
+            residual[i] = std::fmax(0.0, std::fabs(residual[i]) - std::fabs(lambda));
+            continue;
+        }
+        residual[i] -= lambda * std::copysign(1.0, risky[i]);
+    }
+}
+
 // The residual relative to the largest magnitude of a term of the gradient or of the constraints, with no
 // floor of 1: a problem at a small scale is held to the same relative accuracy as one at scale 1.
 inline void expect_user_stationarity(const po::Data& data, const po::Result& result,
@@ -228,8 +243,33 @@ inline void expect_user_stationarity(const po::Data& data, const po::Result& res
     {
         residual[i] = objective_gradient.value[i] - terms.total[i];
     }
+    remove_leverage_term(data, result, tolerance, residual);
     double scale = worst_of(terms.scale, objective_gradient.scale);
+    if (std::isfinite(result.leverage_multiplier))
+    {
+        scale = worst_of(scale, std::fabs(result.leverage_multiplier));
+    }
     EXPECT_LE(relative_to(largest_magnitude(residual), scale), tolerance);
+}
+
+// With a leverage L and a finite multiplier: sum_i |w_i| <= L (1 + tolerance) over the risky weights (cash is not
+// counted), lambda_lev <= 0, and lambda_lev (sum_i |w_i| - L) small relative to |lambda_lev| L.
+inline void expect_user_leverage(const po::Spec& spec, const po::Data& data, const po::Result& result,
+                                 double tolerance)
+{
+    if (!spec.leverage.has_value() || !std::isfinite(result.leverage_multiplier))
+    {
+        return;
+    }
+    double leverage = *spec.leverage;
+    double gross = 0.0;
+    for (double weight : std::span<const double>(result.weights).first(data.asset_count()))
+    {
+        gross += std::fabs(weight);
+    }
+    EXPECT_LE(gross, leverage * (1.0 + tolerance));
+    EXPECT_LE(result.leverage_multiplier, 0.0);
+    EXPECT_LE(complementarity_of_row(result.leverage_multiplier, gross - leverage, leverage), tolerance);
 }
 
 // With a volatility cap s and a finite multiplier: vol <= s (1 + tolerance), lambda_vol <= 0, and
@@ -250,9 +290,11 @@ inline void expect_user_volatility(const po::Spec& spec, const po::Data& data, c
 }
 
 // Checks, independently of the QP, the equalities, the bounds with per-row complementarity, the volatility
-// cap with its complementarity, and
-//   grad f(w) = budget * 1 + target_return * (mu - rf 1) + volatility * Sigma w / vol + beta - beta_0 * 1,
-// where objective_gradient is grad f over the risky weights, with the scale of its terms.
+// cap and the leverage with their complementarity, and
+//   grad f(w) = budget * 1 + target_return * (mu - rf 1) + volatility * Sigma w / vol + leverage * g
+//               + beta - beta_0 * 1,
+// with g in the subdifferential of ||w||_1, where objective_gradient is grad f over the risky weights, with the
+// scale of its terms.
 inline void expect_user_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
                             const ObjectiveGradient& objective_gradient, double tolerance = 1e-10)
 {
@@ -263,6 +305,7 @@ inline void expect_user_kkt(const po::Spec& spec, const po::Data& data, const po
     expect_user_equalities(spec, data, result, tolerance);
     expect_user_bounds(spec, result, tolerance);
     expect_user_volatility(spec, data, result, tolerance);
+    expect_user_leverage(spec, data, result, tolerance);
     expect_user_stationarity(data, result, objective_gradient, tolerance);
 }
 

@@ -11,6 +11,7 @@
 namespace po::qp
 {
 
+// index numbers the explicit rows, equalities first, and after them the generated rows of an implicit family.
 struct ActiveConstraint
 {
     std::size_t index = 0;

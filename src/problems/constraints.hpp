@@ -24,6 +24,8 @@ struct ConstraintRows
     std::optional<std::size_t> budget;
     std::optional<std::size_t> target_return;
     std::vector<BoundRow> bounds;
+    // The spec set a leverage, and the QP has its gross exposure family.
+    bool gross_exposure = false;
 };
 
 // The QP variables are the risky weights only; with cash, the cash weight 1 - 1'w is eliminated.

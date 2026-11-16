@@ -23,28 +23,8 @@ using po::SolveStatus;
 using po::Spec;
 using po::testing::GeneratedProblem;
 using po::testing::ProblemShape;
-
-// KKT residuals and agreement with the reference, relative, by cond(Sigma) of the covariance solved; above 1e8,
-// the tolerance of 1e8.
-double condition_tolerance(double condition)
-{
-    if (condition <= 1e4)
-    {
-        return 1e-10;
-    }
-    if (condition <= 1e6)
-    {
-        return 1e-9;
-    }
-    return 1e-7;
-}
-
-testing::Message describe(const ProblemShape& shape)
-{
-    return testing::Message() << "n " << shape.n << " cond " << shape.condition << " scale " << shape.scale
-                              << " means " << static_cast<int>(shape.means) << " box "
-                              << static_cast<int>(shape.box) << " cash " << shape.cash << " seed " << shape.seed;
-}
+using po::testing::condition_tolerance;
+using po::testing::describe;
 
 Spec max_return(Spec bounds, double cap)
 {

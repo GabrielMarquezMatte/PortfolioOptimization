@@ -6,10 +6,12 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <vector>
 
+#include "fuzz/sign_pattern_reference.hpp"
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
 #include "random_covariance.hpp"
@@ -390,6 +392,89 @@ TEST(GoldfarbIdnani, RandomProblemsAtExtremeScales)
             Problem problem = random_budget_problem(seed);
             scale_objective(problem, factor);
             po::testing::expect_kkt(problem, po::qp::solve(problem));
+        }
+    }
+}
+
+double gross_exposure(std::span<const double> x)
+{
+    double total = 0.0;
+    for (double value : x)
+    {
+        total += std::fabs(value);
+    }
+    return total;
+}
+
+// 1'x = 1 over 2 to 8 variables with G and g random.
+Problem random_simplex_problem(std::uint64_t seed)
+{
+    std::size_t n = 2 + static_cast<std::size_t>(seed % 7);
+    Problem problem = unconstrained_problem(n, seed, 1.0);
+    add_equality(problem, std::vector<double>(n, 1.0), 1.0);
+    return problem;
+}
+
+TEST(GoldfarbIdnani, GrossExposureMatchesSignPatterns)
+{
+    std::size_t active = 0;
+    for (std::uint64_t seed = 1; seed <= 100; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_simplex_problem(seed);
+        double leverage = po::testing::random_vector(1, seed + 5000, 1.0, 3.0)[0];
+        std::optional<double> reference = po::testing::sign_pattern_optimum(problem, leverage);
+        ASSERT_TRUE(reference.has_value());
+        problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(problem.n, 0.0), -leverage};
+        Solution solution = po::qp::solve(problem);
+        po::testing::expect_kkt(problem, solution);
+        EXPECT_NEAR(po::testing::qp_objective(problem, solution.x), *reference,
+                    1e-10 * po::testing::qp_objective_scale(problem, solution.x));
+        EXPECT_LE(gross_exposure(solution.x), leverage * (1.0 + 1e-12));
+        active += solution.gross_exposure_multipliers.empty() ? 0 : 1;
+    }
+    EXPECT_GT(active, 50u);
+}
+
+TEST(GoldfarbIdnani, GrossExposureInactive)
+{
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_budget_problem(seed);
+        Solution without = po::qp::solve(problem);
+        problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(problem.n, 0.0), -1e6};
+        Solution with = po::qp::solve(problem);
+        po::testing::expect_kkt(problem, with);
+        EXPECT_EQ(with.x, without.x);
+        EXPECT_EQ(with.equality_multipliers, without.equality_multipliers);
+        EXPECT_EQ(with.inequality_multipliers, without.inequality_multipliers);
+        EXPECT_EQ(with.active_inequalities, without.active_inequalities);
+        EXPECT_EQ(with.iterations, without.iterations);
+        EXPECT_TRUE(with.gross_exposure_signs.empty());
+        EXPECT_TRUE(with.gross_exposure_multipliers.empty());
+    }
+}
+
+// Under 1'x = 1 the homogeneous form L 1'x - ||x||_1 >= 0 is ||x||_1 <= L: the family with an offset and a zero
+// right-hand side gives the optimum of the family with offset 0 and right-hand side -L.
+TEST(GoldfarbIdnani, GrossExposureWithOffset)
+{
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_simplex_problem(seed);
+        double leverage = po::testing::random_vector(1, seed + 5000, 1.0, 3.0)[0];
+        problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(problem.n, 0.0), -leverage};
+        Solution plain = po::qp::solve(problem);
+        problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(problem.n, leverage), 0.0};
+        Solution homogeneous = po::qp::solve(problem);
+        po::testing::expect_kkt(problem, homogeneous);
+        ASSERT_EQ(plain.status, Status::Optimal);
+        double scale = po::testing::largest_magnitude(plain.x);
+        for (std::size_t i = 0; i < problem.n; ++i)
+        {
+            EXPECT_NEAR(homogeneous.x[i], plain.x[i], 1e-12 * scale);
         }
     }
 }
