@@ -601,6 +601,29 @@ TEST(RiskParityReference, KktRejectsAStationarityAboveItsRoundingFloor)
     EXPECT_GT(stationarity.over_floor, 8.0);
 }
 
+// Where long double is double (MSVC) a result above the band cannot be checked against its floor: the check
+// skips the running test, and risk_parity_kkt_failures passes that skip on instead of counting it as a
+// failure. Forced here with extended = false, the skip is caught so that this test itself runs on.
+TEST(RiskParityReference, FloorCheckWithoutExtendedPrecisionSkipsAndDoesNotFail)
+{
+    FloorLimitedPoint point = floor_limited_point();
+    ASSERT_EQ(point.result.status, SolveStatus::Optimal);
+    ::testing::TestPartResultArray parts;
+    std::vector<std::string> failures;
+    {
+        ::testing::ScopedFakeTestPartResultReporter reporter(
+            ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ONLY_CURRENT_THREAD, &parts);
+        failures = po::testing::risk_parity_kkt_failures(point.problem.spec, point.problem.data, point.result,
+                                                         kFloorLimitedBand, false);
+    }
+    EXPECT_TRUE(failures.empty());
+    ASSERT_EQ(parts.size(), 1);
+    EXPECT_TRUE(parts.GetTestPartResult(0).skipped());
+    std::vector<std::string> extended = po::testing::risk_parity_kkt_failures(
+        point.problem.spec, point.problem.data, point.result, kFloorLimitedBand, true);
+    EXPECT_TRUE(extended.empty());
+}
+
 // The stationarity at its rounding floor bounds the backward error, not the distance to the solution, which
 // is larger by the conditioning of the KKT system: the weights of the result are 1e-12 from the KKT point
 // refined in long double, far inside the band. Weights moved by 1e-10 are measured as 1e-10 away.

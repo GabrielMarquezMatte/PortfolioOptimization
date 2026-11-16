@@ -1008,9 +1008,10 @@ inline constexpr double kRoundingFloorFactor = 2.0;
 // with grad f from risk_parity_gradient, and the identity w'grad f = 0. The stationarity passes at the
 // tolerance, relative to its largest term, or within kRoundingFloorFactor of its rounding floor. A volatility
 // multiplier of -inf is the case s = sigma_min, which has no stationarity to check
-// (expect_minimum_volatility_point).
+// (expect_minimum_volatility_point). Where long double is not extended (extended false) a stationarity above
+// the tolerance cannot be checked against its floor, and the test is skipped instead.
 inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
-                                   double tolerance)
+                                   double tolerance, bool extended = kLongDoubleIsExtended)
 {
     ASSERT_EQ(result.status, po::SolveStatus::Optimal);
     ASSERT_EQ(result.weights.size(), data.weight_count());
@@ -1031,7 +1032,7 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
     }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
     RiskParityStationarity stationarity = risk_parity_stationarity(spec, data, result, tolerance);
-    if (stationarity.relative > tolerance && !kLongDoubleIsExtended)
+    if (stationarity.relative > tolerance && !extended)
     {
         // The floor is eps of the magnitudes of the terms; in double their sum is rounded by about as much.
         GTEST_SKIP() << "stationarity " << stationarity.relative << " above the tolerance " << tolerance
@@ -1044,20 +1045,28 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
 }
 
 // The message of every failure of expect_risk_parity_kkt on the result; empty when it passes. The failures
-// are intercepted, not reported.
+// are intercepted, not reported. A skip is not a failure: it is passed on to the running test, which is then
+// reported as skipped (unless something else fails).
 inline std::vector<std::string> risk_parity_kkt_failures(const po::Spec& spec, const po::Data& data,
-                                                         const po::Result& result, double tolerance)
+                                                         const po::Result& result, double tolerance,
+                                                         bool extended = kLongDoubleIsExtended)
 {
     ::testing::TestPartResultArray failures;
     {
         ::testing::ScopedFakeTestPartResultReporter reporter(
             ::testing::ScopedFakeTestPartResultReporter::INTERCEPT_ONLY_CURRENT_THREAD, &failures);
-        expect_risk_parity_kkt(spec, data, result, tolerance);
+        expect_risk_parity_kkt(spec, data, result, tolerance, extended);
     }
     std::vector<std::string> messages;
     for (int k = 0; k < failures.size(); ++k)
     {
-        messages.emplace_back(failures.GetTestPartResult(k).message());
+        const ::testing::TestPartResult& part = failures.GetTestPartResult(k);
+        if (part.skipped())
+        {
+            [&part] { GTEST_SKIP() << part.message(); }();
+            continue;
+        }
+        messages.emplace_back(part.message());
     }
     return messages;
 }
