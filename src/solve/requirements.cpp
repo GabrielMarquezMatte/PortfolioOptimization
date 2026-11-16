@@ -16,13 +16,16 @@ namespace
 struct Requirements
 {
     const char* name;
-    bool accepts_target_return;
-    bool accepts_risk_aversion;
-    bool accepts_importance;
-    bool accepts_leverage;
-    bool requires_max_volatility;
-    bool requires_mu;
-    bool requires_returns;
+    bool accepts_target_return = false;
+    bool accepts_risk_aversion = false;
+    bool accepts_importance = false;
+    bool accepts_leverage = false;
+    bool accepts_target_volatility = false;
+    bool accepts_risk_budget = false;
+    bool accepts_cash = true;
+    bool requires_max_volatility = false;
+    bool requires_mu = false;
+    bool requires_returns = false;
 };
 
 struct Setter
@@ -42,21 +45,35 @@ std::optional<Requirements> requirements_of(Objective objective)
     switch (objective)
     {
     case Objective::MinVariance:
-        return Requirements{"MIN_VARIANCE", true, false, false, true, false, false, false};
+        return Requirements{.name = "MIN_VARIANCE", .accepts_target_return = true, .accepts_leverage = true};
     case Objective::MaxReturn:
-        return Requirements{"MAX_RETURN", false, false, false, true, true, true, false};
+        return Requirements{.name = "MAX_RETURN",
+                            .accepts_leverage = true,
+                            .requires_max_volatility = true,
+                            .requires_mu = true};
     case Objective::Utility:
-        return Requirements{"UTILITY", false, true, false, true, false, true, false};
+        return Requirements{
+            .name = "UTILITY", .accepts_risk_aversion = true, .accepts_leverage = true, .requires_mu = true};
     case Objective::Importance:
-        return Requirements{"IMPORTANCE", false, false, true, true, false, true, false};
+        return Requirements{
+            .name = "IMPORTANCE", .accepts_importance = true, .accepts_leverage = true, .requires_mu = true};
     case Objective::Kelly:
-        return Requirements{"KELLY", false, false, false, true, false, true, false};
+        return Requirements{.name = "KELLY", .accepts_leverage = true, .requires_mu = true};
     case Objective::TrackingError:
-        return Requirements{"TRACKING_ERROR", true, false, false, true, false, false, true};
+        return Requirements{.name = "TRACKING_ERROR",
+                            .accepts_target_return = true,
+                            .accepts_leverage = true,
+                            .requires_returns = true};
     case Objective::MaxSharpe:
-        return Requirements{"MAX_SHARPE", false, false, false, true, false, true, false};
+        return Requirements{.name = "MAX_SHARPE", .accepts_leverage = true, .requires_mu = true};
     case Objective::MaxDiversification:
-        return Requirements{"MAX_DIVERSIFICATION", false, false, false, true, false, false, false};
+        return Requirements{.name = "MAX_DIVERSIFICATION", .accepts_leverage = true};
+    case Objective::RiskParity:
+        return Requirements{.name = "RISK_PARITY",
+                            .accepts_target_return = true,
+                            .accepts_target_volatility = true,
+                            .accepts_risk_budget = true,
+                            .accepts_cash = false};
     default:
         return std::nullopt;
     }
@@ -70,6 +87,9 @@ std::optional<Failure> check_setters(const Spec& spec, const Requirements& requi
         Setter{"importance", spec.importance.has_value(), requirements.accepts_importance},
         Setter{"max_volatility", spec.max_volatility.has_value(), requirements.requires_max_volatility},
         Setter{"leverage", spec.leverage.has_value(), requirements.accepts_leverage},
+        Setter{"target_volatility", spec.target_volatility.has_value(),
+               requirements.accepts_target_volatility},
+        Setter{"risk_budget", !spec.risk_budget.empty(), requirements.accepts_risk_budget},
     };
     for (const Setter& setter : setters)
     {
@@ -112,11 +132,20 @@ std::optional<Failure> check_mu_and_rate(const Spec& spec, const Data& data, con
     return std::nullopt;
 }
 
+std::optional<Failure> check_cash(const Data& data, const Requirements& requirements)
+{
+    if (!requirements.accepts_cash && data.risk_free().has_value())
+    {
+        return invalid(std::string("risk_free does not apply to ") + requirements.name);
+    }
+    return std::nullopt;
+}
+
 std::optional<Failure> check_data(const Spec& spec, const Data& data, const Requirements& requirements)
 {
-    return check_matrix(data, requirements).or_else([&] {
-        return check_mu_and_rate(spec, data, requirements);
-    });
+    return check_matrix(data, requirements)
+        .or_else([&] { return check_cash(data, requirements); })
+        .or_else([&] { return check_mu_and_rate(spec, data, requirements); });
 }
 
 std::optional<Failure> check_bound_size(const char* name, std::size_t size, std::size_t expected)
@@ -132,9 +161,11 @@ std::optional<Failure> check_bound_size(const char* name, std::size_t size, std:
 std::optional<Failure> check_bound_sizes(const Spec& spec, const Data& data)
 {
     std::size_t expected = data.weight_count();
-    return check_bound_size("asset_lower", spec.asset_lower.size(), expected).or_else([&] {
-        return check_bound_size("asset_upper", spec.asset_upper.size(), expected);
-    });
+    return check_bound_size("asset_lower", spec.asset_lower.size(), expected)
+        .or_else([&] { return check_bound_size("asset_upper", spec.asset_upper.size(), expected); })
+        .or_else([&] {
+            return check_bound_size("risk_budget", spec.risk_budget.size(), data.asset_count());
+        });
 }
 
 } // namespace

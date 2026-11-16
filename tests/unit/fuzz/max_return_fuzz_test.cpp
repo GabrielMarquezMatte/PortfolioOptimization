@@ -12,8 +12,8 @@
 #include "core/result.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/random_problems.hpp"
-#include "solve/solve.hpp"
 #include "random_covariance.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace

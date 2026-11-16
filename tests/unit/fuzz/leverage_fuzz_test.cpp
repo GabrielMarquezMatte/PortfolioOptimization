@@ -12,10 +12,10 @@
 #include "fuzz/random_problems.hpp"
 #include "fuzz/sign_pattern_reference.hpp"
 #include "problems/mean_variance.hpp"
-#include "solve/solve.hpp"
 #include "problems/tracking_error.hpp"
 #include "qp/problem.hpp"
 #include "random_covariance.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace

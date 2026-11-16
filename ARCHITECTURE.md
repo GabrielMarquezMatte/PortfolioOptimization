@@ -22,9 +22,16 @@ and diversification ratios of given weights; and a Python package over the C API
                  |
         src/capi   handles, error boundary
           |                 \
-        src/problems         src/metrics
-        spec and data        portfolio return
-        to a QP and back     and volatility
+        src/solve            src/metrics
+        requirements,        portfolio return
+        dispatch             and volatility
+          |       \              |
+        src/riskparity          |
+        Spinu Newton            |
+          |                     |
+        src/problems            |
+        spec and data           |
+        to a QP and back        |
           |       \              |
           |     src/qp           |
           |     Goldfarb-Idnani  |
@@ -34,11 +41,13 @@ and diversification ratios of given weights; and a Python package over the C API
         src/linalg   Cholesky, triangular solves, Householder QR
 ```
 
-Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (requirements,
-mean_variance, tracking_error, max_return, parametric_path, homogeneous, constraints, solve: translate a spec and data
-to a QP and read the solution back) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
+Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
+tracking_error, max_return, parametric_path, homogeneous, constraints: translate a spec and data
+to a QP and read the solution back) <- `riskparity` (spinu, risk_parity: the positive-orthant solution of
+`RISK_PARITY` by Newton) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
+objective) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
 only on `linalg`. `core/data.cpp` uses the Cholesky factor to reject a covariance that is not positive definite, and
-`problems` uses `qp`. `metrics` depends on `core` and is used by `capi`. Nothing in `src/` includes from `src/capi/`
+`problems` uses `qp`. `metrics` depends on `core` and is used by `riskparity` and `capi`. Nothing in `src/` includes from `src/capi/`
 except `capi` itself. Everything below the C API is internal and may change in any release; only the header is a
 contract, and the Python package is a consumer of it like any other wrapper would be.
 
@@ -46,7 +55,7 @@ Build targets (`CMakeLists.txt`):
 
 | Target | What it is |
 |---|---|
-| `portopt_core` | Static library: `linalg`, `qp`, `core`, `problems`, `metrics` |
+| `portopt_core` | Static library: `linalg`, `qp`, `core`, `problems`, `riskparity`, `solve`, `metrics` |
 | `portopt_capi` | OBJECT library: every `src/capi/*.cpp`, `error.cpp` included, compiled once |
 | `portopt` | The shared library, built from the `portopt_capi` objects; links `portopt_core` |
 | `portopt_tests` | GoogleTest executable; links `portopt_capi` and `portopt_core`, so a test sees the same thread-local error as the entry points it calls (static `libstdc++` on MinGW) |
@@ -72,6 +81,8 @@ Build targets (`CMakeLists.txt`):
 | `src/qp/goldfarb_idnani.*` | `qp::solve`: the dual active-set loop, the tolerances, the generation of the rows of the gross exposure family and the final refinement |
 | `src/qp/active_set.hpp` | The active-set factorization (J, R), Givens rotations, the add and drop updates and the refinement step |
 | `src/solve/solve.*` | `po::solve`: `check_request`, then dispatch to the objective |
+| `src/riskparity/spinu.*` | `spinu`: Newton on `F(y) = 1/2 y' Sigma y - b' log y`, `y > 0`, `w = y / 1'y`; Cholesky and two triangular solves per step, Armijo far from the minimizer and the full step near it, the stop on the relative size of the step |
+| `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, which returns the Spinu point when it is inside the box and no target is set |
 | `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
@@ -83,7 +94,7 @@ Build targets (`CMakeLists.txt`):
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
 | `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds and `leverage` included; the bounds canonicalized so that equality and hash work); `Data` and its metrics; `SolveStatus`, `Result` and `solve` |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
-| `tests/unit/{capi,core,linalg,metrics,problems,qp}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
+| `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
 | `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites |
 | `tests/unit/kkt.hpp`, `user_kkt.hpp`, `random_covariance.hpp`, `capi_scope.hpp` | KKT residuals of a QP (the generated rows of the family included), the KKT conditions in the user's variables for every objective, random covariances of a chosen condition number, RAII for C handles |
 | `tests/style/check_style.py` | Style rules that can be checked without a compiler; runs as the `style` ctest |

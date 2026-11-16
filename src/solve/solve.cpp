@@ -6,8 +6,9 @@
 #include "problems/homogeneous.hpp"
 #include "problems/max_return.hpp"
 #include "problems/mean_variance.hpp"
-#include "solve/requirements.hpp"
 #include "problems/tracking_error.hpp"
+#include "riskparity/risk_parity.hpp"
+#include "solve/requirements.hpp"
 
 namespace po
 {
@@ -31,6 +32,8 @@ std::expected<Result, Failure> solve_request(const Spec& spec, const Data& data)
         return problems::solve_max_sharpe(spec, data);
     case Objective::MaxDiversification:
         return problems::solve_max_diversification(spec, data);
+    case Objective::RiskParity:
+        return riskparity::solve_risk_parity(spec, data);
     default:
         std::unreachable();
     }

@@ -430,6 +430,82 @@ are the solver's. Each is measured over `RatioFuzz.AgainstFrontierReference` (12
   rounding of the active rows, and enters the user's stationarity as a term along `v`: the worst stationarity of the
   battery is at most 0.087 of its band (below).
 
+## Numerical decisions of RISK_PARITY
+
+Without `target_return`, `target_volatility` or an active bound the solution is the positive-orthant point of Spinu:
+the minimizer `y` of `F(y) = 1/2 y' Sigma y - b' log y` over `y > 0`, and `w = y / 1'y`. `F` is strictly convex and
+coercive, its gradient is `Sigma y - b / y` and its Hessian `Sigma + diag(b / y^2)`. At the minimizer
+`y_i (Sigma y)_i = b_i`, so the risk contributions of `w` are `b` and `sum_i b_i = 1` gives `y' Sigma y = 1`.
+
+**The start.** `y_i = sqrt(b_i / Sigma_ii)`, scaled to `y' Sigma y = 1`. The first factor is the exact minimizer of a
+diagonal `Sigma` (`w_i` proportional to `sqrt(b_i) / sigma_i`), the second is the value of `y' Sigma y` at every
+minimizer, so the start has the scale of the answer at any scale of `Sigma` (annual or daily).
+
+**The step.** One Cholesky factorization of the Hessian per iteration and two triangular solves (`L z = -g`,
+`L' d = z`), never an inverse. Far from the minimizer (`delta = max_i |d_i / y_i| > 1/4`) the step is damped: Armijo
+backtracking (`1e-4`, halving) that must also decrease `F` strictly, starting at 0.99 of the way to the boundary of
+the orthant, so `y > 0` always. The damped step of the self-concordant analysis is not used: the barrier with
+`b_i < 1` is not standard self-concordant. Close to it (`delta <= 1/4`) the full Newton step is taken without testing
+`F`: near the minimizer `F` is flat to its rounding while the weights still move, so a test on `F` stops long before
+the weights are right.
+
+**The stop.** On the size of the step just taken, `delta = max_i |d_i / y_i|`, which is dimensionless and bounds the
+relative change of every weight at once: after a step of size `delta` the relative error of each weight is of order
+`delta^2`. It stops when `delta <= 16 eps` (`eps = DBL_EPSILON`), or when `delta` stops halving (`delta >= delta_prev /
+2`) at `delta <= 1e-6`, the rounding floor of the step, which depends on `cond(Sigma)` and sits above `16 eps` in about
+two thirds of the runs. A test on the Newton decrement `lambda^2 <= f n eps (1 + |F|)` was measured first and
+rejected: it bounds `F - F*`, not the weights. The error of weight `i` is at most `lambda / sqrt(b_i)`, and with
+`b_i` down to about `1e-7` (uneven budgets at `n = 100`) the relative error of a weight reached `1.6e-7` at `cond(Sigma) = 1e4`
+with `f = 16` and the full step after the test, against `1.1e-10` when run to the floor.
+
+**Measurement.** `n` in {1, 2, 5, 10, 20, 50, 100}, `cond(Sigma)` in {1e2, 1e4, 1e6, 1e8}, both scales (`Sigma` and
+`1e-4 Sigma`), equal budgets and uneven ones (`b_i` log-uniform in `[1e-6, 1]`, normalized), seeds 1 to 10,
+`random_covariance`: 1120 runs, none failed to stop. The reference is Newton on the same `Sigma` in `long double`
+run to a step below `1e-17`; the error is `max_i |w_i - w_i*| / w_i*`. Windows, GCC 16.2 (MSYS2 UCRT64).
+
+Newton iterations, mean (max) over `cond(Sigma)` up to 1e8:
+
+| n | equal budget | uneven budget |
+|---|---|---|
+| 1 | 1.0 (1) | 1.0 (1) |
+| 2 | 1.5 (4) | 11.5 (19) |
+| 5 | 9.2 (17) | 13.4 (19) |
+| 10 | 10.2 (16) | 16.4 (24) |
+| 20 | 10.7 (15) | 19.3 (29) |
+| 50 | 11.8 (15) | 23.8 (38) |
+| 100 | 12.4 (16) | 27.7 (48) |
+
+The ceiling is 200 iterations, more than four times the largest count.
+
+The constant `16` in `delta <= 16 eps` (runs ending by that test rather than by the floor, mean iterations, largest
+relative error of a weight at `cond(Sigma) = 1e4` and `1e8`; the 960 runs with `n >= 2`):
+
+| factor | by the test | mean iterations | error at 1e4 | error at 1e8 |
+|---|---|---|---|---|
+| 1 | 105 | 14.27 | 5.9e-13 | 2.4e-10 |
+| 16 | 314 | 14.00 | 5.9e-13 | 2.4e-10 |
+| 256 | 548 | 13.68 | 5.9e-13 | 2.4e-10 |
+| 4096 | 769 | 13.34 | 7.6e-13 | 2.4e-10 |
+
+The error does not depend on the constant up to 4096, because it is the floor of the step that decides; the constant
+only trades the iterations spent at the floor (0.9 per run between 1 and 4096). 16 is kept as the smallest multiple
+of `eps` that is above the rounding of a step in the well-conditioned runs. At the stall the largest step size
+measured was `2.1e-9`, so the `1e-6` ceiling on the stall exit leaves 500 times of room without accepting a step that
+is still converging.
+
+Largest relative error of a weight against the long double reference, and largest `|c_i - b_i|` of the contributions
+(both at `n` up to 100), against the bands of the tests:
+
+| cond(Sigma) | weight, measured | band |
+|---|---|---|
+| 1e2 | 1.4e-13 | 1e-10 |
+| 1e4 | 5.9e-13 | 1e-10 |
+| 1e6 | 1.2e-11 | 1e-9 |
+| 1e8 | 2.4e-10 | 1e-7 |
+
+The error grows with `cond(Sigma)` as the conditioning of the weights does, not with the number of iterations. For a
+diagonal `Sigma` the start is the exact answer and one step confirms it (relative error `1e-15`).
+
 ## Fuzz battery
 
 `tests/unit/fuzz/` holds a generator of problem shapes and references computed by another route, used by the
@@ -580,7 +656,9 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
-| `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives solved, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`), its messages and the order of the checks |
+| `tests/unit/riskparity/spinu_test.cpp` | Spinu against the diagonal and the two-asset closed forms (1e-12), the contributions against an equal budget (n up to 100, `cond(Sigma)` 1e2 to 1e6, 20 seeds) and an uneven one (`b_i` from 1e-6 to 1, `cond(Sigma)` up to 1e8, both scales), in the bands of the table above |
+| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` without active constraints: KKT in the user's variables, the multipliers (0 and NaN), a box that holds the solution, a negative lower bound that does not change the orthant, one asset, and the constraints not yet solved |
+| `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives that take it, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`; `RISK_PARITY` takes `target_return`, `target_volatility` and `risk_budget` and no cash), its messages and the order of the checks |
 | `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
 | `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, the new setters and `po_data_set_returns`, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |

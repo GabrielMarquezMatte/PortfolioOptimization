@@ -8,8 +8,8 @@
 #include <vector>
 
 #include "capi_scope.hpp"
-#include "solve/solve.hpp"
 #include "random_covariance.hpp"
+#include "solve/solve.hpp"
 
 namespace
 {
@@ -402,15 +402,18 @@ TEST(CapiSolve, InfeasibleIsResultNotError)
     EXPECT_TRUE(std::isnan(residual));
 }
 
-TEST(CapiSolve, UnsupportedObjective)
+TEST(CapiSolve, RiskParityIsSolved)
 {
     DataPtr data = sample_data();
     SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_RISK_PARITY);
-    ResultPtr existing = po::testing::solve_ok(po::testing::make_spec().get(), data.get());
-    po_result* raw = existing.get();
-    EXPECT_EQ(po_solve(spec.get(), data.get(), &raw), PO_UNSUPPORTED);
-    EXPECT_EQ(raw, nullptr);
-    EXPECT_STREQ(po_last_error(), "objective not implemented yet");
+    ResultPtr result = po::testing::solve_ok(spec.get(), data.get());
+    EXPECT_EQ(po::testing::status_of(result.get()), PO_SOLVE_OPTIMAL);
+    double total = 0.0;
+    for (double weight : po::testing::weights_of(result.get()))
+    {
+        total += weight;
+    }
+    EXPECT_NEAR(total, 1.0, 1e-12);
 }
 
 TEST(CapiSolve, ResultOutlivesSpecAndData)

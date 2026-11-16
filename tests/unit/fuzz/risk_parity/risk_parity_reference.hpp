@@ -678,6 +678,36 @@ inline void expect_homogeneity_identity(std::span<const double> weights, const O
     EXPECT_LE(relative_to(std::fabs(product), scale), tolerance);
 }
 
+// Every term of grad f is proportional to the gap c - b, so at a minimizer with f = 0 they all vanish together and
+// a residual relative to their own magnitude compares rounding with rounding. This is the largest |grad f_j| that a
+// gap of at most 1 in every entry can produce, 2 (|p_j| + sum_i |Sigma_ji w_i| + 2 |p_j| sum_i |c_i|) / v with
+// p = Sigma w and v = w' Sigma w: the scale of the problem, not of its current gap.
+inline double unit_gap_gradient_scale(const po::Data& data, std::span<const double> weights)
+{
+    std::vector<long double> w = widened(weights);
+    std::vector<long double> product = wide_covariance_times(data, w);
+    long double variance = wide_dot(w, product);
+    std::size_t n = w.size();
+    std::span<const double> covariance = data.covariance();
+    long double contribution_norm = 0.0L;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        contribution_norm += std::fabs(w[i] * product[i] / variance);
+    }
+    long double largest = 0.0L;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        long double row_sum = 0.0L;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            row_sum += std::fabs(static_cast<long double>(covariance[j * n + i]) * w[i]);
+        }
+        long double bound = 2.0L * (std::fabs(product[j]) * (1.0L + 2.0L * contribution_norm) + row_sum) / variance;
+        largest = std::fmax(largest, bound);
+    }
+    return static_cast<double>(largest);
+}
+
 // KKT in the user's variables: equalities, bounds, sign and complementarity of beta, the NaN pattern of the
 // multipliers, and
 //   grad f(w) = budget * 1 + target_return * mu + volatility * Sigma w / vol + beta,
@@ -692,6 +722,7 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
     expect_user_bounds(spec, result, tolerance);
     std::vector<double> budget = budget_of(spec, data.asset_count());
     ObjectiveGradient gradient = sum_of(risk_parity_gradient_terms(data, budget, result.weights));
+    gradient.scale = worst_of(gradient.scale, unit_gap_gradient_scale(data, result.weights));
     expect_homogeneity_identity(result.weights, gradient, tolerance);
     expect_user_stationarity(data, result, gradient, tolerance);
 }

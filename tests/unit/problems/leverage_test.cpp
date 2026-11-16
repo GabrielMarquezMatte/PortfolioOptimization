@@ -8,9 +8,9 @@
 
 #include "kkt.hpp"
 #include "problems/mean_variance.hpp"
-#include "solve/solve.hpp"
 #include "qp/goldfarb_idnani.hpp"
 #include "random_covariance.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace

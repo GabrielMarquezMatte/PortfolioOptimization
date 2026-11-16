@@ -4,13 +4,15 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "solve/solve.hpp"
 #include "random_covariance.hpp"
+#include "solve/solve.hpp"
 
 namespace
 {
@@ -111,14 +113,83 @@ TEST(Requirements, KellyRequiresRateAboveMinusOne)
     expect_accepted(spec_of(Objective::Kelly), data);
 }
 
-TEST(Requirements, UnimplementedObjectivesStayUnsupported)
+TEST(Requirements, EveryObjectiveIsSolved)
+{
+    for (std::int32_t value = 0; value <= static_cast<std::int32_t>(Objective::RiskParity); ++value)
+    {
+        SCOPED_TRACE(value);
+        std::optional<Failure> failure =
+            po::problems::check_request(spec_of(static_cast<Objective>(value)), full_data());
+        EXPECT_TRUE(!failure.has_value() || failure->kind == FailureKind::InvalidArgument);
+    }
+}
+
+TEST(Requirements, RiskParityMatrix)
 {
     Spec spec = spec_of(Objective::RiskParity);
-    spec.risk_aversion = 3.0;
-    std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
-    ASSERT_TRUE(failure.has_value());
-    EXPECT_EQ(failure->kind, FailureKind::Unsupported);
-    EXPECT_EQ(failure->message, "objective not implemented yet");
+    spec.target_return = 0.08;
+    spec.target_volatility = 0.2;
+    spec.risk_budget = {0.2, 0.3, 0.5};
+    expect_accepted(spec, full_data());
+    expect_invalid(spec_of(Objective::RiskParity), without_covariance(), "RISK_PARITY requires covariance");
+    Spec return_target = spec_of(Objective::RiskParity);
+    return_target.target_return = 0.08;
+    expect_invalid(return_target, without_mu(), "RISK_PARITY requires mu");
+    expect_accepted(spec_of(Objective::RiskParity), without_mu());
+}
+
+TEST(Requirements, RiskParityRejectsTheOtherSetters)
+{
+    Spec leverage = spec_of(Objective::RiskParity);
+    leverage.leverage = 1.5;
+    expect_invalid(leverage, full_data(), "leverage does not apply to RISK_PARITY");
+    Spec max_volatility = spec_of(Objective::RiskParity);
+    max_volatility.max_volatility = 0.2;
+    expect_invalid(max_volatility, full_data(), "max_volatility does not apply to RISK_PARITY");
+    Spec risk_aversion = spec_of(Objective::RiskParity);
+    risk_aversion.risk_aversion = 3.0;
+    expect_invalid(risk_aversion, full_data(), "risk_aversion does not apply to RISK_PARITY");
+    Spec importance = spec_of(Objective::RiskParity);
+    importance.importance = 0.5;
+    expect_invalid(importance, full_data(), "importance does not apply to RISK_PARITY");
+}
+
+TEST(Requirements, RiskParityRejectsCash)
+{
+    Data data = full_data();
+    data.set_risk_free(0.01);
+    expect_invalid(spec_of(Objective::RiskParity), data, "risk_free does not apply to RISK_PARITY");
+}
+
+TEST(Requirements, RiskParityBudgetHasOneEntryPerAsset)
+{
+    Spec spec = spec_of(Objective::RiskParity);
+    spec.risk_budget = {0.5, 0.5};
+    expect_invalid(spec, full_data(), "risk_budget has 2 entries; expected 3");
+}
+
+TEST(Requirements, TargetVolatilityOnlyForRiskParity)
+{
+    constexpr std::array kOthers = {
+        std::pair{Objective::MinVariance, "MIN_VARIANCE"}, std::pair{Objective::MaxReturn, "MAX_RETURN"},
+        std::pair{Objective::MaxSharpe, "MAX_SHARPE"},     std::pair{Objective::Utility, "UTILITY"},
+        std::pair{Objective::Importance, "IMPORTANCE"},    std::pair{Objective::Kelly, "KELLY"},
+        std::pair{Objective::TrackingError, "TRACKING_ERROR"},
+        std::pair{Objective::MaxDiversification, "MAX_DIVERSIFICATION"}};
+    for (const auto& [objective, name] : kOthers)
+    {
+        SCOPED_TRACE(name);
+        Spec spec = spec_of(objective);
+        spec.target_volatility = 0.2;
+        expect_invalid(spec, full_data(), std::string("target_volatility does not apply to ") + name);
+    }
+}
+
+TEST(Requirements, RiskBudgetOnlyForRiskParity)
+{
+    Spec spec = spec_of(Objective::MinVariance);
+    spec.risk_budget = {0.2, 0.3, 0.5};
+    expect_invalid(spec, full_data(), "risk_budget does not apply to MIN_VARIANCE");
 }
 
 TEST(Requirements, MaxSharpeRequiresMu)
@@ -261,7 +332,8 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
         Cell{Objective::Kelly, "KELLY", false, false, false, false},
         Cell{Objective::TrackingError, "TRACKING_ERROR", true, false, false, false},
         Cell{Objective::MaxSharpe, "MAX_SHARPE", false, false, false, false},
-        Cell{Objective::MaxDiversification, "MAX_DIVERSIFICATION", false, false, false, false}};
+        Cell{Objective::MaxDiversification, "MAX_DIVERSIFICATION", false, false, false, false},
+        Cell{Objective::RiskParity, "RISK_PARITY", true, false, false, false}};
     constexpr std::array kSetters = {"target_return", "risk_aversion", "importance", "max_volatility"};
     for (const Cell& cell : kCells)
     {
@@ -283,7 +355,7 @@ TEST(Requirements, EverySetterFollowsTheMatrix)
 
 TEST(Requirements, ImplementedCheckComesFirst)
 {
-    Spec spec = spec_of(Objective::RiskParity);
+    Spec spec = spec_of(static_cast<Objective>(99));
     spec.target_return = 0.08;
     std::optional<Failure> failure = po::problems::check_request(spec, Data::create(kAssets, {}, {}).value());
     ASSERT_TRUE(failure.has_value());

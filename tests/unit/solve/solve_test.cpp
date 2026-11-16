@@ -38,7 +38,7 @@ TEST(Solve, UnimplementedObjectiveIsUnsupported)
 {
     po::Data data = po::Data::create(3, {}, {}).value();
     po::Spec spec;
-    spec.objective = Objective::RiskParity;
+    spec.objective = static_cast<Objective>(99);
     expect_failure(po::solve(spec, data), FailureKind::Unsupported, "objective not implemented yet");
 }
 
