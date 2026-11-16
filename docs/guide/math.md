@@ -108,23 +108,32 @@ over the same budget, box and cash constraints as the other objectives, with `s`
 The volatility constraint is not linear, so the QP solver cannot take it. `MAX_RETURN` instead solves the
 parametric QP
 
-    Q(t):  minimize  0.5 w' Sigma w - t mu~'w    over the budget, box and cash rows
+    Q(t):  minimize  0.5 w' Sigma w - t v'w    over the budget, box and cash rows,    v = mu~ - c 1
 
-(`G = Sigma` with the factor `L`, `g = -t mu~`; only `g` depends on `t`). Its optimum `w(t)` is piecewise affine in
+(`G = Sigma` with the factor `L`, `g = -t v`; only `g` depends on `t`). Where the rows hold `1'w = 1` (no cash), `c`
+is the midrange of `mu~`, and `-t v'w = -t mu~'w + t c` on every feasible `w`: the same optimum as with `mu~`. The
+solver starts from the unconstrained minimizer `t Sigma^-1 v`, and the shift keeps out of it the common mean that the
+budget absorbs; with nearly equal means it would otherwise swamp the weights at the large `t` where the cap is reached.
+With cash, `c = 0`. The multipliers of `Q(t)` are those of `mu~` except the budget's, which carries `t c` more, so the
+reported budget multiplier is the QP's over `t` (or the slope's) minus `c`. Below, `v` is `mu~` whenever `c = 0`.
+Its optimum `w(t)` is piecewise affine in
 `t` and its volatility is nondecreasing, from the minimum volatility `sigma_min` at `t = 0`. The solver finds the
 `t*` where the volatility reaches `s`:
 
 1. At `t = 0` it solves the minimum-variance point. `s` below `sigma_min` is `PO_SOLVE_INFEASIBLE`. Feasibility is
    decided there, once: a `Q(t)` that fails at `t > 0` has broken down along the path and is `PO_SOLVE_MAX_ITER`,
    never `PO_SOLVE_INFEASIBLE`.
-2. It doubles `t`, from `t_1 = sigma_min^2 / |mu~|max` (with `sigma_min = 0`, all cash, from
-   `min(s^2, max_i Sigma_ii) / |mu~|max`, so that a large cap does not start far past the last breakpoint), until
-   the volatility reaches `s`, or until `w(t)` stops changing (the inactive cap below).
+2. It doubles `t`, from `t_1 = sigma_min^2 / |v|max` (with `sigma_min = 0`, all cash, from
+   `min(s^2, max_i Sigma_ii) / |v|max`, so that a large cap does not start far past the last breakpoint; `|v|max` is
+   floored at `eps`), until the volatility reaches `s`, or until the limit certificate below holds (the inactive
+   cap).
 3. It bisects until both ends of the bracket have the same active set, takes the exact root `t*` of
    `|L'w|^2 = s^2` on that affine segment and solves `Q(t*)`. When `Q(t*)` has the same active set (it lies on the
    segment) and `|vol(w(t*)) - s|` is at most `1e-6` of the bracket's volatility range (`kCrossingSanity`), the
    crossing is accepted; otherwise `Q(t*)` narrows the bracket like any other point. A bracket whose ends are
-   adjacent doubles is accepted as it is.
+   adjacent doubles is accepted as it is: on one segment by its root, across a breakpoint by its lower end when that
+   end's volatility is within `1e-5 s` of `s` (`kAdjacentEnd`); `vol(t)` is continuous, so an end farther away means
+   that `Q(t)` is lost in its rounding there, and the path has broken down (`PO_SOLVE_MAX_ITER`).
 
 The reported point is the point of the segment at the root: the weights and the multipliers are the interpolation
 of the two ends of the bracket at the fraction of the root. The KKT conditions of `Q(t)` on one active set are linear
@@ -133,34 +142,40 @@ so that point is an exact solution of `Q(t*)` up to the rounding of the ends, an
 rounding of `vol(w(t*))` of a single QP solution, about `1e-15 cond(Sigma) s`, does not enter. (At adjacent ends
 across a breakpoint, the lower end is reported, with `lambda_vol = -vol / t`.)
 
-At `t*`, `Sigma w - t* mu~ = N u`, where `N u` collects the QP multipliers `u` of the rows. Dividing by `t*`:
+At `t*`, `Sigma w - t* v = N u`, where `N u` collects the QP multipliers `u` of the rows. Dividing by `t*`:
 
-    -mu~ = N (u / t*) - (1 / t*) Sigma w = N (u / t*) + lambda_vol Sigma w / vol(w),    lambda_vol = -s / t*
+    -v = N (u / t*) - (1 / t*) Sigma w = N (u / t*) + lambda_vol Sigma w / vol(w),    lambda_vol = -s / t*
 
 since `vol(w) = s`. The multipliers of the budget and bound rows are the QP's divided by `t*`, and the volatility
 multiplier is `lambda_vol = -s / t*`, the derivative of the optimal `f = -mu~'w` with respect to `s` (<= 0).
 
-**When `w(t)` is constant.** Two points of the path on the same active set have the same weights when the equality
-rows and the active rows fix `w`: a vertex, decided combinatorially (the solver keeps the active normals independent,
-so their rank is their count, and a count of `n` is a vertex). Otherwise the weights are compared with the rounding
-the solver carries: it starts from the unconstrained minimizer `t Sigma^-1 mu~`, so a weight is known to
-
-    16 n eps (max(1, |w|max) + t |Sigma^-1 mu~|max)
-
-(the weight scale floored at 1, plus the size of that minimizer, which grows with `t |mu~|`; `16` is
-`kNoiseFactor` in `src/problems/parametric_path.cpp`). Where `w` is constant, `Sigma w - t mu~ = N u(t)` for every `t`, so
-`u(t) = u(t_b) + (t - t_b) b` with `N b = -mu~`. The slope `b` is computed from that equation by Householder least
+**When `w(t)` is constant.** Where `w` is constant, `Sigma w - t v = N u(t)` for every `t`, so
+`u(t) = u(t_b) + (t - t_b) b` with `N b = -v`. The slope `b` is computed from that equation by Householder least
 squares over the active normals, not by differencing two QP solutions (whose rounding grows with `t`); a slope below
-`-16 n eps |mu~|max` is a decrease, and an active multiplier that decreases reaches zero at the vertex exit
-`t_b + u_k(t_b) / |b_k|`. A combination that comes out negative by rounding (within those bounds) is set to 0.
+`-16 n eps |v|max` is a decrease, and an active multiplier that decreases reaches zero at the vertex exit
+`t_b + u_k(t_b) / |b_k|`. A combination that comes out negative by rounding (within those bounds) is set to 0
+(`16` is `kNoiseFactor` in `src/problems/parametric_path.cpp`).
+
+The **limit certificate** at a point of the path: every row holds to the QP solver's feasibility tolerance, no active
+slope decreases, and `|v + N b|max <= 16 n eps` times the largest of its terms (`limit_holds`). These are the KKT
+conditions of the linear program `max mu~'w` over the rows, with `b` as its multipliers, so the point is that
+program's optimum; and `w` with `u(t) + (t' - t) b` satisfies the KKT conditions of `Q(t')` for every `t' >= t`.
+
+At `s = sigma_min`, two points of the path on the same active set have the same weights when the equality rows and the
+active rows fix `w` (a vertex, decided combinatorially: the solver keeps the active normals independent, so their rank
+is their count, and a count of `n` is a vertex), or else when the weights differ by no more than the noise of the
+stationarity equation `Sigma w - t v = N u`,
+
+    16 n eps (max(1, |w|max) + t |v|max).
 
 Special cases:
 
-- **Inactive cap.** When `w(t)` is constant between two consecutive points of the climb and no active multiplier
-  decreases, `w` stays optimal for every larger `t` and the volatility never reaches `s`. The weights are the
-  maximum-return point of the box and `lambda_vol = 0`; the other multipliers are the slopes `b`.
+- **Inactive cap.** When the limit certificate holds at a point of the climb whose volatility is below `s`, `w` stays
+  optimal for every larger `t` and the volatility never reaches `s`. The weights are the maximum-return point of the
+  box and `lambda_vol = 0`; the other multipliers are the slopes `b` (the budget's minus `c`).
 - **`s = sigma_min`** (to `1e-12` relative). Let `t_b = sup{t : w(t) = w(0)}`; `t` is halved from `t_1` until `w(t)` is
-  constant with `w(0)`. If `t_b` is infinite (no decrease), `lambda_vol = 0`. If `t_b` is finite (a vertex exit),
+  constant with `w(0)`. If `t_b` is infinite (no decrease), `lambda_vol = 0` when the limit certificate holds there,
+  and `PO_SOLVE_MAX_ITER` when it does not. If `t_b` is finite (a vertex exit),
   `lambda_vol = -s / t_b`. The efficient frontier is vertical at `sigma_min` (`t_b = 0`) only when the weights moved
   beyond their rounding at a larger `t` on the active set of `w(0)` and no exit comes before that `t`: then
   `lambda_vol = -inf` and the budget multiplier (without cash) and the bound multipliers are NaN, although those

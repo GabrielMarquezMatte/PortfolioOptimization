@@ -153,11 +153,11 @@ inline ObjectiveGradient sum_of(const std::vector<std::vector<double>>& terms)
 }
 
 // Sigma w / vol, the gradient of the volatility over the risky weights; empty when the volatility multiplier
-// is NaN.
+// is NaN, or 0, whose term is 0 even at vol = 0 (all cash), where Sigma w / vol is undefined.
 inline std::vector<double> volatility_gradient(const po::Data& data, const po::Result& result)
 {
     std::vector<double> gradient;
-    if (std::isnan(result.volatility_multiplier))
+    if (std::isnan(result.volatility_multiplier) || result.volatility_multiplier == 0.0)
     {
         return gradient;
     }

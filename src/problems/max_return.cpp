@@ -21,6 +21,10 @@ constexpr double kMinimumTolerance = 1e-12;
 // fraction of the bracket's volatility range from s: an error of the affine model is a sizable fraction of
 // the range, while the rounding of vol(Q(t*)) is about 1e-15 cond(Sigma) s (docs/guide/validation.md).
 constexpr double kCrossingSanity = 1e-6;
+// Across a breakpoint at adjacent doubles, the end is the answer when its volatility is within this of s,
+// relative: 100 times the rounding of vol(Q(t)) at cond(Sigma) = 1e8, and 100 times below the deviations
+// measured where Q(t) is lost in its rounding (docs/guide/validation.md).
+constexpr double kAdjacentEnd = 1e-5;
 constexpr int kMaxDoublings = 200;
 constexpr int kMaxBisections = 200;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -41,16 +45,18 @@ Result broke_down(const Data& data, const Path& path)
     return stopped(data, path, qp::Status::MaxIterations);
 }
 
+// The QP budget multiplier over multiplier_scale is that of v = mu~ - shift 1, so the user's is shift lower.
 Result answer(const Data& data, const Path& path, const qp::Solution& solution, double multiplier_scale,
               double volatility_multiplier)
 {
     Result result = to_result(data, path.translation.rows, solution, multiplier_scale);
+    result.budget_multiplier -= path.shift;
     result.volatility_multiplier = volatility_multiplier;
     result.iterations = path.iterations;
     return result;
 }
 
-// Where w(t) is constant, Sigma w - t mu~ = N u(t) for every t, so -mu~ = N b with b = du/dt: the user
+// Where w(t) is constant, Sigma w - t v = N u(t) for every t, so -v = N b with b = du/dt: the user
 // multipliers are b and the volatility multiplier is 0.
 Result at_limit(const Data& data, const Path& path, const PathPoint& point, const Slope& slope)
 {
@@ -58,7 +64,7 @@ Result at_limit(const Data& data, const Path& path, const PathPoint& point, cons
 }
 
 // w(t) stays at w(point) up to exit, where an active multiplier reaches zero. There
-// Sigma w - exit mu~ = N u(exit), so the user multipliers are u(exit) / exit and the volatility multiplier is
+// Sigma w - exit v = N u(exit), so the user multipliers are u(exit) / exit and the volatility multiplier is
 // -s / exit, the right derivative of the optimum in s.
 Result at_exit(const Data& data, const Path& path, const PathPoint& point, const Slope& slope, double exit)
 {
@@ -78,7 +84,7 @@ Result vertical(const Data& data, const Path& path, const PathPoint& start)
     return result;
 }
 
-// The point of the segment where vol = s: there Sigma w - t* mu~ = N u, so the user multipliers are u / t*
+// The point of the segment where vol = s: there Sigma w - t* v = N u, so the user multipliers are u / t*
 // and the volatility multiplier is -s / t*.
 Result at_crossing(const Data& data, const Path& path, const Bracket& bracket, double fraction)
 {
@@ -95,7 +101,8 @@ bool confirms(const Path& path, const Bracket& bracket, const PathPoint& crossin
 
 // t_a and t_b are adjacent doubles. On one segment the root is still exact; across a breakpoint, the lower
 // end, whose volatility is below s by rounding only, with the volatility multiplier -vol / t that keeps it
-// stationary (the upper end when the lower is t = 0).
+// stationary (the upper end when the lower is t = 0). An end farther from s is Q(t) lost in its own rounding
+// (vol(t) is continuous): the path has broken down.
 Result at_adjacent(const Data& data, const Path& path, const Bracket& bracket)
 {
     if (same_segment(bracket.lower, bracket.upper))
@@ -106,6 +113,10 @@ Result at_adjacent(const Data& data, const Path& path, const Bracket& bracket)
     if (end->t == 0.0)
     {
         end = &bracket.upper;
+    }
+    if (std::fabs(end->volatility - path.cap) > kAdjacentEnd * path.cap)
+    {
+        return broke_down(data, path);
     }
     return answer(data, path, end->solution, end->t, -end->volatility / end->t);
 }
@@ -156,16 +167,12 @@ Result bisect(const Data& data, Path& path, Bracket bracket)
     return broke_down(data, path);
 }
 
-// w(t) stays at w(upper) for every larger t: constant from lower to upper and no active multiplier
-// decreasing.
-bool stays_beyond(const Path& path, const PathPoint& lower, const PathPoint& upper, Slope& slope)
+// w(t) stays at w(point) for every larger t, certified at point by the KKT conditions of the limit: no active
+// multiplier decreasing and limit_holds.
+bool stays_beyond(const Path& path, const PathPoint& point, Slope& slope)
 {
-    if (!weights_constant(path, lower, upper))
-    {
-        return false;
-    }
-    slope = multiplier_slope(path, upper);
-    return vertex_exit(path, upper, slope) == kInfinity;
+    slope = multiplier_slope(path, point);
+    return vertex_exit(path, point, slope) == kInfinity && limit_holds(path, point, slope);
 }
 
 Result climb(const Data& data, Path& path, PathPoint lower, double first_t)
@@ -183,7 +190,7 @@ Result climb(const Data& data, Path& path, PathPoint lower, double first_t)
             return bisect(data, path, Bracket{std::move(lower), std::move(upper)});
         }
         Slope slope;
-        if (stays_beyond(path, lower, upper, slope))
+        if (stays_beyond(path, upper, slope))
         {
             return at_limit(data, path, upper, slope);
         }
@@ -202,6 +209,10 @@ Result leave_minimum(const Data& data, const Path& path, const PathPoint& start,
 {
     Slope slope = multiplier_slope(path, point);
     double exit = vertex_exit(path, point, slope);
+    if (moved == kInfinity && exit == kInfinity && !limit_holds(path, point, slope))
+    {
+        return broke_down(data, path);
+    }
     if (moved == kInfinity && exit == kInfinity)
     {
         return at_limit(data, path, point, slope);

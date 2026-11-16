@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "linalg/cholesky.hpp"
 #include "linalg/qr.hpp"
 #include "problems/mean_variance.hpp"
 #include "qp/goldfarb_idnani.hpp"
@@ -18,10 +17,12 @@ namespace po::problems
 namespace
 {
 
-// The rounding of Q(t), as a multiple of the noise models below. On equal-mean paths, where w(t) is constant,
-// the measured weight change stays below 0.3 times weight_noise / kNoiseFactor up to a condition number of
-// 1e8 (docs/guide/validation.md).
+// The rounding of Q(t) and of the slope, as a multiple of the noise models below; the margins it leaves on the
+// limit certificate are measured in docs/guide/validation.md.
 constexpr double kNoiseFactor = 16.0;
+// The feasibility tolerance of the QP solver (src/qp/goldfarb_idnani.cpp): a row holds when its slack is above
+// -kFeasibility max(1, |c_k|, ||C_k|| |x|max).
+constexpr double kFeasibility = 1e-12;
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 
@@ -81,26 +82,30 @@ std::vector<double> excess_of(const Data& data)
     return excess;
 }
 
-double free_scale_of(const Data& data, std::vector<double> excess)
+// The midrange of mu~ where the rows hold 1'w = 1, which removes from g the common mean that the budget absorbs:
+// the solver starts from t Sigma^-1 v, and a common mean far above the spread of mu~ would leave its rounding in
+// every weight. 0 without a budget row.
+double budget_shift(const Translation& translation, std::span<const double> excess)
 {
-    std::size_t n = data.asset_count();
-    linalg::solve_lower(data.covariance_factor(), n, excess);
-    linalg::solve_lower_transposed(data.covariance_factor(), n, excess);
-    return largest_magnitude(excess);
+    if (!translation.rows.budget.has_value())
+    {
+        return 0.0;
+    }
+    auto [low, high] = std::ranges::minmax(excess);
+    return 0.5 * (low + high);
 }
 
-// The solver starts from the unconstrained minimizer t Sigma^-1 mu~ and every later step carries its
-// rounding: a weight is known to n eps (max(1, |w|max) + t |Sigma^-1 mu~|max), the noise of the stationarity
-// equation.
+// A weight of Q(t) is known to n eps (max(1, |w|max) + t |v|max): the noise of the stationarity equation
+// Sigma w - t v = N u, which does not carry cond(Sigma).
 double weight_noise(const Path& path, const PathPoint& earlier, const PathPoint& later)
 {
     double n = static_cast<double>(later.solution.x.size());
     double scale =
         std::max({1.0, largest_magnitude(earlier.solution.x), largest_magnitude(later.solution.x)});
-    return kNoiseFactor * n * kEpsilon * (scale + later.t * path.free_scale);
+    return kNoiseFactor * n * kEpsilon * (scale + later.t * largest_magnitude(path.excess));
 }
 
-// b from N b = -mu~ by Householder least squares is known to n eps |mu~|max.
+// b from N b = -v by Householder least squares is known to n eps |v|max.
 double slope_noise(const Path& path)
 {
     return kNoiseFactor * static_cast<double>(path.excess.size()) * kEpsilon * largest_magnitude(path.excess);
@@ -144,6 +149,68 @@ std::vector<double> active_normals(const qp::Problem& problem, const PathPoint& 
     return normals;
 }
 
+double row_tolerance(std::span<const double> row, double rhs, double x_scale)
+{
+    return kFeasibility * std::max({1.0, std::fabs(rhs), std::sqrt(dot(row, row)) * x_scale});
+}
+
+bool rows_hold(const qp::Problem& problem, std::span<const double> x)
+{
+    std::size_t n = problem.n;
+    double x_scale = largest_magnitude(x);
+    for (std::size_t k = 0; k < problem.equality_rhs.size(); ++k)
+    {
+        std::span<const double> row = std::span<const double>(problem.equality_rows).subspan(k * n, n);
+        double rhs = problem.equality_rhs[k];
+        if (std::fabs(dot(row, x) - rhs) > row_tolerance(row, rhs, x_scale))
+        {
+            return false;
+        }
+    }
+    for (std::size_t k = 0; k < problem.inequality_rhs.size(); ++k)
+    {
+        std::span<const double> row = std::span<const double>(problem.inequality_rows).subspan(k * n, n);
+        double rhs = problem.inequality_rhs[k];
+        if (dot(row, x) - rhs < -row_tolerance(row, rhs, x_scale))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The rows (row-major, n columns) transposed times their multipliers: their term in the stationarity equation.
+std::vector<double> transposed_times(std::span<const double> rows, std::span<const double> multipliers,
+                                     std::size_t n)
+{
+    std::vector<double> product(n, 0.0);
+    for (std::size_t k = 0; k < multipliers.size(); ++k)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            product[i] += rows[k * n + i] * multipliers[k];
+        }
+    }
+    return product;
+}
+
+// |v + E'b_E + C'b_C|max relative to the largest of its three terms, within the rounding of b.
+bool slope_stationary(const Path& path, const Slope& slope)
+{
+    const qp::Problem& problem = path.translation.problem;
+    std::size_t n = problem.n;
+    std::vector<double> equality = transposed_times(problem.equality_rows, slope.equality, n);
+    std::vector<double> inequality = transposed_times(problem.inequality_rows, slope.inequality, n);
+    std::vector<double> residual(n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        residual[i] = path.excess[i] + equality[i] + inequality[i];
+    }
+    double scale = std::max(
+        {largest_magnitude(path.excess), largest_magnitude(equality), largest_magnitude(inequality)});
+    return largest_magnitude(residual) <= kNoiseFactor * static_cast<double>(n) * kEpsilon * scale;
+}
+
 // An inequality multiplier is nonnegative. The combinations taken here are nonnegative in exact arithmetic; a
 // negative value is rounding: a slope above -slope_noise (not a decrease), that slope times the distance
 // along it, or the rounding of u(point) at the exit itself. It is set to 0.
@@ -156,10 +223,15 @@ double nonnegative(double multiplier)
 
 Path make_path(const Spec& spec, const Data& data)
 {
+    Translation translation = mean_variance_problem(spec, data, MeanVariance{1.0, 0.0});
     std::vector<double> excess = excess_of(data);
-    double free_scale = free_scale_of(data, excess);
-    return Path{mean_variance_problem(spec, data, MeanVariance{1.0, 0.0}), std::move(excess),
-                data.covariance_factor(), *spec.max_volatility, free_scale, 0};
+    double shift = budget_shift(translation, excess);
+    for (double& value : excess)
+    {
+        value -= shift;
+    }
+    return Path{std::move(translation), std::move(excess), data.covariance_factor(), *spec.max_volatility, shift,
+                0};
 }
 
 PathPoint solve_at(Path& path, double t)
@@ -234,6 +306,11 @@ double vertex_exit(const Path& path, const PathPoint& point, const Slope& slope)
         exit = std::min(exit, point.t - point.solution.inequality_multipliers[row] / rate);
     }
     return exit;
+}
+
+bool limit_holds(const Path& path, const PathPoint& point, const Slope& slope)
+{
+    return rows_hold(path.translation.problem, point.solution.x) && slope_stationary(path, slope);
 }
 
 qp::Solution moved_along(const PathPoint& point, const Slope& slope, double t)

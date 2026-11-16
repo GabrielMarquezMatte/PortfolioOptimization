@@ -402,6 +402,34 @@ TEST(MaxReturn, ConditioningSweep)
     }
 }
 
+// Without cash the path solves Q(t) for mu less its midrange (1'w = 1 makes it the same w(t)) and maps the
+// budget multiplier back: adding k to every mean leaves the weights and the volatility multiplier and lowers
+// the budget multiplier by k, at a crossing and with an inactive cap.
+TEST(MaxReturn, BudgetMultiplierFollowsCommonMean)
+{
+    constexpr std::size_t n = 8;
+    constexpr double kCommon = 1.0;
+    Data data = random_data(n, 21);
+    std::vector<double> lifted(data.mu().begin(), data.mu().end());
+    for (double& value : lifted)
+    {
+        value += kCommon;
+    }
+    Data shifted = Data::create(n, lifted, std::vector<double>(data.covariance().begin(), data.covariance().end()))
+                       .value();
+    double minimum = minimum_volatility(long_only(), data);
+    for (double cap : {0.5 * (minimum + largest_asset_volatility(data)), 10.0 * largest_asset_volatility(data)})
+    {
+        SCOPED_TRACE(cap);
+        Result base = solve_checked(max_return(long_only(), cap), data);
+        Result result = solve_checked(max_return(long_only(), cap), shifted);
+        expect_near_relative(result.weights, base.weights, 1e-12);
+        EXPECT_NEAR(result.volatility_multiplier, base.volatility_multiplier,
+                    1e-12 * std::fabs(base.volatility_multiplier));
+        EXPECT_NEAR(result.budget_multiplier, base.budget_multiplier - kCommon, 1e-12 * kCommon);
+    }
+}
+
 // Every excess return is negative: all cash is the maximum return at any cap, and the cap is inactive.
 TEST(MaxReturn, RiskFreeAboveAllMeans)
 {

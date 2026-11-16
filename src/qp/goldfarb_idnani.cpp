@@ -261,9 +261,17 @@ void refine_active(const Constraints& constraints, State& state)
     refine_toward_active(state.set, residual, state.x);
 }
 
-Solution optimal_solution(const Constraints& constraints, State& state)
+// The refinement moves x onto the active rows by their residuals, which carry the rounding of every step from
+// the unconstrained start: far from it, the move can leave an inactive row violated. Every row is checked again
+// at the final x, and a violated one is added like any other candidate.
+std::optional<ActiveConstraint> violated_after_refinement(const Constraints& constraints, State& state)
 {
     refine_active(constraints, state);
+    return most_violated_inequality(constraints, state);
+}
+
+Solution optimal_solution(const Constraints& constraints, State& state)
+{
     Solution solution;
     solution.status = Status::Optimal;
     solution.x = std::move(state.x);
@@ -308,6 +316,10 @@ Solution solve_factored(const Problem& problem, std::span<const double> factor)
     while (progress == Progress::Added)
     {
         std::optional<ActiveConstraint> candidate = next_candidate(constraints, state);
+        if (!candidate)
+        {
+            candidate = violated_after_refinement(constraints, state);
+        }
         if (!candidate)
         {
             return optimal_solution(constraints, state);

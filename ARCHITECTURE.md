@@ -73,7 +73,7 @@ Build targets (`CMakeLists.txt`):
 | `src/problems/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
-| `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the vertex exit, the crossing on a segment |
+| `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: the shift of the means along the budget, solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the limit certificate of an inactive cap, the vertex exit, the crossing on a segment |
 | `src/problems/max_return.*` | `MAX_RETURN`: the policy over the path (climb, bisection, the case `s = sigma_min`) and the volatility multiplier `-s / t*` |
 | `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers |
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility` and `tracking_error` for a weight vector (cash last) |
@@ -128,7 +128,8 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    `MIN_VARIANCE`, (delta, 1) for `UTILITY`, (2 (1 - lambda), lambda) for `IMPORTANCE` and (1 / (1 + rf), 1) for
    `KELLY`. `tracking_error_problem` builds G = 2 R~'R~ (passed with the factor sqrt(2) R_qr' of a Householder QR
    of R~) and g = -2 R~'(b - rf 1) from the return series, and `solve_max_return` does not build one QP but `Q(t)`,
-   with G = Sigma and g = -t mu~, solved at several `t` (`src/problems/parametric_path.cpp`). Each uses
+   with G = Sigma and g = -t (mu~ - c 1), c the midrange of mu~ where the budget row holds 1'w = 1 (0 with cash),
+   solved at several `t` (`src/problems/parametric_path.cpp`). Each uses
    `add_constraint_rows`
    (`src/problems/constraints.cpp`) appends the budget row (no cash), the target-return row and one row per finite
    bound, recording in `ConstraintRows` which row is which. With cash, the cash weight 1 - 1'w is eliminated, so its bounds become rows over the risky weights. The

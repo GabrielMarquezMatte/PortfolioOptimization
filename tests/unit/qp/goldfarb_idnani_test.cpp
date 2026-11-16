@@ -2,9 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -331,6 +333,51 @@ TEST(GoldfarbIdnani, ProvidedFactorIsNotRefactored)
     EXPECT_EQ(po::qp::solve(problem).status, Status::Optimal);
     problem.hessian_factor.pop_back();
     EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
+}
+
+// G = Sigma over n - 1 assets and a nearly riskless one of variance 1e-10, and g = -t mu~ with nearly equal means
+// at a daily scale, under the budget and long-only bounds: Q(t) of MAX_RETURN far along its path.
+Problem riskless_asset_problem(std::size_t n, std::uint64_t seed, double t)
+{
+    std::size_t risky = n - 1;
+    std::vector<double> covariance = po::testing::random_covariance(risky, seed);
+    std::vector<double> noise = po::testing::random_vector(risky, seed + 4000, -1.0, 1.0);
+    Problem problem;
+    problem.n = n;
+    problem.hessian.assign(n * n, 0.0);
+    problem.linear.assign(n, -t * 3e-5);
+    for (std::size_t i = 0; i < risky; ++i)
+    {
+        std::copy_n(covariance.begin() + static_cast<std::ptrdiff_t>(i * risky), risky,
+                    problem.hessian.begin() + static_cast<std::ptrdiff_t>(i * n));
+        problem.linear[i] = -t * (8e-5 + 1e-10 * noise[i]);
+    }
+    problem.hessian[n * n - 1] = 1e-10;
+    add_equality(problem, std::vector<double>(n, 1.0), 1.0);
+    add_bounds(problem, std::vector<double>(n, 0.0), std::vector<double>(n, 1.0));
+    return problem;
+}
+
+// The solver starts from t Sigma^-1 mu~, near 3e17 in the riskless weight, and the rounding of that start leaves
+// the active rows off by O(1) until the refinement at the optimum moves x onto them. Every row must hold at that
+// final x to the solver's own tolerance, 1e-12 max(1, |c_k|, ||C_k|| |x|max).
+TEST(GoldfarbIdnani, FinalFeasibilityAtLargeScale)
+{
+    constexpr std::size_t n = 30;
+    Problem problem = riskless_asset_problem(n, 4, 1e12);
+    Solution solution = po::qp::solve(problem);
+    ASSERT_EQ(solution.status, Status::Optimal);
+    double x_scale = po::testing::largest_magnitude(solution.x);
+    for (std::size_t k = 0; k < problem.inequality_rhs.size(); ++k)
+    {
+        SCOPED_TRACE(k);
+        std::span<const double> row = std::span<const double>(problem.inequality_rows).subspan(k * n, n);
+        double row_norm = std::sqrt(po::testing::row_dot(problem.inequality_rows, k, row));
+        double rhs = problem.inequality_rhs[k];
+        double slack = po::testing::row_dot(problem.inequality_rows, k, solution.x) - rhs;
+        EXPECT_GE(slack, -1e-12 * std::fmax(1.0, std::fmax(std::fabs(rhs), row_norm * x_scale)));
+    }
+    po::testing::expect_kkt(problem, solution);
 }
 
 TEST(GoldfarbIdnani, RandomProblemsAtExtremeScales)
