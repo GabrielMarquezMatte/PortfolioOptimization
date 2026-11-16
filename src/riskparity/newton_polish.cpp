@@ -360,32 +360,20 @@ bool improves_on(double residual, double current)
 PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
 {
     double start_residual = largest(residual_of(problem, start, evaluate_kkt(problem, start)));
-    PolishResult result{start, start_residual, 0, false};
-    if (start_residual <= kNoiseFloor)
-    {
-        return result;
-    }
     std::optional<Candidate> candidate(std::in_place, held_start(problem, start));
-    for (int step = 0; step <= kMaxSteps && candidate.has_value(); ++step)
+    PolishResult result{candidate->position.point, candidate->residual, 0, false};
+    for (int step = 1; step <= kMaxSteps && !(result.residual <= kNoiseFloor); ++step)
     {
-        bool better = improves_on(candidate->residual, result.residual);
-        if (!better && step > 0)
-        {
-            break;
-        }
-        if (better)
-        {
-            result.point = candidate->position.point;
-            result.residual = candidate->residual;
-            result.steps = step;
-            result.improved = true;
-        }
-        if (result.residual <= kNoiseFloor)
-        {
-            break;
-        }
         candidate = newton_step(problem, *candidate);
+        if (!candidate.has_value() || !improves_on(candidate->residual, result.residual))
+        {
+            break;
+        }
+        result.point = candidate->position.point;
+        result.residual = candidate->residual;
+        result.steps = step;
     }
+    result.improved = improves_on(result.residual, start_residual);
     return result;
 }
 

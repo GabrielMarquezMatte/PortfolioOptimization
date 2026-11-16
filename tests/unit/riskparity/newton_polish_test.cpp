@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -85,8 +86,24 @@ double merit_of(const KktProblem& problem, const KktPoint& point)
     return largest(residual_of(problem, point, evaluate_kkt(problem, point)));
 }
 
+// The multipliers of two points agree to the rounding of the least-squares solve.
+void expect_same_multipliers(const KktPoint& first, const KktPoint& second)
+{
+    ASSERT_EQ(first.equality_multipliers.size(), second.equality_multipliers.size());
+    for (std::size_t k = 0; k < first.equality_multipliers.size(); ++k)
+    {
+        double expected = second.equality_multipliers[k];
+        EXPECT_NEAR(first.equality_multipliers[k], expected, 1e-13 * std::fabs(expected)) << "row " << k;
+    }
+    for (std::size_t j = 0; j < first.bound_multipliers.size(); ++j)
+    {
+        double scale = std::fabs(second.bound_multipliers[j]);
+        EXPECT_NEAR(first.bound_multipliers[j], second.bound_multipliers[j], 1e-13 * scale) << "weight " << j;
+    }
+}
+
 // From a KKT point at 1e-6, one or two Newton steps reach the band of cond(Sigma) and the rounding floor of
-// the residual; there the next step does not improve it and is refused.
+// the residual; a second polish takes no step from there and leaves the point where it is.
 TEST(NewtonPolish, ReachesRoundingFloor)
 {
     std::size_t n = 5;
@@ -114,23 +131,24 @@ TEST(NewtonPolish, ReachesRoundingFloor)
         }
         EXPECT_TRUE(capped);
         PolishResult again = po::riskparity::newton_polish(problem, polished.point);
-        EXPECT_FALSE(again.improved);
         EXPECT_EQ(again.steps, 0);
         EXPECT_EQ(again.point.weights, polished.point.weights);
-        EXPECT_EQ(again.point.equality_multipliers, polished.point.equality_multipliers);
-        EXPECT_EQ(again.point.bound_multipliers, polished.point.bound_multipliers);
-        EXPECT_EQ(again.residual, polished.residual);
+        expect_same_multipliers(again.point, polished.point);
+        EXPECT_LE(again.residual, 1.0);
+        EXPECT_EQ(again.improved, again.residual < polished.residual);
     }
 }
 
-// A start that is not near any KKT point of its active set: the weights of the start with multipliers of the
-// wrong size. Whatever the steps do, the result is never worse than the start.
-TEST(NewtonPolish, NeverReturnsAWorsePoint)
+// The multipliers of the equalities at the start are not used: they are settled by least squares at its
+// weights before any step. Whatever they were, the polish ends at the same KKT point.
+TEST(NewtonPolish, DoesNotDependOnTheEqualityMultipliersOfTheStart)
 {
     std::size_t n = 5;
     Data data = sample_data(n, 7);
     Spec spec = capped_spec(n);
     KktProblem problem{spec, data, spec.risk_budget};
+    PolishResult reference = po::riskparity::newton_polish(problem, near_kkt_point(spec, data));
+    ASSERT_LE(reference.residual, 1.0);
     for (double factor : {-50.0, 0.0, 3.0, 1e6})
     {
         SCOPED_TRACE(factor);
@@ -141,13 +159,109 @@ TEST(NewtonPolish, NeverReturnsAWorsePoint)
         }
         double start_merit = merit_of(problem, start);
         PolishResult polished = po::riskparity::newton_polish(problem, start);
-        EXPECT_LE(polished.residual, start_merit);
+        EXPECT_LE(polished.residual, 1.0);
         EXPECT_EQ(polished.improved, polished.residual < start_merit);
-        if (!polished.improved)
+        EXPECT_EQ(polished.steps, reference.steps);
+        expect_same_multipliers(polished.point, reference.point);
+        for (std::size_t i = 0; i < n; ++i)
         {
-            EXPECT_EQ(polished.point.weights, start.weights);
-            EXPECT_EQ(polished.steps, 0);
+            EXPECT_NEAR(polished.point.weights[i], reference.point.weights[i], 1e-14) << "weight " << i;
         }
+    }
+}
+
+// The largest and the mean stationarity of the free weights (those whose bound multiplier is 0), the mean in
+// units of the smallest noise among them: the component of the residual along the budget row, which the
+// least-squares multipliers remove.
+double budget_component(const KktProblem& problem, const KktPoint& point)
+{
+    po::riskparity::KktEvaluation evaluation = evaluate_kkt(problem, point);
+    double total = 0.0;
+    double count = 0.0;
+    double smallest_noise = std::numeric_limits<double>::infinity();
+    for (std::size_t j = 0; j < point.weights.size(); ++j)
+    {
+        if (point.bound_multipliers[j] != 0.0)
+        {
+            continue;
+        }
+        total += evaluation.stationarity[j];
+        count += 1.0;
+        smallest_noise = std::fmin(smallest_noise, evaluation.stationarity_noise[j]);
+    }
+    return std::fabs(total / count) / smallest_noise;
+}
+
+double smallest_free_noise(const KktProblem& problem, const KktPoint& point)
+{
+    po::riskparity::KktEvaluation evaluation = evaluate_kkt(problem, point);
+    double smallest = std::numeric_limits<double>::infinity();
+    for (std::size_t j = 0; j < point.weights.size(); ++j)
+    {
+        if (point.bound_multipliers[j] == 0.0)
+        {
+            smallest = std::fmin(smallest, evaluation.stationarity_noise[j]);
+        }
+    }
+    return smallest;
+}
+
+// A start within its noise takes no Newton step and still comes back with the least-squares multipliers of
+// its weights: a budget multiplier off by half the noise of the stationarity, which leaves that much of the
+// residual along the budget row, is put back.
+TEST(NewtonPolish, SettlesTheMultipliersWithoutAStep)
+{
+    std::size_t n = 5;
+    Data data = sample_data(n, 7);
+    Spec spec = capped_spec(n);
+    KktProblem problem{spec, data, spec.risk_budget};
+    PolishResult polished = po::riskparity::newton_polish(problem, near_kkt_point(spec, data));
+    ASSERT_LE(polished.residual, 0.4);
+    KktPoint start = polished.point;
+    start.equality_multipliers[0] += 0.5 * smallest_free_noise(problem, start);
+    ASSERT_LE(merit_of(problem, start), 1.0);
+    ASSERT_GE(budget_component(problem, start), 0.25);
+    PolishResult settled = po::riskparity::newton_polish(problem, start);
+    EXPECT_EQ(settled.steps, 0);
+    EXPECT_EQ(settled.point.weights, start.weights);
+    EXPECT_LE(budget_component(problem, settled.point), 0.05);
+    EXPECT_LE(settled.residual, 1.0);
+    EXPECT_EQ(settled.residual, merit_of(problem, settled.point));
+}
+
+// The bound multipliers of the start name the active set. Here they name a lower bound that the solution does
+// not touch: weight k is held 1e-4 below its optimal value, where f decreases into the box and the multiplier
+// of the bound comes out negative. The polish releases the bound and returns to the solution.
+TEST(NewtonPolish, ReleasesABoundWhoseMultiplierHasTheWrongSign)
+{
+    std::size_t n = 5;
+    Data data = sample_data(n, 7);
+    Spec spec = capped_spec(n);
+    KktProblem problem{spec, data, spec.risk_budget};
+    PolishResult solution = po::riskparity::newton_polish(problem, near_kkt_point(spec, data));
+    ASSERT_LE(solution.residual, 1.0);
+    std::size_t k = 0;
+    while (solution.point.bound_multipliers[k] != 0.0)
+    {
+        ++k;
+    }
+    Spec shifted = spec;
+    shifted.asset_lower.assign(n, spec.lower);
+    shifted.asset_upper.assign(n, spec.upper);
+    shifted.asset_lower[k] = solution.point.weights[k] - 1e-4;
+    KktProblem shifted_problem{shifted, data, shifted.risk_budget};
+    KktPoint start = solution.point;
+    start.bound_multipliers[k] = 1.0;
+    ASSERT_GT(merit_of(shifted_problem, start), 1e3);
+    PolishResult polished = po::riskparity::newton_polish(shifted_problem, start);
+    EXPECT_TRUE(polished.improved);
+    EXPECT_GE(polished.steps, 1);
+    EXPECT_EQ(polished.point.bound_multipliers[k], 0.0);
+    EXPECT_GT(polished.point.weights[k], shifted.asset_lower[k]);
+    EXPECT_LE(polished.residual, 1.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        EXPECT_NEAR(polished.point.weights[i], solution.point.weights[i], 1e-12) << "weight " << i;
     }
 }
 

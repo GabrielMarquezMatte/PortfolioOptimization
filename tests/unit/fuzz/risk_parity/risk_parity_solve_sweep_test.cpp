@@ -202,7 +202,8 @@ void count(const SolveRun& run, Tally& tally)
 void print_table(const char* first_column, const std::map<std::string, Tally>& table)
 {
     std::printf("| %s | optimal | max iter | infeasible | KKT failed | floor-limited | stationarity / floor "
-                "| weight error | value error / band | reference / floor | iterations | seconds (longest) |\n",
+                "| weight error | value error / band | reference / floor | iterations | seconds (longest) "
+                "|\n",
                 first_column);
     for (const auto& [key, tally] : table)
     {
