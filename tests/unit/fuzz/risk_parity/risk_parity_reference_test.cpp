@@ -1,3 +1,4 @@
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include "core/spec.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "random_covariance.hpp"
+#include "riskparity/spinu.hpp"
 #include "user_kkt.hpp"
 
 namespace
@@ -255,6 +257,42 @@ TEST(RiskParityReference, KktAcceptsAPinnedStationaryPoint)
         }
         po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10);
     }
+}
+
+// A point near the Spinu solution (gap about 1e-3), pinned by its bounds, with the exact stationary multipliers and
+// then an error of 1e-8 of the gradient in one of them: relative to the terms it is 1e-8, far above the 1e-10
+// tolerance. A scale of the whole problem (1 / gap larger) would hide it.
+TEST(RiskParityReference, KktRejectsAStationarityErrorAwayFromTheFloor)
+{
+    std::size_t n = 6;
+    Data data = covariance_data(n, random_vector(n, 7, 0.03, 0.15), random_covariance(n, 3, 100.0));
+    std::vector<double> budget(n, 1.0 / static_cast<double>(n));
+    std::vector<double> weights = po::riskparity::spinu(data, budget).weights;
+    std::vector<double> nudge = random_vector(n, 17, -1e-3, 1e-3);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        weights[i] *= 1.0 + nudge[i];
+    }
+    weights = normalized(weights);
+    std::vector<double> gradient = risk_parity_gradient(data, budget, weights);
+    double largest = 0.0;
+    Spec spec;
+    spec.asset_lower = weights;
+    spec.asset_upper = weights;
+    Result result;
+    result.status = SolveStatus::Optimal;
+    result.weights = weights;
+    result.budget_multiplier = 0.0;
+    result.bound_multipliers = gradient;
+    for (double entry : gradient)
+    {
+        largest = std::fmax(largest, std::fabs(entry));
+    }
+    ASSERT_GT(po::testing::contribution_gap(data, budget, weights), 1e-4);
+    ASSERT_GT(po::testing::unit_gap_gradient_scale(data, weights), 100.0 * largest);
+    po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10);
+    result.bound_multipliers[0] += 1e-8 * largest;
+    EXPECT_NONFATAL_FAILURE(po::testing::expect_risk_parity_kkt(spec, data, result, 1e-10), "tolerance");
 }
 
 TEST(RiskParityReference, ShapesCoverEveryCombination)

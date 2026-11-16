@@ -506,6 +506,14 @@ Largest relative error of a weight against the long double reference, and larges
 The error grows with `cond(Sigma)` as the conditioning of the weights does, not with the number of iterations. For a
 diagonal `Sigma` the start is the exact answer and one step confirms it (relative error `1e-15`).
 
+**The scale of the stationarity check.** The check of `grad f = budget 1 + ... + beta` is relative to the largest
+term of the gradient and of the multipliers. At a point with `f = 0` (the Spinu solution) every term of the gradient
+is proportional to the gap `c - b`, so they vanish together and that scale is rounding. There, and only there (when
+`max_i |c_i - b_i|` is at most the tolerance of the check), the scale is the largest `|grad f_j|` a gap of 1 can
+produce, so the check says the gap is below the tolerance times that unit. At any larger gap the terms are the scale
+and the band is not relaxed: a stationarity error of `1e-8` of the gradient at a gap of `1e-3` is rejected at
+tolerance `1e-10` (`RiskParityReference.KktRejectsAStationarityErrorAwayFromTheFloor`).
+
 ## Fuzz battery
 
 `tests/unit/fuzz/` holds a generator of problem shapes and references computed by another route, used by the

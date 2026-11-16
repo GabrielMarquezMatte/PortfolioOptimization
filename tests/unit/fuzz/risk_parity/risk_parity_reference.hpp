@@ -679,7 +679,9 @@ inline void expect_homogeneity_identity(std::span<const double> weights, const O
 }
 
 // Every term of grad f is proportional to the gap c - b, so at a minimizer with f = 0 they all vanish together and
-// a residual relative to their own magnitude compares rounding with rounding. This is the largest |grad f_j| that a
+// a residual relative to their own magnitude compares rounding with rounding. Only at that floor, a gap of at most
+// the tolerance, is the scale of the problem used instead; at any larger gap the terms are the scale, so the band
+// is not relaxed by 1 / gap. This is the largest |grad f_j| that a
 // gap of at most 1 in every entry can produce, 2 (|p_j| + sum_i |Sigma_ji w_i| + 2 |p_j| sum_i |c_i|) / v with
 // p = Sigma w and v = w' Sigma w: the scale of the problem, not of its current gap.
 inline double unit_gap_gradient_scale(const po::Data& data, std::span<const double> weights)
@@ -708,6 +710,18 @@ inline double unit_gap_gradient_scale(const po::Data& data, std::span<const doub
     return static_cast<double>(largest);
 }
 
+inline double contribution_gap(const po::Data& data, std::span<const double> budget,
+                               std::span<const double> weights)
+{
+    std::vector<double> contributions = risk_contributions(data, weights);
+    double gap = 0.0;
+    for (std::size_t i = 0; i < contributions.size(); ++i)
+    {
+        gap = std::fmax(gap, std::fabs(contributions[i] - budget[i]));
+    }
+    return gap;
+}
+
 // KKT in the user's variables: equalities, bounds, sign and complementarity of beta, the NaN pattern of the
 // multipliers, and
 //   grad f(w) = budget * 1 + target_return * mu + volatility * Sigma w / vol + beta,
@@ -722,7 +736,10 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
     expect_user_bounds(spec, result, tolerance);
     std::vector<double> budget = budget_of(spec, data.asset_count());
     ObjectiveGradient gradient = sum_of(risk_parity_gradient_terms(data, budget, result.weights));
-    gradient.scale = worst_of(gradient.scale, unit_gap_gradient_scale(data, result.weights));
+    if (contribution_gap(data, budget, result.weights) <= tolerance)
+    {
+        gradient.scale = worst_of(gradient.scale, unit_gap_gradient_scale(data, result.weights));
+    }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
     expect_user_stationarity(data, result, gradient, tolerance);
 }
