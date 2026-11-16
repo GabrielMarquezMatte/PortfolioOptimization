@@ -728,10 +728,11 @@ uneven budget:
 | 1e6 | 6.8e-12 | 1.6e-7 | 1.5e-6 | 1.2e-10 | 7.7e-16 | 1e-9 |
 | 1e8 | 4.2e-12 | 8.4e-3 | 2.4e-3 | 1.0e-8 | 9.7e-16 | 1e-7 |
 
-No vector of doubles near such a solution has a stationarity inside the band (each of the `2^n` roundings of the
-exact solution has a residual of the size of the noise). These results are `OPTIMAL`: every weight is right to
-a few ulps, the equalities and the bounds hold at the band, and so do the sign and complementarity of the
-multipliers and the identity `w'grad f = 0`. They are **reported, not given a wider band**: 251 of the 2788
+One ulp of the weights there moves the stationarity by more than the band, so a stationarity inside the band is
+not to be expected of any vector of doubles near such a solution. That is an inference from the one-ulp
+measurement above: the roundings of a solution were not searched. These results are `OPTIMAL`: their KKT
+residual is within 16 times what one ulp of the weights moves it by, the equalities and the bounds hold at the
+band, and so do the sign and complementarity of the multipliers and the identity `w'grad f = 0`. They are **reported, not given a wider band**: 251 of the 2788
 `OPTIMAL` results of the sweep below fail the stationarity of `expect_risk_parity_kkt` at the band of their
 `cond(Sigma)` and nothing else, all with a target volatility, none at `cond(Sigma) = 1e2`:
 
