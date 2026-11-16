@@ -40,7 +40,31 @@ library whose ABI version differs).
 - Tests: consistency between objectives (`IMPORTANCE` and `KELLY` against `UTILITY`), `MAX_RETURN` against the
   frontier and the capital market line, and its volatility multiplier against finite differences; see
   [docs/guide/validation.md](docs/guide/validation.md).
+- The leverage, a limit on the gross exposure `sum_i |w_i| <= L` of the risky weights (cash not counted):
+  `po_spec_set_leverage`, the constraint `PO_CONSTRAINT_LEVERAGE` of `po_result_multiplier` (`lambda_lev <= 0`, NaN
+  without a leverage, 0 when inactive) and a term `lambda_lev g` in the stationarity of the multiplier convention. It
+  applies to every solved objective, `MAX_RETURN` included, and is solved as an implicit family of `2^n` rows that
+  the QP generates as it needs them (`qp::GrossExposure`), never listed.
+- `PO_OBJECTIVE_MAX_SHARPE` and `PO_OBJECTIVE_MAX_DIVERSIFICATION`, solved by homogenization (a QP in `y = kappa w`
+  with `kappa = 1'y`). With cash both fix the cash weight at 0, and the budget term is carried by `beta_0`, with the
+  budget multiplier NaN.
+- `PO_SOLVE_UNBOUNDED`: the supremum of the ratio exists but is not attained (for example `MAX_SHARPE` with unbounded
+  short selling and `1' Sigma^-1 mu~ <= 0`); the weights and multipliers are NaN. `PO_SOLVE_INFEASIBLE` also covers
+  the problem with no feasible portfolio of positive numerator, and cash bounds that exclude 0.
+- `po_sharpe_ratio` and `po_diversification_ratio`.
+- Python: `Spec.leverage`, `Data.sharpe_ratio`, `Data.diversification_ratio` and `Result.leverage_multiplier`; `Spec`
+  with a leverage and array bounds still compares and hashes by value.
+- The fuzz battery (`tests/unit/fuzz`): problem shapes over the condition number of the covariance (1e2 to 1e8), the
+  daily and annual scales, equal and nearly equal means, a risk-free rate above every mean, tight boxes and cash, with
+  references computed by another route (a bisection on the frontier, a golden-section search on the ratio, a brute
+  force over the sign patterns of the leverage); see [docs/guide/validation.md](docs/guide/validation.md).
 
 ### Changed
+
+- `MAX_RETURN` solves `Q(t)` shifted along a face of the rows (the budget, a cash bound or a row of the leverage), and
+  an inactive cap is decided by a limit certificate (the KKT conditions of the linear program over the rows) rather
+  than by comparing weights between two points of the path. The QP solver checks every row again at the final point.
+  Ill-conditioned problems that returned `MAX_ITER` or a wrong point now solve; what is left is documented in
+  [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery).
 
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.

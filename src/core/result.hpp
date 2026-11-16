@@ -25,8 +25,8 @@ enum class SolveStatus : std::int32_t
 // active lower bound, <= 0 at an active upper bound) and beta_0 its cash entry, because the cash weight is
 // 1 - 1'w. A multiplier of an absent constraint is NaN. One exception, for
 // MAX_RETURN: at a cap equal to the minimum volatility where the efficient frontier is vertical,
-// volatility = -inf and the budget multiplier (without cash) and the bound multipliers are NaN even though
-// those constraints exist.
+// volatility = -inf and the budget multiplier (when present), the bound multipliers and the leverage multiplier
+// (when a leverage was set) are NaN even though those constraints exist.
 struct Result
 {
     SolveStatus status = SolveStatus::Infeasible;

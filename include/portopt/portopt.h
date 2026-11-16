@@ -148,7 +148,8 @@ PO_API po_status po_spec_set_max_volatility(po_spec* s, double sigma);
 /* Gross exposure limit: sum_i |w_i| <= max_gross over the risky weights (the cash weight is not counted).
    max_gross must be positive and finite; zero or negative, NaN and +-inf are PO_INVALID_ARGUMENT and leave the
    spec unchanged. Without cash a limit below 1 is infeasible, because sum_i |w_i| >= |1' w| = 1; po_solve
-   reports it as PO_SOLVE_INFEASIBLE. */
+   reports it as PO_SOLVE_INFEASIBLE. The same holds with cash for PO_OBJECTIVE_MAX_SHARPE and
+   PO_OBJECTIVE_MAX_DIVERSIFICATION, whose cash weight is fixed at 0, so that the risky weights sum to one. */
 PO_API po_status po_spec_set_leverage(po_spec* s, double max_gross);
 
 PO_API void po_spec_free(po_spec* s);

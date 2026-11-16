@@ -115,6 +115,12 @@ class Data:
     def tracking_error(self, weights: ArrayLike) -> float:
         return self._metric(lib.po_tracking_error, weights)
 
+    def sharpe_ratio(self, weights: ArrayLike) -> float:
+        return self._metric(lib.po_sharpe_ratio, weights)
+
+    def diversification_ratio(self, weights: ArrayLike) -> float:
+        return self._metric(lib.po_diversification_ratio, weights)
+
     def _metric(self, function: Callable[..., int], weights: ArrayLike, *extra: float) -> float:
         w = as_doubles(weights)
         if w.ndim != 1:

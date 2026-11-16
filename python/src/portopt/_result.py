@@ -18,6 +18,7 @@ from ._spec import Spec, doubles_pointer
 PO_CONSTRAINT_BUDGET = 0
 PO_CONSTRAINT_TARGET_RETURN = 1
 PO_CONSTRAINT_VOLATILITY = 2
+PO_CONSTRAINT_LEVERAGE = 3
 
 
 class SolveStatus(enum.IntEnum):
@@ -35,6 +36,7 @@ class Result:
     budget_multiplier: float
     target_return_multiplier: float
     volatility_multiplier: float
+    leverage_multiplier: float
     bound_multipliers: NDArray[np.float64]
 
 
@@ -58,6 +60,7 @@ def read_result(pointer: int) -> Result:
         budget_multiplier=read_multiplier(pointer, PO_CONSTRAINT_BUDGET),
         target_return_multiplier=read_multiplier(pointer, PO_CONSTRAINT_TARGET_RETURN),
         volatility_multiplier=read_multiplier(pointer, PO_CONSTRAINT_VOLATILITY),
+        leverage_multiplier=read_multiplier(pointer, PO_CONSTRAINT_LEVERAGE),
         bound_multipliers=read_vector(lib.po_result_bound_multipliers, pointer, count),
     )
 

@@ -98,6 +98,37 @@ column rank of `R~`: with fewer periods than assets, or a diagonal entry `|R_jj|
 constant column, or one that depends on the others to working precision). `po_tracking_error` reports the root mean
 square `sqrt(f / T)`.
 
+## Leverage: an implicit family of rows
+
+The gross exposure limit
+
+    sum_i |w_i| <= L
+
+over the risky weights (cash is not counted) is set by `leverage` (`po_spec_set_leverage`, `L` positive and finite) and
+applies to every objective but `RISK_PARITY`. Without cash the budget gives `sum_i |w_i| >= |1'w| = 1`, so `L < 1` is
+`PO_SOLVE_INFEASIBLE`. With cash the cash weight absorbs the budget, so a limit below 1 can be feasible
+for the objectives that keep the cash weight free (all cash is feasible when the bounds allow it); `MAX_SHARPE` and
+`MAX_DIVERSIFICATION` fix it at 0, so for them `L < 1` is infeasible with cash too.
+
+The constraint is not linear, but it is the intersection of `2^n` linear rows: `sum_i |w_i| <= L` holds exactly when
+`s'w <= L` for every `s` in `{-1, 1}^n`. `qp::GrossExposure` states the family `a'x - ||x||_1 >= b`, that is the rows
+`(a - s)'x >= b` over every `s`; the user's leverage is `a = 0`, `b = -L` and the homogeneous form of `MAX_SHARPE` is
+`a = L 1`, `b = 0`. The solver never lists the rows. At a point `x`, `s'x` is largest at `s = sign(x)` (taking `+1` where
+`x_i = 0`), so the row with that `s` is the most violated one and competes with the explicit rows like any of them; when
+it wins, it is generated and added to the active set, and the active generated rows are numbered after the explicit ones.
+At most `n` of them are active at once. The details and measurements are in
+[validation.md](validation.md#the-gross-exposure-family).
+
+Stationarity then reads `G x + g = E'y + C'z + sum_j zeta_j (a - s_j)`, with `zeta_j >= 0` the multipliers of the active
+generated rows (`src/qp/problem.hpp`). For the user's leverage `a = 0`, and `-sum_j zeta_j s_j = lambda_lev g` with
+
+    lambda_lev = -sum_j zeta_j <= 0,    g = sum_j zeta_j s_j / sum_j zeta_j
+
+`g` lies in the subdifferential of `||w||_1`: on an active row `s_j'w = ||w||_1`, so `s_ji = sign(w_i)` where `w_i` is not
+0, and where `w_i = 0` the active rows may disagree, which gives any `g_i` in [-1, 1]. `lambda_lev` is the derivative of
+the optimal `f` with respect to `L`; it is 0 when the leverage is set but no generated row is active, and NaN when no
+leverage was set.
+
 ## MAX_RETURN
 
     minimize    -mu~'w
@@ -179,9 +210,33 @@ Special cases:
   and `PO_SOLVE_MAX_ITER` when it does not. If `t_b` is finite (a vertex exit),
   `lambda_vol = -s / t_b`. The efficient frontier is vertical at `sigma_min` (`t_b = 0`) only when the weights moved
   beyond their rounding at a larger `t` on the active set of `w(0)` and no exit comes before that `t`: then
-  `lambda_vol = -inf` and the budget multiplier (without cash) and the bound multipliers are NaN, although those
-  constraints exist. This is the one case where a multiplier is NaN for an existing constraint. When the weights and
-  the multipliers disagree, the multipliers decide (`0` or `-s / t_b`), never `-inf`.
+  `lambda_vol = -inf` and the budget multiplier (when present), the bound multipliers and the leverage multiplier (when a
+  leverage was set, active or not) are NaN, although those constraints exist. This is the one case where a multiplier
+  is NaN for an existing constraint. When the weights and the multipliers disagree, the multipliers decide (`0` or
+  `-s / t_b`), never `-inf`.
+
+**The leverage along the path.** With a leverage the rows of `Q(t)` include the family above. Its generated rows
+`(a - s_j)'w >= b` enter the active set like explicit rows: their normals are columns of `N`, their sign vectors `s_j` are
+part of the identity of the active set, and the slope `b`, the limit certificate and the segment decisions treat them as
+any other active row. When a weight crosses 0 the row generated at `sign(w)` changes, so the active set changes there,
+which is a breakpoint of the path. The user's multipliers are those of `Q(t*)` over `t*` as before, with
+`lambda_lev = -sum_j zeta_j / t*`; for an inactive cap, like the others, they come from the slopes `b`.
+
+**The shift along a face.** The shift along the budget generalizes. A *face* is a row `r'w >= rho` (or `= rho`) whose
+normal `r` has every entry -1 or 1, so that it holds the whole portfolio: the budget, a bound of the cash weight, or a
+generated row of the leverage (`r = -s`). With the face held as an equality, every feasible `w` has `r'w = rho`, so with
+`v = mu~ - c r`
+
+    -t v'w = -t mu~'w + t c rho
+
+and the optimum on the face is that of `mu~`; `c` is the midrange of the `r_i mu~_i`, which minimizes `|v|max`, and it may
+be negative (for the leverage face `r = -s`). The multiplier of the face in `Q(t)` is that of `mu~` less `t c`. Where the
+rows hold the budget (no cash) the budget is the face of every point. With cash there is no budget, and the shift is
+along the inequality face that holds the portfolio once it binds, the cash bound or the leverage; the point of the path
+is shifted only when the optimum restricted to that face solves `Q(t)`, that is when the multiplier of the face in `Q(t)`
+is nonnegative, and `Q(t)` is solved unshifted otherwise. At the vertex `L e_best` of the leverage with cash,
+`lambda_lev = -mu~_best`. The decision and its measurements are in
+[validation.md](validation.md#numerical-decisions-of-max_return).
 
 Without a box, `MAX_RETURN` lies on the efficient frontier. With cash it is the capital market line,
 `w = s Sigma^-1 mu~ / sqrt(mu~' Sigma^-1 mu~)` over the risky assets, and `lambda_vol = -sqrt(mu~' Sigma^-1 mu~)`,
@@ -216,7 +271,8 @@ rows in this order: the bound rows of each risky asset (lower then upper), then 
   whose weights grow without bound. The supremum of the ratio exists but is not attained: `PO_SOLVE_UNBOUNDED`, with
   NaN weights and multipliers. It needs an unbounded feasible set: with every weight bounded on both sides, or with a
   leverage, `kappa = 0` forces `y = 0`, which contradicts `v'y = 1`. Without bounds it happens when
-  `1' Sigma^-1 v <= 0`.
+  `1' Sigma^-1 v <= 0`. At `1' Sigma^-1 v` of order rounding the sign of `kappa` is not decided by the data; see
+  [the boundary](validation.md#numerical-decisions-of-max_sharpe-and-max_diversification) in `validation.md`.
 - Otherwise `PO_SOLVE_OPTIMAL` with `w = y / kappa` (and cash exactly 0).
 
 Without bounds or a leverage, the optimum is `y = Sigma^-1 v / (v' Sigma^-1 v)`, so `w = Sigma^-1 v / (1' Sigma^-1 v)`
@@ -254,23 +310,24 @@ The normal of a lower row is `e_i - lower_i 1` and that of an upper row `upper_j
 
 Any other combination is `PO_INVALID_ARGUMENT`:
 
-| Objective | requires | also accepts, besides the bounds |
-|---|---|---|
-| `MIN_VARIANCE` | covariance (mu with a target) | `target_return` |
-| `MAX_RETURN` | mu, covariance, `max_volatility` | none |
-| `UTILITY` | mu, covariance | `risk_aversion` |
-| `IMPORTANCE` | mu, covariance | `importance` |
-| `KELLY` | mu, covariance, `1 + rf > 0` | none |
-| `TRACKING_ERROR` | returns (mu with a target) | `target_return` |
-| `MAX_SHARPE` | mu, covariance | `leverage` |
-| `MAX_DIVERSIFICATION` | covariance | `leverage` |
+| Objective | requires | also accepts, besides the bounds | `leverage` |
+|---|---|---|---|
+| `MIN_VARIANCE` | covariance (mu with a target) | `target_return` | yes |
+| `MAX_RETURN` | mu, covariance, `max_volatility` | none | yes |
+| `UTILITY` | mu, covariance | `risk_aversion` | yes |
+| `IMPORTANCE` | mu, covariance | `importance` | yes |
+| `KELLY` | mu, covariance, `1 + rf > 0` | none | yes |
+| `TRACKING_ERROR` | returns (mu with a target) | `target_return` | yes |
+| `MAX_SHARPE` | mu, covariance | none | yes |
+| `MAX_DIVERSIFICATION` | covariance | none | yes |
 
-`po_solve` checks, in this order: the objective is solved by this version (`PO_UNSUPPORTED` otherwise), every set
+`leverage` is accepted by every objective solved; `RISK_PARITY` will not take it (`"leverage does not apply to
+RISK_PARITY"`). `po_solve` checks, in this order: the objective is solved by this version (`PO_UNSUPPORTED` otherwise), every set
 setter applies to the objective, the data it requires is present, and per-asset bounds match the weight count. The
 messages are `"<setter> does not apply to <OBJECTIVE>"`, `"<OBJECTIVE> requires <item>"` (the items are `mu`,
 `covariance`, `returns` and `max_volatility`) and `"KELLY requires risk_free > -1"`. The setters are the trust
 boundary of the values: `risk_aversion` is positive and finite, `importance` is in [0, 1), `max_volatility` is
-positive and finite and `target_return` is finite.
+positive and finite, `target_return` is finite and `leverage` is positive and finite.
 
 ## The QP rows
 
@@ -294,7 +351,9 @@ the other objectives are given above, and the rows are the same for all of them.
 | Upper bound `u_0` of cash (finite) | `1'w` | inequality `>=` | `1 - u_0` |
 
 The cash rows follow from `w_0 = 1 - 1'w`: `w_0 >= l_0` is `-1'w >= l_0 - 1`, and `w_0 <= u_0` is `1'w >= 1 - u_0`.
-Bounds of the risky assets come first, one lower then one upper per asset, then those of cash.
+Bounds of the risky assets come first, one lower then one upper per asset, then those of cash. The leverage is not a
+row of this table: it is the implicit family of [the leverage section](#leverage-an-implicit-family-of-rows), generated
+as the solver needs it.
 
 ## Multiplier convention
 
@@ -303,13 +362,17 @@ factor 1/2; a maximized objective enters negated), the stationarity condition at
 is
 
     grad f(w) = lambda_budget 1 + lambda_return grad(return)(w) + lambda_vol Sigma w / vol(w)
-                + sum_i beta_i e_i - beta_0 1
+                + lambda_lev g + sum_i beta_i e_i - beta_0 1
 
-- `lambda_budget`, `lambda_return` and `lambda_vol` are `po_result_multiplier` for `PO_CONSTRAINT_BUDGET`,
-  `PO_CONSTRAINT_TARGET_RETURN` and `PO_CONSTRAINT_VOLATILITY`. `grad(return)` is `mu`, or `mu - rf 1` with cash,
-  and `Sigma w / vol(w)` is the gradient of `vol(w) = sqrt(w' Sigma w)`.
+- `lambda_budget`, `lambda_return`, `lambda_vol` and `lambda_lev` are `po_result_multiplier` for
+  `PO_CONSTRAINT_BUDGET`, `PO_CONSTRAINT_TARGET_RETURN`, `PO_CONSTRAINT_VOLATILITY` and `PO_CONSTRAINT_LEVERAGE`.
+  `grad(return)` is `mu`, or `mu - rf 1` with cash, `Sigma w / vol(w)` is the gradient of `vol(w) = sqrt(w' Sigma w)`
+  and `g` is in the subdifferential of `||w||_1` over the risky weights: `g_i = sign(w_i)` where `w_i` is not 0 and any
+  value in [-1, 1] where `w_i = 0`.
 - The term of an absent constraint is omitted: there is no budget term with cash, no return term without a target
-  return, no volatility term unless the objective is MAX_RETURN and no `beta_0` without cash.
+  return, no volatility term unless the objective is MAX_RETURN, no leverage term without a leverage and no `beta_0`
+  without cash. With cash, `MAX_SHARPE` and `MAX_DIVERSIFICATION` fix the cash weight at 0, so their budget term is
+  carried by `beta_0` and the budget multiplier is NaN.
 - `beta_k` is the lower-bound multiplier minus the upper-bound multiplier of weight k (`po_result_bound_multipliers`):
   `>= 0` at an active lower bound and `<= 0` at an active upper bound. It is 0, not NaN, for a weight without a
   finite bound.
@@ -317,11 +380,13 @@ is
   cash rows have the opposite signs of those of an asset (see the table).
 - A multiplier of an absent constraint is NaN: the budget when there is cash, the target return when none was set
   (and for the objectives that take none), the volatility constraint unless the objective is MAX_RETURN, and the
-  leverage constraint, which does not exist in this version. The one other NaN is the vertical `s = sigma_min` case
-  of MAX_RETURN above: the budget multiplier (without cash) and the bound multipliers.
+  leverage constraint when no leverage was set. The one other NaN is the vertical `s = sigma_min` case of MAX_RETURN
+  above: the budget multiplier (when present), the bound multipliers and the leverage multiplier (when a leverage was
+  set).
 - Each multiplier is the derivative of the optimal `f` with respect to the right-hand side of its constraint. A `<=`
   constraint therefore has a multiplier `<= 0`, like `beta` at an upper bound, and a `>=` constraint one `>= 0`. For
   MAX_RETURN, `lambda_vol <= 0` is the derivative with respect to the cap `s`, and 0 when the cap is inactive.
+  `lambda_lev <= 0` is the derivative with respect to the limit `L`, and 0 when the leverage is set but inactive.
 - When the constraints are dependent (a target-return row parallel to the budget row, two equal bounds), the
   multipliers are not unique; one valid set is returned.
 - The weights and all multipliers are NaN when the status provides no point: always for `PO_SOLVE_INFEASIBLE` and

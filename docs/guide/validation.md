@@ -23,7 +23,8 @@ instead check each result against conditions that hold if and only if it is corr
    target return, and a target return equal to the common mean of equal-mean assets. The same for the other
    objectives: the unconstrained `UTILITY` weights and its cash form, the exact replication of a benchmark that is
    a portfolio of the assets (`TRACKING_ERROR`, with zero error), `MAX_RETURN` on the upper branch of the frontier
-   and, with cash, on the capital market line with `lambda_vol` equal to minus its slope.
+   and, with cash, on the capital market line with `lambda_vol` equal to minus its slope, and the tangency and the most
+   diversified portfolios (`MAX_SHARPE` and `MAX_DIVERSIFICATION` without bounds).
 3. **Consistency.** The same problem is checked at two levels: the QP solution returned by `qp::solve` must satisfy
    KKT in its own variables, and the user-level `Result` built from it must satisfy them in the user's. The C API
    tests solve the same problems through `po_solve` and read the result through the accessors, and the Python tests
@@ -63,6 +64,8 @@ instead check each result against conditions that hold if and only if it is corr
 | QP with the gross exposure family: value against the sign-pattern brute force, relative; the 1-norm of x at most `L (1 + tol)` | 1e-10; 1e-12 |
 | Leverage multiplier against a finite difference, relative | 1e-6 |
 | `MAX_SHARPE` against 10 000 feasible portfolios: none with a larger ratio, relative | 1e-12 |
+| `MAX_SHARPE` and `MAX_DIVERSIFICATION` weights against the closed form (C++ and Python), absolute | 1e-12 |
+| `sharpe_ratio` and `diversification_ratio` of the Python package against `numpy`, absolute | 1e-14 |
 | Fuzz battery: KKT residuals and agreement with the reference, `cond(Sigma)` <= 1e4 / 1e6 / 1e8 (and above) | 1e-10 / 1e-9 / 1e-7 |
 
 The KKT residuals (`tests/unit/kkt.hpp`) are relative, and the stationarity and dual scales have no floor of 1,
@@ -167,11 +170,11 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   multiplier in `Q(t)` is nonnegative: then the KKT conditions of `Q(t)` hold with the face among the active rows. The
   decision is the sign itself, with no tolerance. Over the `MaxReturn` unit tests and the three `MaxReturnFuzz`
   tests (27 732 shifted solves of an inequality face, 671 with `c = 0`): 25 048 accepted and 2013 rejected, with 366
-  shifted solves not `Optimal` (fallback as well). Relative to `c`, the face multiplier was within rounding of 0
-  (`|u / t| <= 1.4e-14 c`, a face whose multiplier is 0 in exact arithmetic) in 2 accepted and 3 rejected solves; both
-  outcomes are exact to rounding there, the rejected ones falling back to `Q(t)` unshifted. Outside them the
-  smallest accepted multiplier was 9.0e-4 `c` and the rejected one closest to 0 was -5.0e-5 `c`, ten orders above the
-  rounding.
+  shifted solves not `Optimal` (fallback as well). Relative to `|c|` (`c` is negative for some faces, the leverage face among them, so the
+  scale is its magnitude), the face multiplier was within rounding of 0 (`|u / t| <= 1.4e-14 |c|`, a face whose
+  multiplier is 0 in exact arithmetic) in 2 accepted and 3 rejected solves; both outcomes are exact to rounding there,
+  the rejected ones falling back to `Q(t)` unshifted. Outside them the smallest accepted multiplier was 9.0e-4 `|c|` and
+  the rejected one closest to 0 was -5.0e-5 `|c|`, ten orders above the rounding.
 - **The inactive cap: the limit certificate.** The cap is inactive at a point of the climb when the point satisfies the
   KKT conditions of `max mu~'w` over the rows (every row within the QP's feasibility tolerance, no active slope below
   `-16 n eps |v|max`, and `|v + N b|max <= 16 n eps` times its largest term). Those conditions prove the point optimal
@@ -228,7 +231,7 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
 
 ## Numerical decisions of the QP solver
 
-Four decisions were taken while validating the Goldfarb-Idnani implementation (`src/qp/`). Each is pinned by a test.
+Five decisions were taken while validating the Goldfarb-Idnani implementation (`src/qp/`). Each is pinned by a test.
 
 - **Feasibility at the final x.** When no row is violated, the refinement step below moves `x` onto the active rows
   by their residuals, which carry the rounding of every step from the unconstrained start. Far from it (a start of
@@ -317,10 +320,25 @@ instrumented copy of the builder:
   (`qp::Solution::active_inequalities`), and the solver adds that row only when it is violated beyond its feasibility
   tolerance. The row was active in 28 of the 1067 solves, every one of them `UNBOUNDED` by the reference, with
   `kappa = 1'y` at most 9.7e-17 of `sqrt(n) |y|max` (the scale of the row at the point); in the other 1039, `kappa` was
-  at least 0.14 of it. Sixteen orders of magnitude separate them, and no threshold on `kappa` is needed.
+  at least 0.14 of it. Sixteen orders of magnitude separate them, and no threshold on `kappa` is needed (but see the
+  boundary below).
 - **A kappa that is not positive.** A `kappa <= 0` with the row inactive is the same closure point held within the
   solver's feasibility tolerance, and is `UNBOUNDED` too: `w = y / kappa` would have the wrong sign or no value. It is
   a sign, not a tolerance, and it did not occur in the 1067 solves.
+- **The boundary of the sign of kappa.** Without bounds, `kappa = 1' Sigma^-1 v / v' Sigma^-1 v` is fixed by the data, and
+  `1' Sigma^-1 v = 0` is the border between `OPTIMAL` (it is positive) and `UNBOUNDED` (it is not). When `1' Sigma^-1 v`
+  is zero to rounding, for example `rf` equal to the return of the global minimum-variance portfolio (`B / A` in the
+  notation of [math.md](math.md#min_variance)) with unbounded short selling, the QP can return `kappa = 1'y` in
+  `(0, noise]` with the row `1'y >= 0` inactive. Neither rule above catches it, since the row is not active and `kappa`
+  is positive, and the result is `OPTIMAL` with weights `y / kappa` of order `1 / eps`. It is an ill-posed boundary, not
+  an error of the mapping: the weights of the exact optimum grow like `1 / (1' Sigma^-1 v)` toward it. Measured on
+  `COV` and `MU` of `python/tests/test_ratio_objectives.py` with cash and `rf = B / A` computed in floating point
+  (`1' Sigma^-1 mu~` evaluated in floating point is -1.1e-16, of the order of its own rounding): `OPTIMAL` with
+  `|w|max = 5.7e15`; `rf` moved by `1e-16`, `1e-15`, `1e-14` and `1e-12` below it gives `OPTIMAL` with `|w|max` 1.1e14,
+  1.1e13, 1.1e12 and 1.1e10, proportional to `1 / (1' Sigma^-1 mu~)`, and above it `UNBOUNDED`. The battery has no case there, only the gap of 16 orders of
+  magnitude between the two groups above (at most 9.7e-17 against at least 0.14), so no threshold on `kappa` has a
+  measurement behind it and none is added. This is documented, not fixed: a result with weights of order `1 / eps`
+  is a sign of this boundary.
 - **Cash bounds.** With cash the cash weight is held at exactly 0, and the request is `INFEASIBLE` when the cash bounds
   exclude 0: `lower_0 > 0` or `upper_0 < 0`, compared with 0 exactly.
 - **The multipliers.** The mapping uses `nu = 2 sigma_y^2`, which complementarity gives in exact arithmetic, rather
@@ -478,3 +496,4 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
 | `tests/unit/capi/` | The C boundary: status codes, `po_last_error()`, null handles, the new setters and `po_data_set_returns`, ABI constants, the metrics; `c_header_check.c` compiles the header as C11 |
 | `python/tests/test_min_variance.py`, `test_qp_objectives.py` | The Python package against closed forms, `numpy` and the status contract; the frozen `Spec`, the objective identities, `MAX_RETURN` on the capital market line, the input checks of `Data` |
+| `python/tests/test_ratio_objectives.py` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` against the closed forms (`numpy`), the cash weight 0, `UNBOUNDED` and `INFEASIBLE`, the leverage and its multiplier, the hash of a `Spec` with a leverage and array bounds, `sharpe_ratio` and `diversification_ratio` against `numpy` |

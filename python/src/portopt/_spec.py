@@ -18,6 +18,7 @@ SCALAR_SETTERS = (
     ("risk_aversion", "po_spec_set_risk_aversion"),
     ("importance", "po_spec_set_importance"),
     ("max_volatility", "po_spec_set_max_volatility"),
+    ("leverage", "po_spec_set_leverage"),
 )
 
 
@@ -61,6 +62,7 @@ class Spec:
     risk_aversion: float | None = None
     importance: float | None = None
     max_volatility: float | None = None
+    leverage: float | None = None
     _handle: _native.Handle = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
