@@ -95,11 +95,10 @@ inline double risk_parity_value(const po::Data& data, std::span<const double> bu
 // grad f = 2 J'(c - b) with J = (diag(Sigma w) + diag(w) Sigma - 2 c (Sigma w)') / (w' Sigma w), as the three
 // terms 2 d_j (Sigma w)_j / v, 2 (Sigma (w o d))_j / v and -4 (Sigma w)_j (c'd) / v, with d = c - b and
 // v = w' Sigma w.
-inline std::array<std::vector<long double>, 3> wide_gradient_terms(const po::Data& data,
-                                                                   std::span<const double> budget,
-                                                                   std::span<const double> weights)
+inline std::array<std::vector<long double>, 3> wide_gradient_terms_at(const po::Data& data,
+                                                                      std::span<const double> budget,
+                                                                      const std::vector<long double>& w)
 {
-    std::vector<long double> w = widened(weights);
     std::vector<long double> product = wide_covariance_times(data, w);
     long double variance = wide_dot(w, product);
     std::size_t n = w.size();
@@ -124,6 +123,46 @@ inline std::array<std::vector<long double>, 3> wide_gradient_terms(const po::Dat
         terms[2][i] = -2.0L * factor * product[i] * weighted_gap;
     }
     return terms;
+}
+
+inline std::array<std::vector<long double>, 3> wide_gradient_terms(const po::Data& data,
+                                                                   std::span<const double> budget,
+                                                                   std::span<const double> weights)
+{
+    return wide_gradient_terms_at(data, budget, widened(weights));
+}
+
+inline std::vector<long double> wide_gradient_at(const po::Data& data, std::span<const double> budget,
+                                                 const std::vector<long double>& w)
+{
+    std::array<std::vector<long double>, 3> terms = wide_gradient_terms_at(data, budget, w);
+    std::vector<long double> gradient(w.size());
+    for (std::size_t i = 0; i < gradient.size(); ++i)
+    {
+        gradient[i] = terms[0][i] + terms[1][i] + terms[2][i];
+    }
+    return gradient;
+}
+
+// f at weights in long double.
+inline long double wide_value_at(const po::Data& data, std::span<const double> budget,
+                                 const std::vector<long double>& w)
+{
+    std::vector<long double> contributions = wide_contributions(data, w);
+    long double total = 0.0L;
+    for (std::size_t i = 0; i < contributions.size(); ++i)
+    {
+        long double gap = contributions[i] - budget[i];
+        total += gap * gap;
+    }
+    return total;
+}
+
+// sqrt(w' Sigma w) in long double: the plain double product loses eps cond(Sigma).
+inline double wide_volatility(const po::Data& data, std::span<const double> weights)
+{
+    std::vector<long double> w = widened(weights);
+    return static_cast<double>(std::sqrt(wide_dot(w, wide_covariance_times(data, w))));
 }
 
 inline std::vector<std::vector<double>> risk_parity_gradient_terms(const po::Data& data,
@@ -659,7 +698,7 @@ inline void expect_risk_parity_feasible(const po::Spec& spec, const po::Data& da
     }
     if (spec.target_volatility.has_value())
     {
-        double gap = std::fabs(portfolio_volatility(data, result.weights) - *spec.target_volatility);
+        double gap = std::fabs(wide_volatility(data, result.weights) - *spec.target_volatility);
         EXPECT_LE(relative_to(gap, *spec.target_volatility), tolerance);
     }
 }
@@ -691,7 +730,7 @@ inline void expect_minimum_volatility_point(const po::Spec& spec, const po::Data
     po::Result minimum = frontier_point(spec, data, spec.target_return);
     ASSERT_EQ(minimum.status, po::SolveStatus::Optimal);
     double target = *spec.target_volatility;
-    double distance = std::fabs(target - portfolio_volatility(data, minimum.weights));
+    double distance = std::fabs(target - wide_volatility(data, minimum.weights));
     EXPECT_LE(distance, kMinimumVolatilityBand * target) << "tolerance: s is not the minimum volatility";
     for (std::size_t k = 0; k < result.weights.size(); ++k)
     {
@@ -767,11 +806,190 @@ inline double contribution_gap(const po::Data& data, std::span<const double> bud
     return gap;
 }
 
+// The Hessian of f at w (n x n, row-major) by central differences of the reference gradient. The step is
+// kHessianStep of the largest weight, small against the relative distance of about 1 / cond(Sigma) over
+// which the gradient turns, and large against the rounding of the gradient in long double. Measured against
+// the analytic Hessian of the library within 1e-6 at cond(Sigma) up to 1e6
+// (RiskParityReference.HessianByDifferencesMatchesTheObjective).
+inline constexpr long double kHessianStep = 1e-12L;
+
+inline std::vector<long double> wide_hessian(const po::Data& data, std::span<const double> budget,
+                                             const std::vector<long double>& w)
+{
+    std::size_t n = w.size();
+    long double largest = 0.0L;
+    for (long double weight : w)
+    {
+        largest = std::fmax(largest, std::fabs(weight));
+    }
+    std::vector<long double> hessian(n * n);
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        std::vector<long double> above = w;
+        std::vector<long double> below = w;
+        above[j] += kHessianStep * largest;
+        below[j] -= kHessianStep * largest;
+        std::vector<long double> gradient_above = wide_gradient_at(data, budget, above);
+        std::vector<long double> gradient_below = wide_gradient_at(data, budget, below);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            hessian[i * n + j] = (gradient_above[i] - gradient_below[i]) / (above[j] - below[j]);
+        }
+    }
+    return hessian;
+}
+
+// hess f - volatility hess vol, with hess vol = Sigma / vol - p p' / vol^3 and p = Sigma w: the derivative in
+// w of the stationarity residual. Without a volatility multiplier (NaN or 0) it is hess f.
+inline std::vector<long double> wide_lagrangian_hessian(const po::Data& data, std::span<const double> budget,
+                                                        long double volatility_multiplier,
+                                                        const std::vector<long double>& w)
+{
+    std::vector<long double> hessian = wide_hessian(data, budget, w);
+    if (std::isnan(volatility_multiplier) || volatility_multiplier == 0.0L)
+    {
+        return hessian;
+    }
+    std::size_t n = w.size();
+    std::vector<long double> product = wide_covariance_times(data, w);
+    long double volatility = std::sqrt(wide_dot(w, product));
+    long double cube = volatility * volatility * volatility;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        for (std::size_t l = 0; l < n; ++l)
+        {
+            long double covariance = data.covariance()[j * n + l];
+            long double curvature = covariance / volatility - product[j] * product[l] / cube;
+            hessian[j * n + l] -= volatility_multiplier * curvature;
+        }
+    }
+    return hessian;
+}
+
+// The constraint terms of the stationarity in long double: their sum, the sum of their magnitudes per entry,
+// and the largest single one.
+struct WideConstraintTerms
+{
+    std::vector<long double> total;
+    std::vector<long double> magnitude;
+    long double scale = 0.0L;
+};
+
+// A NaN term makes the scale NaN for good: a NaN multiplier must fail the check, not vanish from it.
+inline void add_term(long double term, std::size_t entry, WideConstraintTerms& terms)
+{
+    terms.total[entry] += term;
+    terms.magnitude[entry] += std::fabs(term);
+    if (std::isnan(term) || std::fabs(term) > terms.scale)
+    {
+        terms.scale = std::fabs(term);
+    }
+}
+
+// budget 1 + target_return mu + volatility Sigma w / vol + beta at the weights of the result, the budget and
+// the target-return terms skipped when their multiplier is NaN, the volatility term when it is NaN or 0.
+inline WideConstraintTerms wide_constraint_terms(const po::Data& data, const po::Result& result)
+{
+    std::size_t n = data.asset_count();
+    std::vector<long double> w = widened(result.weights);
+    std::vector<long double> product = wide_covariance_times(data, w);
+    long double volatility = std::sqrt(wide_dot(w, product));
+    long double volatility_multiplier = result.volatility_multiplier;
+    bool has_volatility = !std::isnan(result.volatility_multiplier) && result.volatility_multiplier != 0.0;
+    WideConstraintTerms terms{std::vector<long double>(n, 0.0L), std::vector<long double>(n, 0.0L), 0.0L};
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        add_term(result.bound_multipliers[j], j, terms);
+        if (!std::isnan(result.budget_multiplier))
+        {
+            add_term(result.budget_multiplier, j, terms);
+        }
+        if (!std::isnan(result.target_return_multiplier))
+        {
+            add_term(static_cast<long double>(result.target_return_multiplier) * data.mu()[j], j, terms);
+        }
+        if (has_volatility)
+        {
+            add_term(volatility_multiplier * product[j] / volatility, j, terms);
+        }
+    }
+    return terms;
+}
+
+// The stationarity residual r = grad f - budget 1 - target_return mu - volatility Sigma w / vol - beta of a
+// result, evaluated in long double, by two measures.
+struct RiskParityStationarity
+{
+    // max_j |r_j| over the largest term of grad f or of the constraints (at f = 0, over the unit-gap scale).
+    double relative;
+    // max_j |r_j| / floor_j, floor_j = eps ((|hess f - volatility hess vol| |w|)_j + the magnitudes of the
+    // constraint terms of entry j): how far r_j moves when every weight and every multiplier of the result,
+    // all doubles, is rounded once. A KKT point rounded to doubles sits at about 1.
+    double over_floor;
+};
+
+inline double largest_over_floor(const std::vector<long double>& residual,
+                                 const std::vector<long double>& hessian, const WideConstraintTerms& terms,
+                                 std::span<const double> weights)
+{
+    std::size_t n = residual.size();
+    double worst = 0.0;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        long double moved = terms.magnitude[j];
+        for (std::size_t l = 0; l < n; ++l)
+        {
+            moved += std::fabs(hessian[j * n + l] * weights[l]);
+        }
+        long double floor = std::numeric_limits<double>::epsilon() * moved;
+        if (residual[j] != 0.0L)
+        {
+            worst = worst_of(worst, static_cast<double>(std::fabs(residual[j]) / floor));
+        }
+    }
+    return worst;
+}
+
+inline RiskParityStationarity risk_parity_stationarity(const po::Spec& spec, const po::Data& data,
+                                                       const po::Result& result, double tolerance)
+{
+    std::size_t n = data.asset_count();
+    std::vector<double> budget = budget_of(spec, n);
+    std::vector<long double> w = widened(result.weights);
+    std::array<std::vector<long double>, 3> gradient = wide_gradient_terms_at(data, budget, w);
+    WideConstraintTerms terms = wide_constraint_terms(data, result);
+    std::vector<long double> residual(n);
+    double scale = static_cast<double>(terms.scale);
+    double largest = 0.0;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        residual[j] = gradient[0][j] + gradient[1][j] + gradient[2][j] - terms.total[j];
+        largest = worst_of(largest, static_cast<double>(std::fabs(residual[j])));
+        for (const std::vector<long double>& term : gradient)
+        {
+            scale = worst_of(scale, static_cast<double>(std::fabs(term[j])));
+        }
+    }
+    if (contribution_gap(data, budget, result.weights) <= tolerance)
+    {
+        scale = worst_of(scale, unit_gap_gradient_scale(data, result.weights));
+    }
+    std::vector<long double> hessian = wide_lagrangian_hessian(data, budget, result.volatility_multiplier, w);
+    return RiskParityStationarity{relative_to(largest, scale),
+                                  largest_over_floor(residual, hessian, terms, result.weights)};
+}
+
+// A stationarity above the tolerance passes when every entry of the residual is within this many times its
+// rounding floor: no doubles near the solution do better (docs/guide/validation.md).
+inline constexpr double kRoundingFloorFactor = 2.0;
+
 // KKT in the user's variables: equalities, bounds, sign and complementarity of beta, the NaN pattern of the
 // multipliers, and
 //   grad f(w) = budget * 1 + target_return * mu + volatility * Sigma w / vol + beta,
-// with grad f from risk_parity_gradient, and the identity w'grad f = 0. A volatility multiplier of -inf is
-// the case s = sigma_min, which has no stationarity to check (expect_minimum_volatility_point).
+// with grad f from risk_parity_gradient, and the identity w'grad f = 0. The stationarity passes at the
+// tolerance, relative to its largest term, or within kRoundingFloorFactor of its rounding floor. A volatility
+// multiplier of -inf is the case s = sigma_min, which has no stationarity to check
+// (expect_minimum_volatility_point).
 inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, const po::Result& result,
                                    double tolerance)
 {
@@ -793,7 +1011,11 @@ inline void expect_risk_parity_kkt(const po::Spec& spec, const po::Data& data, c
         gradient.scale = worst_of(gradient.scale, unit_gap_gradient_scale(data, result.weights));
     }
     expect_homogeneity_identity(result.weights, gradient, tolerance);
-    expect_user_stationarity(data, result, gradient, tolerance);
+    RiskParityStationarity stationarity = risk_parity_stationarity(spec, data, result, tolerance);
+    EXPECT_TRUE(stationarity.relative <= tolerance || stationarity.over_floor <= kRoundingFloorFactor)
+        << "stationarity: " << stationarity.relative << " of the largest term, above the tolerance "
+        << tolerance << ", and " << stationarity.over_floor << " of its rounding floor, above "
+        << kRoundingFloorFactor;
 }
 
 // The message of every failure of expect_risk_parity_kkt on the result; empty when it passes. The failures

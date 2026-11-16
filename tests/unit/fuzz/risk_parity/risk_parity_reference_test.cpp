@@ -16,8 +16,11 @@
 #include "core/spec.hpp"
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
+#include "fuzz/risk_parity/risk_parity_refinement.hpp"
 #include "random_covariance.hpp"
+#include "riskparity/objective.hpp"
 #include "riskparity/spinu.hpp"
+#include "solve/solve.hpp"
 #include "user_kkt.hpp"
 
 namespace
@@ -472,6 +475,110 @@ TEST(RiskParityReference, KktRejectsAPositiveInfiniteVolatilityMultiplier)
     point.result.budget_multiplier = 0.0;
     point.result.bound_multipliers.assign(point.result.weights.size(), 0.0);
     expect_rejected(point.spec, point.data, point.result, "volatility_multiplier");
+}
+
+TEST(RiskParityReference, HessianByDifferencesMatchesTheObjective)
+{
+    std::size_t n = 6;
+    for (double condition : {1e2, 1e6})
+    {
+        SCOPED_TRACE(condition);
+        Data data = covariance_data(n, {}, random_covariance(n, 3, condition));
+        std::vector<double> budget = normalized(random_vector(n, 11, 0.2, 1.0));
+        std::vector<double> weights = normalized(random_vector(n, 13, -0.3, 1.0));
+        std::vector<long double> differences =
+            po::testing::wide_hessian(data, budget, po::testing::widened(weights));
+        std::vector<double> hessian = po::riskparity::linearize(data, budget, weights, true).hessian;
+        double scale = po::testing::largest_magnitude(hessian);
+        for (std::size_t k = 0; k < n * n; ++k)
+        {
+            EXPECT_NEAR(static_cast<double>(differences[k]), hessian[k], 1e-6 * scale) << "entry " << k;
+        }
+    }
+}
+
+// A solution with a target volatility and no box at cond(Sigma) = 1e8: its stationarity is above the band of
+// 1e-7 and within the rounding floor, where one ulp of the weights moves it by more than the band.
+struct FloorLimitedPoint
+{
+    po::testing::GeneratedRiskParity problem;
+    Result result;
+};
+
+constexpr double kFloorLimitedBand = 1e-7;
+
+FloorLimitedPoint floor_limited_point()
+{
+    using Shape = po::testing::RiskParityShape;
+    po::testing::GeneratedRiskParity problem = po::testing::generate(
+        Shape{10, 1e8, 1.0, Shape::Budget::Uneven, Shape::Box::None, false, true, 7929});
+    Result result = po::solve(problem.spec, problem.data).value();
+    return FloorLimitedPoint{std::move(problem), std::move(result)};
+}
+
+constexpr double kSixtyFourUlps = 64.0 * std::numeric_limits<double>::epsilon();
+
+// Every weight moved by a relative amount, in alternating directions.
+void move_weights(std::vector<double>& weights, double relative)
+{
+    double direction = 1.0;
+    for (double& weight : weights)
+    {
+        weight *= 1.0 + direction * relative;
+        direction = -direction;
+    }
+}
+
+TEST(RiskParityReference, KktAcceptsAStationarityAtItsRoundingFloor)
+{
+    FloorLimitedPoint point = floor_limited_point();
+    ASSERT_EQ(point.result.status, SolveStatus::Optimal);
+    po::testing::RiskParityStationarity stationarity = po::testing::risk_parity_stationarity(
+        point.problem.spec, point.problem.data, point.result, kFloorLimitedBand);
+    EXPECT_GT(stationarity.relative, kFloorLimitedBand);
+    EXPECT_LE(stationarity.over_floor, po::testing::kRoundingFloorFactor);
+    const Spec& spec = point.problem.spec;
+    po::testing::expect_risk_parity_kkt(spec, point.problem.data, point.result, kFloorLimitedBand);
+}
+
+// The floor is not a wider band: 64 ulps of every weight are above it, while the equalities still hold at the
+// band.
+TEST(RiskParityReference, KktRejectsAStationarityAboveItsRoundingFloor)
+{
+    FloorLimitedPoint point = floor_limited_point();
+    ASSERT_EQ(point.result.status, SolveStatus::Optimal);
+    move_weights(point.result.weights, kSixtyFourUlps);
+    std::vector<std::string> failures = po::testing::risk_parity_kkt_failures(
+        point.problem.spec, point.problem.data, point.result, kFloorLimitedBand);
+    ASSERT_EQ(failures.size(), 1u);
+    EXPECT_NE(failures.front().find("of its rounding floor"), std::string::npos) << failures.front();
+    po::testing::RiskParityStationarity stationarity = po::testing::risk_parity_stationarity(
+        point.problem.spec, point.problem.data, point.result, kFloorLimitedBand);
+    EXPECT_GT(stationarity.over_floor, 8.0);
+}
+
+// The stationarity at its rounding floor bounds the backward error, not the distance to the solution, which
+// is larger by the conditioning of the KKT system: the weights of the result are 1e-12 from the KKT point
+// refined in long double, far inside the band. Weights moved by 1e-10 are measured as 1e-10 away.
+TEST(RiskParityReference, ForwardErrorMeasuresTheDistanceToTheRefinedPoint)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    FloorLimitedPoint point = floor_limited_point();
+    ASSERT_EQ(point.result.status, SolveStatus::Optimal);
+    po::testing::ForwardError solved =
+        po::testing::forward_error(point.problem.spec, point.problem.data, point.result);
+    EXPECT_LE(solved.reference_over_floor, 1e-2);
+    EXPECT_LE(solved.weights, 1e-11);
+    Result moved = point.result;
+    move_weights(moved.weights, 1e-10);
+    po::testing::ForwardError error =
+        po::testing::forward_error(point.problem.spec, point.problem.data, moved);
+    EXPECT_LE(error.reference_over_floor, 1e-2);
+    EXPECT_GE(error.weights, 0.5e-10);
+    EXPECT_LE(error.weights, 2e-10);
 }
 
 TEST(RiskParityReference, ShapesCoverEveryCombination)

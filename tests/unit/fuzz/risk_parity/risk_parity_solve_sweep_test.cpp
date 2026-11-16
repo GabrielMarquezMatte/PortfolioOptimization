@@ -15,6 +15,7 @@
 #include "core/result.hpp"
 #include "core/spec.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
+#include "fuzz/risk_parity/risk_parity_refinement.hpp"
 #include "problems/constraints.hpp"
 #include "qp/goldfarb_idnani.hpp"
 #include "qp/problem.hpp"
@@ -23,7 +24,6 @@
 #include "riskparity/newton_polish.hpp"
 #include "riskparity/spinu.hpp"
 #include "solve/solve.hpp"
-#include "user_kkt.hpp"
 
 namespace
 {
@@ -32,13 +32,12 @@ using po::Result;
 using po::SolveStatus;
 using Shape = po::testing::RiskParityShape;
 
-// OPTIMAL results of OptimalRunsAreKkt out of its 576 shapes and, among them, those whose stationarity is
-// above the band of cond(Sigma), as measured (docs/guide/validation.md). The solver is deterministic: fewer
-// OPTIMAL or more misses is a regression.
+// OPTIMAL results of OptimalRunsAreKkt out of its 576 shapes, as measured (docs/guide/validation.md). The
+// solver is deterministic: fewer is a regression.
 constexpr int kOptimalFloor = 564;
-constexpr int kBandMisses = 47;
-// The text of the stationarity check of expect_user_stationarity in a failure message.
-constexpr const char* kStationarityCheck = "relative_to(largest_magnitude(residual), scale)";
+// The reference of a floor-limited result is at most this fraction of the rounding floor of the result from
+// stationarity: the point the forward error is measured against is that much closer to a KKT point.
+constexpr double kReferenceOverFloor = 1e-2;
 
 double band_of(double condition)
 {
@@ -61,11 +60,13 @@ struct SolveRun
     Result result;
     // The failures of expect_risk_parity_kkt at the band of cond(Sigma); only checked for an OPTIMAL result.
     std::vector<std::string> kkt_failures;
-    // Of an OPTIMAL result with finite multipliers: the KKT residual in units of its noise, and the
-    // stationarity of the check, relative to the largest term, over the band (meaningful away from f = 0,
-    // where the check uses the unit-gap scale instead).
-    double noise_residual = 0.0;
-    double stationarity_over_band = 0.0;
+    // Of an OPTIMAL result with finite multipliers: its stationarity by the two measures of the check, and
+    // whether it is above the band, so that the check passes it by the rounding floor alone.
+    po::testing::RiskParityStationarity stationarity{0.0, 0.0};
+    bool floor_limited = false;
+    // Of a floor-limited result, against the KKT point of its active set refined in long double.
+    po::testing::ForwardError forward{0.0, 0.0, 0.0, 0.0};
+    double value = 0.0;
     bool no_point_is_nan = true;
     double seconds = 0.0;
 };
@@ -79,60 +80,28 @@ bool is_all_nan(const Result& result)
            std::ranges::all_of(result.bound_multipliers, is_nan);
 }
 
-// Every failure is the stationarity check: the equalities, the bounds, the signs and the complementarity of
-// the multipliers and the identity w'grad f = 0 hold at the band.
-bool misses_only_stationarity(const SolveRun& run)
-{
-    auto is_stationarity = [](const std::string& failure)
-    { return failure.find(kStationarityCheck) != std::string::npos; };
-    return !run.kkt_failures.empty() && std::ranges::all_of(run.kkt_failures, is_stationarity);
-}
-
-double noise_residual_of(const po::testing::GeneratedRiskParity& generated, const Result& result)
-{
-    po::riskparity::KktPoint point{result.weights, {result.budget_multiplier}, result.bound_multipliers};
-    if (generated.spec.target_return.has_value())
-    {
-        point.equality_multipliers.push_back(result.target_return_multiplier);
-    }
-    if (generated.spec.target_volatility.has_value())
-    {
-        point.equality_multipliers.push_back(result.volatility_multiplier);
-    }
-    po::riskparity::KktProblem problem{generated.spec, generated.data, generated.spec.risk_budget};
-    return largest(residual_of(problem, point, evaluate_kkt(problem, point)));
-}
-
-// max |grad f - constraint terms| over the largest term, as expect_user_stationarity measures it.
-double relative_stationarity(const po::testing::GeneratedRiskParity& generated, const Result& result)
-{
-    po::testing::ObjectiveGradient gradient = po::testing::sum_of(
-        po::testing::risk_parity_gradient_terms(generated.data, generated.spec.risk_budget, result.weights));
-    po::testing::ConstraintTerms terms = po::testing::constraint_terms(generated.data, result);
-    double largest = 0.0;
-    for (std::size_t i = 0; i < gradient.value.size(); ++i)
-    {
-        largest = std::fmax(largest, std::fabs(gradient.value[i] - terms.total[i]));
-    }
-    return largest / std::fmax(gradient.scale, terms.scale);
-}
-
 void check_optimal(const po::testing::GeneratedRiskParity& generated, SolveRun& run)
 {
+    const po::Spec& spec = generated.spec;
     double band = band_of(run.shape.condition);
-    run.kkt_failures =
-        po::testing::risk_parity_kkt_failures(generated.spec, generated.data, run.result, band);
+    run.kkt_failures = po::testing::risk_parity_kkt_failures(spec, generated.data, run.result, band);
     if (!std::isfinite(run.result.budget_multiplier))
     {
         return;
     }
-    run.noise_residual = noise_residual_of(generated, run.result);
-    run.stationarity_over_band = relative_stationarity(generated, run.result) / band;
+    run.stationarity = po::testing::risk_parity_stationarity(spec, generated.data, run.result, band);
+    run.floor_limited = !(run.stationarity.relative <= band);
+    run.value = po::testing::risk_parity_value(generated.data, spec.risk_budget, run.result.weights);
+    if (run.floor_limited && po::testing::kLongDoubleIsExtended)
+    {
+        run.forward = po::testing::forward_error(spec, generated.data, run.result);
+    }
 }
 
 SolveRun run_shape(const Shape& shape)
 {
-    SolveRun run{shape, false, {}, {}, 0.0, 0.0, true, 0.0};
+    SolveRun run;
+    run.shape = shape;
     try
     {
         po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
@@ -175,18 +144,26 @@ std::vector<SolveRun> sweep(const std::vector<std::size_t>& sizes, std::uint64_t
     return runs;
 }
 
+// |f(w) - f(w_ref)| over band (1 + f): at most 1 when the value of the result is right at the band.
+double value_error_over_band(const SolveRun& run)
+{
+    return run.forward.value / (band_of(run.shape.condition) * (1.0 + run.value));
+}
+
 struct Tally
 {
     int runs = 0;
     int optimal = 0;
     int infeasible = 0;
     int max_iterations = 0;
-    int band_misses = 0;
-    int other_failures = 0;
+    int kkt_failures = 0;
+    int floor_limited = 0;
     long iterations = 0;
     int most_iterations = 0;
-    double largest_noise_residual = 0.0;
-    double largest_over_band = 0.0;
+    double largest_over_floor = 0.0;
+    double largest_weight_error = 0.0;
+    double largest_value_error = 0.0;
+    double largest_reference = 0.0;
     double seconds = 0.0;
     double longest = 0.0;
 };
@@ -207,21 +184,25 @@ void count(const SolveRun& run, Tally& tally)
         return;
     }
     ++tally.optimal;
-    tally.band_misses += misses_only_stationarity(run);
-    tally.other_failures += !run.kkt_failures.empty() && !misses_only_stationarity(run);
+    tally.kkt_failures += !run.kkt_failures.empty();
     tally.iterations += run.result.iterations;
     tally.most_iterations = std::max(tally.most_iterations, run.result.iterations);
-    tally.largest_noise_residual = std::fmax(tally.largest_noise_residual, run.noise_residual);
-    if (misses_only_stationarity(run))
+    if (!run.floor_limited)
     {
-        tally.largest_over_band = std::fmax(tally.largest_over_band, run.stationarity_over_band);
+        return;
     }
+    ++tally.floor_limited;
+    tally.largest_over_floor = po::testing::worst_of(tally.largest_over_floor, run.stationarity.over_floor);
+    tally.largest_weight_error = po::testing::worst_of(tally.largest_weight_error, run.forward.weights);
+    tally.largest_value_error = po::testing::worst_of(tally.largest_value_error, value_error_over_band(run));
+    tally.largest_reference =
+        po::testing::worst_of(tally.largest_reference, run.forward.reference_over_floor);
 }
 
 void print_table(const char* first_column, const std::map<std::string, Tally>& table)
 {
-    std::printf("| %s | optimal | max iter | infeasible | above the band | other KKT failures | iterations | "
-                "noise residual | stationarity / band, above the band | seconds (longest) |\n",
+    std::printf("| %s | optimal | max iter | infeasible | KKT failed | floor-limited | stationarity / floor "
+                "| weight error | value error / band | reference / floor | iterations | seconds (longest) |\n",
                 first_column);
     for (const auto& [key, tally] : table)
     {
@@ -230,17 +211,24 @@ void print_table(const char* first_column, const std::map<std::string, Tally>& t
         {
             mean = static_cast<double>(tally.iterations) / tally.optimal;
         }
-        std::printf("| %s | %d / %d | %d | %d | %d | %d | %.1f (%d) | %.2f | %.3g | %.2f (%.3f) |\n",
+        std::printf("| %s | %d / %d | %d | %d | %d | %d | %.2f | %.2g | %.2g | %.2g | %.1f (%d) | "
+                    "%.2f (%.3f) |\n",
                     key.c_str(), tally.optimal, tally.runs, tally.max_iterations, tally.infeasible,
-                    tally.band_misses, tally.other_failures, mean, tally.most_iterations,
-                    tally.largest_noise_residual, tally.largest_over_band, tally.seconds, tally.longest);
+                    tally.kkt_failures, tally.floor_limited, tally.largest_over_floor,
+                    tally.largest_weight_error, tally.largest_value_error, tally.largest_reference, mean,
+                    tally.most_iterations, tally.seconds, tally.longest);
     }
+}
+
+const char* box_name(const Shape& shape)
+{
+    constexpr const char* kBoxes[] = {"None", "LongOnly", "Capped"};
+    return kBoxes[static_cast<int>(shape.box)];
 }
 
 std::string constraints_name(const Shape& shape)
 {
-    constexpr const char* kBoxes[] = {"None", "LongOnly", "Capped"};
-    std::string name = kBoxes[static_cast<int>(shape.box)];
+    std::string name = box_name(shape);
     if (shape.target_return)
     {
         name += " + return";
@@ -252,9 +240,9 @@ std::string constraints_name(const Shape& shape)
     return name;
 }
 
-void print_other_failures(const SolveRun& run)
+void print_failures(const SolveRun& run)
 {
-    if (run.kkt_failures.empty() || misses_only_stationarity(run))
+    if (run.kkt_failures.empty())
     {
         return;
     }
@@ -270,6 +258,7 @@ void print_sweep(const std::vector<SolveRun>& runs)
     std::map<std::string, Tally> by_constraints;
     std::map<std::string, Tally> by_condition;
     std::map<std::string, Tally> by_size;
+    std::map<std::string, Tally> floor_limited;
     for (const SolveRun& run : runs)
     {
         char key[96];
@@ -278,33 +267,42 @@ void print_sweep(const std::vector<SolveRun>& runs)
         count(run, by_condition[key]);
         std::snprintf(key, sizeof(key), "%3zu", run.shape.n);
         count(run, by_size[key]);
-        print_other_failures(run);
+        print_failures(run);
+        if (run.floor_limited)
+        {
+            const char* box = box_name(run.shape);
+            std::snprintf(key, sizeof(key), "%g | %3zu | %s", run.shape.condition, run.shape.n, box);
+            count(run, floor_limited[key]);
+        }
     }
     print_table("constraints", by_constraints);
     print_table("cond", by_condition);
     print_table("n", by_size);
+    print_table("cond | n | box, the floor-limited results", floor_limited);
 }
 
-// A result above the band on the stationarity alone is a point whose stationarity is at the rounding of its
-// weights (within kKktNoiseFactor of the noise), which the band of cond(Sigma) does not reach: so far only
-// with a target volatility at cond(Sigma) >= 1e4.
-void expect_at_the_rounding_of_the_weights(const SolveRun& run)
+// A result that the check passes by the rounding floor of its stationarity alone must still be the right
+// point: against the KKT point of its active set refined in long double, the weights and f agree at the band.
+void expect_forward_error_at_the_band(const SolveRun& run)
 {
-    EXPECT_TRUE(misses_only_stationarity(run)) << run.kkt_failures.front();
-    EXPECT_TRUE(run.shape.target_volatility);
-    EXPECT_GE(run.shape.condition, 1e4);
-    EXPECT_LE(run.noise_residual, po::riskparity::kKktNoiseFactor);
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        return;
+    }
+    EXPECT_LE(run.forward.reference_over_floor, kReferenceOverFloor);
+    EXPECT_LE(run.forward.reference_gap, band_of(run.shape.condition));
+    EXPECT_LE(run.forward.weights, band_of(run.shape.condition));
+    EXPECT_LE(value_error_over_band(run), 1.0);
 }
 
-// No result is silently wrong. Every status other than OPTIMAL comes without a point. Every OPTIMAL
-// satisfies the equalities, the bounds and the signs and complementarity of the multipliers at the band of
-// its cond(Sigma), and its stationarity too except on the measured runs of kBandMisses, which are reported
-// with their residuals in docs/guide/validation.md and not given a wider band.
+// No result is silently wrong. Every status other than OPTIMAL comes without a point. Every OPTIMAL passes
+// expect_risk_parity_kkt at the band of its cond(Sigma), and those it passes by the rounding floor of the
+// stationarity are also checked by their forward error.
 TEST(RiskParitySolveSweep, OptimalRunsAreKkt)
 {
     std::vector<SolveRun> runs = sweep({3, 5, 10}, 1);
     int optimal = 0;
-    int band_misses = 0;
+    int floor_limited = 0;
     for (const SolveRun& run : runs)
     {
         SCOPED_TRACE(po::testing::describe(run.shape));
@@ -315,16 +313,20 @@ TEST(RiskParitySolveSweep, OptimalRunsAreKkt)
         EXPECT_TRUE(run.no_point_is_nan);
         EXPECT_NE(run.result.status, SolveStatus::Unbounded);
         optimal += run.result.status == SolveStatus::Optimal;
-        if (run.kkt_failures.empty())
+        floor_limited += run.floor_limited;
+        for (const std::string& failure : run.kkt_failures)
         {
-            continue;
+            ADD_FAILURE() << failure;
         }
-        ++band_misses;
-        expect_at_the_rounding_of_the_weights(run);
+        if (run.floor_limited)
+        {
+            expect_forward_error_at_the_band(run);
+        }
     }
     EXPECT_EQ(runs.size(), 576u);
     EXPECT_GE(optimal, kOptimalFloor);
-    EXPECT_LE(band_misses, kBandMisses);
+    // The grid has results above the band, or the forward-error check above checked nothing.
+    EXPECT_GT(floor_limited, 0);
 }
 
 // The measurement of docs/guide/validation.md: run with --gtest_also_run_disabled_tests.
