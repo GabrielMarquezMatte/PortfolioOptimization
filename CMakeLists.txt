@@ -47,6 +47,8 @@ add_library(portopt_core STATIC
     src/problems/parametric_path.cpp
     src/problems/mean_variance.cpp
     src/problems/tracking_error.cpp
+    src/riskparity/objective.cpp
+    src/riskparity/polyhedral_descent.cpp
     src/riskparity/risk_parity.cpp
     src/riskparity/spinu.cpp
     src/solve/requirements.cpp
@@ -116,6 +118,8 @@ if(PO_BUILD_TESTS)
         tests/unit/problems/min_variance_test.cpp
         tests/unit/problems/utility_test.cpp
         tests/unit/problems/tracking_error_test.cpp
+        tests/unit/riskparity/objective_test.cpp
+        tests/unit/riskparity/polyhedral_descent_test.cpp
         tests/unit/riskparity/risk_parity_test.cpp
         tests/unit/riskparity/spinu_test.cpp
         tests/unit/solve/requirements_test.cpp

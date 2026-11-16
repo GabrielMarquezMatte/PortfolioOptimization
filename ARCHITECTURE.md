@@ -44,7 +44,8 @@ and diversification ratios of given weights; and a Python package over the C API
 Dependencies point one way: `core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
 tracking_error, max_return, parametric_path, homogeneous, constraints: translate a spec and data
 to a QP and read the solution back) <- `riskparity` (spinu, risk_parity: the positive-orthant solution of
-`RISK_PARITY` by Newton) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
+`RISK_PARITY` by Newton; objective, polyhedral_descent: the derivatives of f and the Gauss-Newton QP sequence over
+the polyhedron) <- `solve` (requirements, solve: the checks of the request and the dispatch to an
 objective) <- `capi`. `linalg` (Cholesky, triangular solves and Householder QR) depends on nothing; `qp` (Goldfarb-Idnani in `goldfarb_idnani.*` and `active_set.hpp`) depends
 only on `linalg`. `core/data.cpp` uses the Cholesky factor to reject a covariance that is not positive definite, and
 `problems` uses `qp`. `metrics` depends on `core` and is used by `riskparity` and `capi`. Nothing in `src/` includes from `src/capi/`
@@ -82,6 +83,8 @@ Build targets (`CMakeLists.txt`):
 | `src/qp/active_set.hpp` | The active-set factorization (J, R), Givens rotations, the add and drop updates and the refinement step |
 | `src/solve/solve.*` | `po::solve`: `check_request`, then dispatch to the objective |
 | `src/riskparity/spinu.*` | `spinu`: Newton on `F(y) = 1/2 y' Sigma y - b' log y`, `y > 0`, `w = y / 1'y`; Cholesky and two triangular solves per step, Armijo far from the minimizer and the full step near it, the stop on the relative size of the step |
+| `src/riskparity/objective.*` | `linearize`: `f = sum_i (c_i - b_i)^2`, its gradient `2 J'r`, the Jacobian `J` of the risk contributions and the exact Hessian; `value_change`, `f(w + s) - f(w)` computed from `s` |
+| `src/riskparity/polyhedral_descent.*` | `descend`: proximal Gauss-Newton steps over the polyhedron (budget, target return, bounds), each a QP of `qp::solve` posed in the step, with Armijo on the Lagrangian of the step's multipliers and an optional augmented-Lagrangian volatility term; the QP multipliers at the fixed point are the user's |
 | `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, which returns the Spinu point when it is inside the box and no target is set |
 | `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |

@@ -514,6 +514,105 @@ produce, so the check says the gap is below the tolerance times that unit. At an
 and the band is not relaxed: a stationarity error of `1e-8` of the gradient at a gap of `1e-3` is rejected at
 tolerance `1e-10` (`RiskParityReference.KktRejectsAStationarityErrorAwayFromTheFloor`).
 
+### Derivatives of f
+
+`linearize` (`src/riskparity/objective.cpp`) returns `f`, `grad f = 2 J'r`, the Jacobian
+`J = (diag(p) + diag(w) Sigma - 2 c p') / v` (`p = Sigma w`, `v = w'p`) and, on request, the exact Hessian
+`2 J'J + 2 sum_i r_i hess(c_i)`, with
+`sum_i r_i hess(c_i) = (diag(r) Sigma + Sigma diag(r)) / v - 2 (a p' + p a') / v^2 - 2 k Sigma / v + 8 k p p' / v^2`,
+`a = r o p + Sigma (w o r)` and `k = c'r`. Measured on 25 points (`n` in {2, 3, 7, 10, 30}, `cond(Sigma) = 1e4`,
+weights with a short position, budgets in `[0.2, 1]` normalized):
+
+| quantity | reference | largest error | band of the test |
+|---|---|---|---|
+| gradient | three-term formula in `long double` (`risk_parity_gradient`) | 3.8e-15 of max abs gradient | 1e-12 |
+| Jacobian | central differences of `c`, step `1e-6` | 9.8e-10 of max abs J | 1e-6 |
+| Hessian | central differences of the reference gradient, step `1e-6` | 2.5e-9 of max abs H | 1e-6 |
+| `J w = 0` | homogeneity of degree 0 | 7.9e-16 of `sum_j abs(J_ij w_j)` | 1e-12 |
+| `value_change` | `g's + 1/2 s'Hs`, abs(s) from `1e-6` to `1e-15` | 9.1e-10 of `abs(g's)` | 1e-9 |
+
+`value_change` computes `f(w + s) - f(w)` from `s` (`dc_i = (dN_i v - N_i dv) / (v (v + dv))` with
+`dN_i = s_i p_i + w_i q_i + s_i q_i`, `q = Sigma s`), so it keeps its relative accuracy at any size of `s`; its
+largest error above is the cubic remainder of the expansion at `abs(s) = 1e-6`, not rounding. A difference of two
+values of `f` loses every digit below about `eps f`.
+
+### The polyhedral descent
+
+`descend` (`src/riskparity/polyhedral_descent.cpp`) minimizes `L = f + L3` over the polyhedron of the budget, the
+target-return row and the bounds by proximal Gauss-Newton steps, each a QP of `qp::solve` with
+`Q = 2 J'J + tau I (+ rho grad h3 grad h3')`, then Armijo (`1e-4`, halving, at most 60) along the segment to the
+QP solution. Three numerical decisions, each forced by a measurement:
+
+- **The QP is posed in the step `d`**, with the rows shifted to the iterate (`rhs - N w`), not in `x = w + d` with
+  the linear term `grad L - Q w`. In `x` the solver returns `d` as the difference of two points of the size of `w`,
+  rounded at `eps cond(Q) abs(w)`: on a problem whose solution has `f = 0` (`n = 3`, `cond(Sigma) = 1e4`, no
+  bounds), the descent in `x` stalled at `f = 6.5e-23` with a relative stationarity of 1.19; posed in `d` it
+  reached `f = 2.5e-26` and stopped converged in 6 iterations. The multipliers are the same in both.
+- **Armijo is tested on the Lagrangian `l = L - u'(N w - rhs)` of the step's multipliers**, with slope
+  `-d'Qd`, not on `L` with slope `grad L'd`. On the polyhedron the change of `L` is at most that of `l` (the
+  equality part of `u'N s` is 0 and the active-bound part is at most 0), so every accepted step still decreases
+  `L`. Near a point with large multipliers the rounding of the step across the rows moves `L` by `u'N s`, more
+  than the decrease: with the test on `L` the descent stopped at a relative stationarity of `3.3e-9` (`n = 5`,
+  three weights at a cap of 0.24, uneven budget); with the test on `l` it reached `3.2e-13` in 9 iterations.
+- **The stop** is the relative KKT residual at the iterate, the largest of the stationarity
+  `max abs(grad L - N'u)` (relative to the largest term of `grad f`, of the volatility term and of `N'u`, and,
+  when `sqrt(f)` is at most the tolerance, to the unit-gap scale `2 max_j sum_i abs(J_ij)` of the section above)
+  and the slack of every row with a nonzero multiplier relative to `max(abs(rhs), max abs(w))`. Not the change of
+  `w` or of `f`, which stop at points that are not stationary.
+
+**Monotone `L`.** In exact arithmetic `L` decreases at every step. The computed `L` can still grow once the
+decrease is below the rounding of the iterate across the rows, which moves `L` by up to about
+`eps sum_k abs(u_k) sum_j abs(w_j)`. Measured over 60 runs (`n = 8`, box `[0, 0.15]`, uneven budget, `cond(Sigma)
+= 1e2`, seeds 1 to 30, with and without a volatility term): 1324 steps, 135 computed increases, the largest 0.21
+of that unit. `PolyhedralDescent.MonotoneDescent` allows exactly one unit.
+
+**The proximal weight.** `tau = 0.05 tr(Sigma) / (2n)`, the choice of the `riskParityPortfolio` package
+(`riskParityPortfolioSCA`). It is not invariant to the scale of `Sigma`: `J` does not change when `Sigma` is scaled
+(`c` is homogeneous of degree 0 in `Sigma`), so multiplying `Sigma` by `1e-4` divides `tau / norm(2 J'J)` by
+`1e4`. Sweep: every combination
+of `n` in {3, 5, 10, 20, 50}, `cond(Sigma)` in {1e2, 1e4, 1e6, 1e8}, scale {1, 1e-4}, equal and uneven budgets,
+box None, LongOnly and Capped, with and without `target_return`, seeds 1 to 5 (`risk_parity_shapes`' generator),
+2400 runs, started at the minimum-variance point of the polyhedron, tolerance `1e-12`, at most 2000 iterations:
+
+| cond(Sigma), scale | converged | cap reached | no decrease | `qp::solve` threw | mean (max) iterations |
+|---|---|---|---|---|---|
+| 1e2, 1 | 284 / 300 | 16 | 0 | 0 | 35.3 (1283) |
+| 1e2, 1e-4 | 284 / 300 | 16 | 0 | 0 | 20.0 (244) |
+| 1e4, 1 | 247 / 300 | 51 | 2 | 0 | 82.4 (1826) |
+| 1e4, 1e-4 | 251 / 300 | 40 | 9 | 0 | 15.1 (110) |
+| 1e6, 1 | 171 / 300 | 129 | 0 | 0 | 432.2 (1974) |
+| 1e6, 1e-4 | 210 / 300 | 72 | 18 | 0 | 33.9 (1150) |
+| 1e8, 1 | 22 / 300 | 278 | 0 | 0 | 516.4 (1691) |
+| 1e8, 1e-4 | 171 / 300 | 99 | 14 | 16 | 54.9 (1402) |
+
+| n | converged | mean (max) iterations |
+|---|---|---|
+| 3 | 359 / 480 | 66.3 (1974) |
+| 5 | 358 / 480 | 60.6 (1880) |
+| 10 | 323 / 480 | 87.4 (1776) |
+| 20 | 322 / 480 | 114.9 (1862) |
+| 50 | 278 / 480 | 111.1 (1891) |
+
+| box, target_return | converged | mean iterations |
+|---|---|---|
+| None, no | 225 / 400 | 88.0 |
+| None, yes | 116 / 400 | 49.1 |
+| LongOnly, no | 258 / 400 | 122.7 |
+| LongOnly, yes | 322 / 400 | 89.7 |
+| Capped, no | 356 / 400 | 88.5 |
+| Capped, yes | 363 / 400 | 66.3 |
+
+At scale 1 and large `cond(Sigma)`, `tau` dominates `2 J'J` and the step is a short gradient step; at scale `1e-4`
+and `cond(Sigma) = 1e8`, `tau` falls below the rounding of `2 J'J` and the factorization of `Q` fails (16 runs).
+A scale-free weight measured for comparison, `tau = 0.05 tr(2 J'J) / n`, gave identical counts at both scales and
+no failure of the factorization, but fewer converged runs (1470 of 2400 with the factor 0.05, 1568 with 0.005,
+against 1640). Without bounds and with
+`target_return` the line is unbounded and `f` can decrease towards its limit at infinity, the contributions of the
+direction of the line: on one `n = 3` case the iterates moved past `abs(w_i) = 1` and kept going while the scan
+over `abs(w_i) <= 5` found `f = 0.095`. Of the converged runs, 6 fail `expect_risk_parity_kkt` at the band of
+their `cond(Sigma)`, all LongOnly without `target_return` and uneven budgets, on the identity `w'grad f = 0`
+(relative residual `4.8e-6` to `4.5e-4`). Windows, GCC 16.2 (MSYS2 UCRT64).
+
 ## Fuzz battery
 
 `tests/unit/fuzz/` holds a generator of problem shapes and references computed by another route, used by the

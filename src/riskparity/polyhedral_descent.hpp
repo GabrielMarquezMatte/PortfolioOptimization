@@ -1,0 +1,67 @@
+#pragma once
+
+#include <optional>
+#include <span>
+#include <vector>
+
+#include "core/data.hpp"
+#include "core/spec.hpp"
+
+namespace po::riskparity
+{
+
+// The augmented-Lagrangian term of the volatility row h3 = vol(w) - target:
+// L3 = -multiplier h3 + penalty / 2 h3^2.
+struct VolatilityTerm
+{
+    double multiplier;
+    double penalty;
+    double target;
+};
+
+// L = f + L3 (L3 absent without a volatility term) over the polyhedron of spec: the budget row, the
+// target_return row and the bounds. budget is the risk budget b of f.
+struct DescentProblem
+{
+    const Spec& spec;
+    const Data& data;
+    std::span<const double> budget;
+    std::optional<VolatilityTerm> volatility;
+};
+
+// proximal is the factor of the proximal term tau = proximal tr(Sigma) / (2n), positive; tolerance bounds the
+// relative KKT residual.
+struct DescentOptions
+{
+    double proximal;
+    double tolerance;
+    int max_iterations;
+};
+
+// The multipliers are those of the QP solved at weights. At a fixed point they satisfy
+//   grad L(w) = budget 1 + target_return mu + sum_i beta_i e_i,
+// beta lower minus upper as in core/result.hpp, so that with grad L = grad f + (penalty h3 - multiplier)
+// grad h3 they are the user's multipliers with volatility multiplier (multiplier - penalty h3).
+struct DescentResult
+{
+    std::vector<double> weights;
+    // budget, then target_return, those present.
+    std::vector<double> equality_multipliers;
+    std::vector<double> bound_multipliers;
+    // The relative KKT residual at weights: stationarity and complementarity.
+    double stationarity;
+    int iterations;
+    bool converged;
+};
+
+// Minimizes L from a feasible start by proximal Gauss-Newton steps: each step solves the convex QP
+//   min 1/2 x'Qx + (grad L - Q w)'x over the polyhedron, Q = 2 J'J + tau I (+ penalty grad h3 grad h3'),
+// and moves along the segment to its solution by Armijo backtracking, so every iterate stays in the
+// polyhedron and L never increases (up to the rounding of the iterate across the rows). Stops when the
+// relative KKT residual is at most the tolerance (converged), after max_iterations steps, or when no step of
+// the segment decreases L enough (both not converged). A local method: a fixed point is a stationary point of
+// L. qp::solve throws when Q is not positive definite to working precision: tau below the rounding of 2 J'J.
+DescentResult descend(const DescentProblem& problem, std::span<const double> start,
+                      const DescentOptions& options);
+
+} // namespace po::riskparity
