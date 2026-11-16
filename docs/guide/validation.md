@@ -794,11 +794,39 @@ By `cond(Sigma)`, `n` and box, the largest weight error (number of results above
 | 1e8 | LongOnly | | 1.9e-15 (4) | 1.6e-12 (14) | | 4.9e-13 (8) |
 | 1e8 | None | 1.5e-13 (9) | 9.6e-14 (16) | 4.1e-11 (24) | 7.4e-12 (24) | 1.6e-8 (24) |
 
-The weights are right at the band everywhere, by a factor of at least `1e3` except at `cond(Sigma) = 1e8`,
-`n = 50`, no box, where the factor is 6. `RiskParitySolveSweep.OptimalRunsAreKkt` requires, on its grid of 576
-shapes, that every `OPTIMAL` passes `expect_risk_parity_kkt` and that every one above the band has a weight
-error at most the band and a value error at most `band (1 + f)` against a refined point within `1e-2` of the
-floor. The refinement needs a `long double` wider than `double`; where it is not (MSVC) that part is skipped.
+On the seeds of this sweep the weights are right at the band, by a factor of at least `1e3` except at
+`cond(Sigma) = 1e8`, `n = 50`, no box, where the factor is 6. That is not true of the class in general.
+`RiskParitySolveSweep.OptimalRunsAreKkt` requires, on its grid of 576 shapes, that every `OPTIMAL` passes
+`expect_risk_parity_kkt` and that every one above the band has a weight error at most the band and a value
+error at most `band (1 + f)` against a refined point within `1e-2` of the floor. The refinement needs a `long
+double` wider than `double`; where it is not (MSVC) that part is skipped.
+
+**The weights at `cond(Sigma) = 1e8` with a target volatility are a conditioning limit.** With a target
+volatility and few or no active bounds at `cond(Sigma)` around `1e8`, the weights are determined only to the
+rounding of the KKT residual amplified by the conditioning of the reduced problem. A result at the rounding
+floor can differ from the exact KKT point of its active set by up to about `1e-5` relative, while its objective
+value is right to its band. Measured over the class (no box, target volatility, uneven budget, `cond(Sigma) =
+1e8`; `RiskParityFuzz.DISABLED_MeasureWeightErrorDistribution`, one run):
+
+| n | OPTIMAL | weight error: median | 90% | 99% | max | above `1e-7` | value error over `band (1 + f)`, max |
+|---|---|---|---|---|---|---|---|
+| 20 | 200 / 200 | 7.2e-13 | 4.8e-12 | 7.4e-6 | 3.7e-5 | 3 | 2.8e-4 |
+| 50 | 29 / 30 | 1.5e-12 | 1.0e-10 | 8.3e-7 | 2.7e-6 | 2 | 3.4e-7 |
+
+(30 seeds at `n = 50` ran within the 240 s cap; seed 10 is `MAX_ITER` with every number NaN.) Seed 31696
+(`n = 20`) is the one first seen: weight error `2.3e-5` (`5.2e-5` with the augmented Lagrangian stopping at
+16), with a stationarity of 0.22 of its rounding floor, a refined point at `1.3e-5` of the floor (both are KKT
+points of the same active set to their rounding), and `abs(f(w) - f(w_ref)) = 1.6e-12` at `f = 2.6e-5`.
+
+A posteriori bounds were tried and do not predict the error: with `K` the KKT matrix of the active set,
+`max_j sum_l abs(K^-1)_jl floor_l` (any point at the floor) gives 0.70 at seed 31696 and a median of 0.011 over
+the 200 seeds, and `max_j sum_l abs(K^-1)_jl abs(r_l)` (the residual `r` of the result itself) gives 0.086
+there; the error is at most `5.2e-4` of the second over the 229 results. Both hold, neither is sharp (the
+componentwise absolute values lose the cancellation that makes the true error small). The contract of
+`solve_risk_parity` states the limitation. `RiskParityFuzz.WeightsAtCondition1e8WithinTheirAPosterioriBound`
+(seeds 1 to 4 of `n = 20`, seed 31696 among them, 0.5 s) checks, against the refined point, the value error at
+`band (1 + f)`, the weight error within 4 times the residual bound and below a ceiling of `1e-4` (the largest of
+the 229 is `3.7e-5`): the band of the weights is not applied to a result at its floor.
 
 ### The Newton polish
 
@@ -973,10 +1001,10 @@ check:
 
 | n | OPTIMAL | MAX_ITER | above the band | iterations, mean (max) | seconds, total (longest) |
 |---|---|---|---|---|---|
-| 3 | 540 / 576 | 36 | 18 | 73.6 (3133) | 0.12 (0.007) |
-| 5 | 538 / 576 | 38 | 41 | 91.1 (3362) | 0.23 (0.015) |
-| 10 | 566 / 576 | 10 | 77 | 108.3 (2385) | 0.46 (0.019) |
-| 20 | 568 / 576 | 8 | 52 | 175.7 (6081) | 2.31 (0.118) |
+| 3 | 540 / 576 | 36 | 17 | 73.6 (3133) | 0.12 (0.007) |
+| 5 | 538 / 576 | 38 | 41 | 92.3 (3561) | 0.20 (0.012) |
+| 10 | 566 / 576 | 10 | 77 | 110.2 (2784) | 0.45 (0.018) |
+| 20 | 568 / 576 | 8 | 52 | 186.1 (6680) | 2.45 (0.128) |
 | 50 | 576 / 576 | 0 | 63 | 938.6 (55323) | 89.95 (9.203) |
 
 No result is `INFEASIBLE` (the shapes are built feasible) and none fails the check.
@@ -995,8 +1023,11 @@ The start is not the same (the point nearest to the Spinu point, not the minimum
 the polish turns 66 of those 70 descents into points that `is_kkt_point` accepts
 (`RiskParityDescentFuzz.DISABLED_MeasurePolishOfUnconverged`). The other 4 are two shapes at both scales,
 `cond(Sigma) = 1e8`: `n = 10`, no box and no target (which the solver answers with the Spinu point and never
-descends), and `n = 20`, Capped, equal budget, seed 31696 (not a seed of the solve sweep; not run through
-`po::solve`).
+descends), and `n = 20`, Capped, equal budget, seed 31696 (not a seed of the solve sweep). Through
+`po::solve` both scales of the latter are `MAX_ITER` with every number NaN
+(`RiskParityFuzz.UnrepairedDescentShapesThroughSolve`), so all 70 are accounted for: 66 repaired, 2 never
+descended by the solver, 2 `MAX_ITER` without a point. Those 2 are a bounded problem without a target that the
+solver does not solve.
 
 **Cost.** One solve at `n = 50`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 9.2 s and
 55 323 iterations (19.6 s and 21 190 at `n = 100`): every subproblem of the augmented Lagrangian is a descent
@@ -1023,12 +1054,9 @@ cover:
   covers uneven budgets with the targets at `n <= 10` in the enabled grid; this adds the extreme budget through
   `po::solve` with a box at `n = 20`. The rule "no point without `OPTIMAL`, no `OPTIMAL` outside KKT" is checked
   by `RiskParitySolveSweep.OptimalRunsAreKkt` on 576 shapes and by both tests here.
-- **Forward error, the thinnest class** (`RiskParityFuzz.DISABLED_ForwardErrorAtCondition1e8WithTargetVolatility`,
-  0.4 s for 4 seeds, disabled because it misses its band): no box, target volatility, `cond(Sigma) = 1e8`,
-  `n = 20`, uneven budget, seeds 1 to 12. 11 of 12 have a weight error within `1e-7` against the refined point;
-  seed 31696 has **`2.3e-5`** (`5.2e-5` with the augmented Lagrangian of before this section), with a
-  stationarity of 0.22 of its rounding floor and a refined point at `1.3e-5` of the floor. The result passes
-  `expect_risk_parity_kkt` and is not the KKT point of its active set at the band: open, not hidden.
+- **Forward error, the thinnest class**: the weights at `cond(Sigma) = 1e8` with a target volatility are a
+  conditioning limit, measured and pinned in the section on the noise above
+  (`RiskParityFuzz.WeightsAtCondition1e8WithinTheirAPosterioriBound`).
 
 ## Fuzz battery
 
@@ -1184,7 +1212,7 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s` |
 | `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
-| `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the forward error of the thinnest class (disabled: 1 of 12 seeds misses) |
+| `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit) |
 | `tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp` | `po::solve` over 576 shapes: no status other than `OPTIMAL` carries a point, every `OPTIMAL` passes `expect_risk_parity_kkt` at the band of its `cond(Sigma)` (the stationarity at the band or within twice its rounding floor), and every one above the band agrees in weights and in `f` with the KKT point of its active set refined in `long double` |
 | `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives that take it, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`; `RISK_PARITY` takes `target_return`, `target_volatility` and `risk_budget` and no cash), its messages and the order of the checks |
 | `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |

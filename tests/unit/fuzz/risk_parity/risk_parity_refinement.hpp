@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <limits>
@@ -135,10 +136,17 @@ inline std::vector<long double> wide_stationarity(const po::Data& data, std::spa
     return residual;
 }
 
-// One Newton step of [H, -A'; A, 0] [dw; dlambda] = -[stationarity; gaps] over the free weights, the rows of
-// A scaled to the size of H. False when the system is singular.
-inline bool wide_newton_step(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
-                             WideKkt& kkt)
+// [H, -A'; A, 0] over the free weights of kkt and -[stationarity; gaps], the rows of A scaled to the size
+// of H by scale (size x size, row-major).
+struct WideSystem
+{
+    std::vector<long double> matrix;
+    std::vector<long double> rhs;
+    long double scale = 0.0L;
+};
+
+inline WideSystem wide_kkt_system(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
+                                  const WideKkt& kkt)
 {
     std::size_t n = kkt.weights.size();
     std::size_t free_count = kkt.free.size();
@@ -147,38 +155,45 @@ inline bool wide_newton_step(const po::Spec& spec, const po::Data& data, std::sp
     std::vector<long double> residual = wide_stationarity(data, budget, kkt, equalities);
     std::vector<long double> hessian =
         wide_lagrangian_hessian(data, budget, volatility_multiplier_of(spec, kkt), kkt.weights);
-    std::vector<long double> matrix(size * size, 0.0L);
-    std::vector<long double> rhs(size);
-    long double scale = 0.0L;
+    WideSystem system{std::vector<long double>(size * size, 0.0L), std::vector<long double>(size), 0.0L};
     for (std::size_t a = 0; a < free_count; ++a)
     {
         for (std::size_t b = 0; b < free_count; ++b)
         {
-            matrix[a * size + b] = hessian[kkt.free[a] * n + kkt.free[b]];
-            scale = std::fmax(scale, std::fabs(matrix[a * size + b]));
+            system.matrix[a * size + b] = hessian[kkt.free[a] * n + kkt.free[b]];
+            system.scale = std::fmax(system.scale, std::fabs(system.matrix[a * size + b]));
         }
-        rhs[a] = -residual[kkt.free[a]];
+        system.rhs[a] = -residual[kkt.free[a]];
     }
     for (std::size_t k = 0; k < equalities.gaps.size(); ++k)
     {
         for (std::size_t a = 0; a < free_count; ++a)
         {
-            matrix[a * size + free_count + k] = -scale * equalities.rows[k][kkt.free[a]];
-            matrix[(free_count + k) * size + a] = scale * equalities.rows[k][kkt.free[a]];
+            system.matrix[a * size + free_count + k] = -system.scale * equalities.rows[k][kkt.free[a]];
+            system.matrix[(free_count + k) * size + a] = system.scale * equalities.rows[k][kkt.free[a]];
         }
-        rhs[free_count + k] = -scale * equalities.gaps[k];
+        system.rhs[free_count + k] = -system.scale * equalities.gaps[k];
     }
-    if (!solve_wide(matrix, rhs))
+    return system;
+}
+
+// One Newton step on wide_kkt_system. False when the system is singular.
+inline bool wide_newton_step(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
+                             WideKkt& kkt)
+{
+    std::size_t free_count = kkt.free.size();
+    WideSystem system = wide_kkt_system(spec, data, budget, kkt);
+    if (!solve_wide(system.matrix, system.rhs))
     {
         return false;
     }
     for (std::size_t a = 0; a < free_count; ++a)
     {
-        kkt.weights[kkt.free[a]] += rhs[a];
+        kkt.weights[kkt.free[a]] += system.rhs[a];
     }
-    for (std::size_t k = 0; k < equalities.gaps.size(); ++k)
+    for (std::size_t k = 0; k + free_count < system.rhs.size(); ++k)
     {
-        kkt.multipliers[k] += scale * rhs[free_count + k];
+        kkt.multipliers[k] += system.scale * system.rhs[free_count + k];
     }
     return true;
 }
@@ -291,6 +306,102 @@ inline ForwardError forward_error(const po::Spec& spec, const po::Data& data, co
         wide_value_at(data, budget, widened(result.weights)) - wide_value_at(data, budget, kkt.weights);
     return ForwardError{static_cast<double>(distance / largest), static_cast<double>(std::fabs(change)),
                         reference_over_floor(spec, data, budget, kkt), reference_gap(spec, data, kkt)};
+}
+
+// The rounding of each row of wide_kkt_system at the point of kkt: for a free weight j,
+// eps ((abs(H) abs(w))_j + sum_k abs(lambda_k grad h_k)_j); for an equality,
+// eps (sum_i abs(grad h_k)_i abs(w_i) + abs(target)), times scale.
+inline std::vector<long double> wide_kkt_floor(const po::Spec& spec, const po::Data& data,
+                                               std::span<const double> budget, const WideKkt& kkt,
+                                               long double scale)
+{
+    constexpr long double kEpsilon = std::numeric_limits<double>::epsilon();
+    std::size_t n = kkt.weights.size();
+    WideEqualities equalities = wide_equalities(spec, data, kkt.weights);
+    std::vector<long double> hessian =
+        wide_lagrangian_hessian(data, budget, volatility_multiplier_of(spec, kkt), kkt.weights);
+    std::vector<long double> floor;
+    for (std::size_t j : kkt.free)
+    {
+        long double moved = 0.0L;
+        for (std::size_t l = 0; l < n; ++l)
+        {
+            moved += std::fabs(hessian[j * n + l] * kkt.weights[l]);
+        }
+        for (std::size_t k = 0; k < equalities.rows.size(); ++k)
+        {
+            moved += std::fabs(kkt.multipliers[k] * equalities.rows[k][j]);
+        }
+        floor.push_back(kEpsilon * moved);
+    }
+    std::vector<long double> targets{1.0L};
+    if (spec.target_return.has_value())
+    {
+        targets.push_back(*spec.target_return);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        targets.push_back(*spec.target_volatility);
+    }
+    for (std::size_t k = 0; k < equalities.rows.size(); ++k)
+    {
+        long double terms = std::fabs(targets[k]);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            terms += std::fabs(equalities.rows[k][i] * kkt.weights[i]);
+        }
+        floor.push_back(scale * kEpsilon * terms);
+    }
+    return floor;
+}
+
+// The a posteriori bound of the weight error of a result whose residual is at its rounding floor:
+// max over the free weights of sum_l abs(K^-1)_jl floor_l, K the KKT matrix of its active set
+// (wide_kkt_system) and floor its rounding per row (wide_kkt_floor), over max_i abs(w_i). abs(K^-1) is taken
+// column by column, K x = e_l, to estimate how much K amplifies the rounding; nothing is solved with it. NaN
+// when K is singular.
+struct WeightErrorBound
+{
+    // From the rounding floor of each row: what any point at that floor may be off by.
+    double floor;
+    // From the residual of the result itself, sum_l abs(K^-1)_jl abs(r_l).
+    double residual;
+};
+
+inline WeightErrorBound weight_error_bound(const po::Spec& spec, const po::Data& data,
+                                           const po::Result& result)
+{
+    std::vector<double> budget = budget_of(spec, data.asset_count());
+    WideKkt kkt = wide_kkt_of(spec, result);
+    WideSystem system = wide_kkt_system(spec, data, budget, kkt);
+    std::vector<long double> floor = wide_kkt_floor(spec, data, budget, kkt, system.scale);
+    std::size_t size = floor.size();
+    std::vector<long double> by_floor(kkt.free.size(), 0.0L);
+    std::vector<long double> by_residual(kkt.free.size(), 0.0L);
+    for (std::size_t l = 0; l < size; ++l)
+    {
+        std::vector<long double> matrix = system.matrix;
+        std::vector<long double> column(size, 0.0L);
+        column[l] = 1.0L;
+        if (!solve_wide(matrix, column))
+        {
+            constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+            return WeightErrorBound{kNaN, kNaN};
+        }
+        for (std::size_t a = 0; a < by_floor.size(); ++a)
+        {
+            by_floor[a] += std::fabs(column[a]) * floor[l];
+            by_residual[a] += std::fabs(column[a] * system.rhs[l]);
+        }
+    }
+    long double largest = 0.0L;
+    for (double weight : result.weights)
+    {
+        largest = std::fmax(largest, std::fabs(static_cast<long double>(weight)));
+    }
+    auto worst = [&](const std::vector<long double>& bound)
+    { return static_cast<double>(*std::ranges::max_element(bound) / largest); };
+    return WeightErrorBound{worst(by_floor), worst(by_residual)};
 }
 
 } // namespace po::testing

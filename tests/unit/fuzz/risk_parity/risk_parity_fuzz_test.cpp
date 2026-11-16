@@ -4,9 +4,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
+#include <cstdio>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "core/data.hpp"
@@ -231,39 +235,146 @@ TEST(RiskParityFuzz, UnevenBudgetsAndConditioning)
     EXPECT_EQ(optimal, 96);
 }
 
-// The thinnest forward-error margin of the sweep: no box, a target volatility, cond(Sigma) = 1e8, n = 20. A
-// result above the band of its stationarity is checked against the KKT point of its active set, refined
-// beyond double, at the band. Disabled because it does not reach it: seed 31696 has a weight error of 2.3e-5
-// at a stationarity of 0.22 of its rounding floor (1 of the 12 seeds; docs/guide/validation.md).
-TEST(RiskParityFuzz, DISABLED_ForwardErrorAtCondition1e8WithTargetVolatility)
+// The descents of the polyhedral-descent sweep that the polish does not turn into a KKT point, through
+// po::solve: OPTIMAL and KKT at the band, or no point (docs/guide/validation.md).
+TEST(RiskParityFuzz, UnrepairedDescentShapesThroughSolve)
+{
+    for (double scale : {1.0, 1e-4})
+    {
+        Shape shape{20, 1e8, scale, Shape::Budget::Equal, Shape::Box::Capped, false, false, 31696};
+        SCOPED_TRACE(po::testing::describe(shape));
+        po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+        Result result = po::solve(generated.spec, generated.data).value();
+        RecordProperty("status_" + std::to_string(static_cast<int>(scale == 1.0)),
+                       static_cast<int>(result.status));
+        expect_never_silently_wrong(generated.spec, generated.data, result, shape.condition);
+    }
+}
+
+// The weights of a result at its rounding floor are determined only to how much the KKT matrix of its active
+// set amplifies that floor: the bound of weight_error_bound, which this factor covers with room for the
+// second-order terms it leaves out (the largest error over the bound measured: docs/guide/validation.md).
+constexpr double kBoundSafety = 4.0;
+// The weight error of this class is not held to the band of cond(Sigma), which does not apply at the floor,
+// but it must not grow: the largest of 229 measured results is 3.7e-5 (docs/guide/validation.md).
+constexpr double kWeightErrorCeiling = 1e-4;
+
+// What the forward error of one OPTIMAL result is, against the refined KKT point of its active set.
+struct WeightCheck
+{
+    po::testing::ForwardError forward;
+    po::testing::WeightErrorBound bound;
+    double value;
+    bool floor_limited;
+};
+
+WeightCheck weight_check(const po::testing::GeneratedRiskParity& generated, const Result& result, double band)
+{
+    const po::Spec& spec = generated.spec;
+    WeightCheck check{po::testing::forward_error(spec, generated.data, result),
+                      po::testing::weight_error_bound(spec, generated.data, result),
+                      po::testing::risk_parity_value(generated.data, spec.risk_budget, result.weights),
+                      false};
+    check.floor_limited =
+        po::testing::risk_parity_stationarity(spec, generated.data, result, band).relative > band;
+    return check;
+}
+
+Shape thinnest_class(std::size_t n, std::uint64_t seed)
+{
+    return Shape{n, 1e8, 1.0, Shape::Budget::Uneven, Shape::Box::None, false, true, 7919 * seed + n};
+}
+
+// The thinnest forward-error class of the sweep: no box, a target volatility, cond(Sigma) = 1e8, n = 20.
+// Seed 4 (31696) is a result whose weights are 2.3e-5 from the refined KKT point while its stationarity is
+// at 0.22 of its rounding floor. The value is right at the band and the weights within their a posteriori
+// bound; the band of the weights does not apply to a result at its floor.
+TEST(RiskParityFuzz, WeightsAtCondition1e8WithinTheirAPosterioriBound)
 {
     if (!po::testing::kLongDoubleIsExtended)
     {
         GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
     }
-    int floor_limited = 0;
-    for (std::uint64_t seed = 1; seed <= 12; ++seed)
+    for (std::uint64_t seed = 1; seed <= 4; ++seed)
     {
-        Shape shape{20, 1e8, 1.0, Shape::Budget::Uneven, Shape::Box::None, false, true, 7919 * seed + 20};
+        Shape shape = thinnest_class(20, seed);
         SCOPED_TRACE(po::testing::describe(shape));
         po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
         Result result = po::solve(generated.spec, generated.data).value();
         ASSERT_EQ(result.status, SolveStatus::Optimal);
         po::testing::expect_risk_parity_kkt(generated.spec, generated.data, result, 1e-7);
-        po::testing::RiskParityStationarity stationarity =
-            po::testing::risk_parity_stationarity(generated.spec, generated.data, result, 1e-7);
-        if (stationarity.relative <= 1e-7)
-        {
-            continue;
-        }
-        ++floor_limited;
-        po::testing::ForwardError forward =
-            po::testing::forward_error(generated.spec, generated.data, result);
-        EXPECT_LE(forward.weights, 1e-7) << "reference / floor " << forward.reference_over_floor
-                                         << ", stationarity / floor " << stationarity.over_floor;
-        EXPECT_LE(forward.reference_gap, 1e-7);
+        WeightCheck check = weight_check(generated, result, 1e-7);
+        RecordProperty("seed_" + std::to_string(shape.seed),
+                       ::testing::PrintToString(std::vector<double>{check.forward.weights, check.bound.floor,
+                                                                    check.bound.residual, check.forward.value,
+                                                                    check.value}));
+        EXPECT_LE(check.forward.reference_over_floor, 1e-2);
+        EXPECT_LE(check.forward.value, 1e-7 * (1.0 + check.value));
+        EXPECT_LE(check.forward.weights, kWeightErrorCeiling);
+        EXPECT_LE(check.forward.weights, kBoundSafety * check.bound.residual)
+            << "bound " << check.bound.residual;
     }
-    EXPECT_GT(floor_limited, 0);
+}
+
+void print_quantiles(const char* name, std::vector<double> values)
+{
+    std::ranges::sort(values);
+    if (values.empty())
+    {
+        return;
+    }
+    auto at = [&](double q)
+    { return values[static_cast<std::size_t>(q * static_cast<double>(values.size() - 1))]; };
+    std::printf("%s: count %zu, median %.2g, 90%% %.2g, 99%% %.2g, max %.2g\n", name, values.size(), at(0.5),
+                at(0.9), at(0.99), values.back());
+}
+
+// The distribution behind docs/guide/validation.md: the weight error of the thinnest class over many seeds,
+// n = 20 (200 seeds) and n = 50 (30 seeds, cut at 240 s of solves).
+TEST(RiskParityFuzz, DISABLED_MeasureWeightErrorDistribution)
+{
+    for (auto [n, seeds] : {std::pair<std::size_t, std::uint64_t>{20, 200}, {50, 30}})
+    {
+        std::vector<double> errors;
+        std::vector<double> floor_limited;
+        std::vector<double> over_bound;
+        std::vector<double> floor_bound;
+        std::vector<double> values;
+        std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        for (std::uint64_t seed = 1; seed <= seeds; ++seed)
+        {
+            if (std::chrono::steady_clock::now() - start > std::chrono::seconds(240))
+            {
+                std::printf("n %zu cut after %llu seeds\n", n, static_cast<unsigned long long>(seed - 1));
+                break;
+            }
+            po::testing::GeneratedRiskParity generated = po::testing::generate(thinnest_class(n, seed));
+            Result result = po::solve(generated.spec, generated.data).value();
+            if (result.status != SolveStatus::Optimal)
+            {
+                std::printf("seed %llu status %d\n", static_cast<unsigned long long>(seed),
+                            static_cast<int>(result.status));
+                continue;
+            }
+            WeightCheck check = weight_check(generated, result, 1e-7);
+            errors.push_back(check.forward.weights);
+            if (check.floor_limited)
+            {
+                floor_limited.push_back(check.forward.weights);
+            }
+            over_bound.push_back(check.forward.weights / check.bound.residual);
+            floor_bound.push_back(check.bound.floor);
+            values.push_back(check.forward.value / (1e-7 * (1.0 + check.value)));
+        }
+        std::printf("n %zu\n", n);
+        print_quantiles("weight error, all OPTIMAL", errors);
+        std::printf("above 1e-7: %td\n",
+                    std::ranges::count_if(errors, [](double error) { return error > 1e-7; }));
+        print_quantiles("weight error, above the band", floor_limited);
+        print_quantiles("weight error over its residual bound", over_bound);
+        print_quantiles("bound from the floor", floor_bound);
+        print_quantiles("value error over band (1 + f)", values);
+    }
 }
 
 } // namespace
