@@ -148,6 +148,68 @@ TEST(CapiMetrics, NewMetricsCheckWeightsAndNulls)
     EXPECT_EQ(value, 1.0);
 }
 
+TEST(CapiMetrics, SharpeAndDiversification)
+{
+    DataPtr data = po::testing::make_data(2, kMu, kCovariance);
+    const double weights[2] = {0.5, 0.5};
+    double value = 0.0;
+    ASSERT_EQ(po_sharpe_ratio(data.get(), weights, 2, &value), PO_OK);
+    EXPECT_NEAR(value, 0.15 / std::sqrt(0.0375), 1e-14);
+    ASSERT_EQ(po_diversification_ratio(data.get(), weights, 2, &value), PO_OK);
+    EXPECT_NEAR(value, 0.25 / std::sqrt(0.0375), 1e-14);
+
+    ASSERT_EQ(po_data_set_risk_free(data.get(), 0.02), PO_OK);
+    const double with_cash[3] = {0.4, 0.4, 0.2};
+    ASSERT_EQ(po_sharpe_ratio(data.get(), with_cash, 3, &value), PO_OK);
+    EXPECT_NEAR(value, 0.104 / std::sqrt(0.024), 1e-14);
+    ASSERT_EQ(po_diversification_ratio(data.get(), with_cash, 3, &value), PO_OK);
+    EXPECT_NEAR(value, 0.2 / std::sqrt(0.024), 1e-14);
+
+    const double all_cash[3] = {0.0, 0.0, 1.0};
+    value = 1.0;
+    ASSERT_EQ(po_sharpe_ratio(data.get(), all_cash, 3, &value), PO_OK);
+    EXPECT_TRUE(std::isnan(value));
+    value = 1.0;
+    ASSERT_EQ(po_diversification_ratio(data.get(), all_cash, 3, &value), PO_OK);
+    EXPECT_TRUE(std::isnan(value));
+}
+
+TEST(CapiMetrics, RatiosNeedTheirInputs)
+{
+    const double weights[2] = {0.5, 0.5};
+    double value = 1.0;
+    DataPtr without_mu = po::testing::make_data(2, {}, kCovariance);
+    EXPECT_EQ(po_sharpe_ratio(without_mu.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "the Sharpe ratio needs mu");
+    EXPECT_EQ(po_diversification_ratio(without_mu.get(), weights, 2, &value), PO_OK);
+
+    DataPtr without_covariance = po::testing::make_data(2, kMu, {});
+    EXPECT_EQ(po_sharpe_ratio(without_covariance.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "the Sharpe ratio needs the covariance");
+    value = 1.0;
+    EXPECT_EQ(po_diversification_ratio(without_covariance.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "the diversification ratio needs the covariance");
+    EXPECT_EQ(value, 1.0);
+}
+
+TEST(CapiMetrics, RatiosCheckWeightsAndNulls)
+{
+    DataPtr data = po::testing::make_data(2, kMu, kCovariance);
+    const double weights[2] = {0.5, 0.5};
+    double value = 1.0;
+    EXPECT_EQ(po_sharpe_ratio(nullptr, weights, 2, &value), PO_INVALID_HANDLE);
+    EXPECT_EQ(po_diversification_ratio(nullptr, weights, 2, &value), PO_INVALID_HANDLE);
+    EXPECT_EQ(po_sharpe_ratio(data.get(), nullptr, 2, &value), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_diversification_ratio(data.get(), nullptr, 2, &value), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_sharpe_ratio(data.get(), weights, 2, nullptr), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_diversification_ratio(data.get(), weights, 2, nullptr), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_sharpe_ratio(data.get(), weights, 3, &value), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "n must be 2, got 3");
+    EXPECT_EQ(po_diversification_ratio(data.get(), weights, 1, &value), PO_INVALID_ARGUMENT);
+    EXPECT_STREQ(po_last_error(), "n must be 2, got 1");
+    EXPECT_EQ(value, 1.0);
+}
+
 TEST(CapiMetrics, NullArguments)
 {
     DataPtr data = po::testing::make_data(2, kMu, kCovariance);

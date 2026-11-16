@@ -169,4 +169,11 @@ TEST(CapiSpec, MaxVolatilityDomain)
                   "sigma must be positive and finite");
 }
 
+TEST(CapiSpec, LeverageDomain)
+{
+    expect_domain(PO_OBJECTIVE_MIN_VARIANCE, po_spec_set_leverage, 2.0, {0.0, -1.0, kNaN, kInfinity, -kInfinity},
+                  "max_gross must be positive and finite");
+    EXPECT_EQ(po_spec_set_leverage(nullptr, 2.0), PO_INVALID_HANDLE);
+}
+
 } // namespace

@@ -49,17 +49,20 @@ typedef struct po_spec po_spec;
 typedef struct po_data po_data;
 typedef struct po_result po_result;
 
-/* Objectives. This version solves PO_OBJECTIVE_MIN_VARIANCE, PO_OBJECTIVE_MAX_RETURN, PO_OBJECTIVE_UTILITY,
-   PO_OBJECTIVE_IMPORTANCE, PO_OBJECTIVE_KELLY and PO_OBJECTIVE_TRACKING_ERROR; po_solve returns
-   PO_UNSUPPORTED for PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_MAX_DIVERSIFICATION and PO_OBJECTIVE_RISK_PARITY.
-   Values only grow, by addition.
+/* Objectives. This version solves every objective except PO_OBJECTIVE_RISK_PARITY: PO_OBJECTIVE_MIN_VARIANCE,
+   PO_OBJECTIVE_MAX_RETURN, PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_UTILITY, PO_OBJECTIVE_IMPORTANCE,
+   PO_OBJECTIVE_KELLY, PO_OBJECTIVE_TRACKING_ERROR and PO_OBJECTIVE_MAX_DIVERSIFICATION; po_solve returns
+   PO_UNSUPPORTED for PO_OBJECTIVE_RISK_PARITY. Values only grow, by addition.
 
    Each solved objective is the minimization of f over the weights, subject to the budget (the weights sum to
-   one, cash included), the weight bounds and, for MIN_VARIANCE and TRACKING_ERROR when
+   one, cash included), the weight bounds, the gross exposure limit when po_spec_set_leverage was called
+   (sum_i |w_i| <= L over the risky weights, cash not counted) and, for MIN_VARIANCE and TRACKING_ERROR when
    po_spec_set_target_return was called, the target return (mu' w plus rate times the cash weight equals the
-   target), with mu~ = mu - rate * 1 (rate = 0 without cash) and Sigma the covariance:
+   target), with mu~ = mu - rate * 1 (rate = 0 without cash), Sigma the covariance and
+   sigma = sqrt(diag Sigma):
      MIN_VARIANCE    f = w' Sigma w
      MAX_RETURN      f = -mu~' w, subject to sqrt(w' Sigma w) <= sigma (po_spec_set_max_volatility)
+     MAX_SHARPE      f = -mu~' w / sqrt(w' Sigma w), the Sharpe ratio negated
      UTILITY         f = (delta / 2) w' Sigma w - mu~' w, delta from po_spec_set_risk_aversion (default 5)
      IMPORTANCE      f = (1 - lambda) w' Sigma w - lambda mu~' w, lambda from po_spec_set_importance,
                      0 <= lambda < 1 (default 0.5)
@@ -67,17 +70,31 @@ typedef struct po_result po_result;
                      1 + rate > 0
      TRACKING_ERROR  f = |R~ w + rate * 1 - b|^2 with R~ = R - rate * 1 1', R the returns (T x n) and b the
                      benchmark; without cash R~ = R and the rate term vanishes
+     MAX_DIVERSIFICATION
+                     f = -sigma' w / sqrt(w' Sigma w), the diversification ratio negated
+   MAX_SHARPE and MAX_DIVERSIFICATION do not change when the weights are scaled, so they are solved on the cone
+   of the feasible set and the result is rescaled to satisfy the budget. With cash, both fix the cash weight at
+   0 (the risky weights then sum to one, and bounds on the cash weight that exclude 0 make the problem
+   infeasible); the budget term of the stationarity condition below is then carried by beta_0, and the budget
+   multiplier is NaN. A MAX_SHARPE or MAX_DIVERSIFICATION problem with no feasible portfolio of positive
+   numerator (for example MAX_SHARPE long only with the rate above every mean) is PO_SOLVE_INFEASIBLE; one whose
+   supremum exists but is not attained (for example MAX_SHARPE with unbounded short selling and
+   1' Sigma^-1 mu~ <= 0) is PO_SOLVE_UNBOUNDED.
    Which setters and data each objective takes (a setter outside its row makes po_solve return
    PO_INVALID_ARGUMENT, "<setter> does not apply to <OBJECTIVE>"; a missing input, "<OBJECTIVE> requires
    <item>"):
 
-     objective       requires                       also accepts, besides the bounds
-     MIN_VARIANCE    covariance (mu with a target)  target_return
-     MAX_RETURN      mu, covariance, max_volatility -
-     UTILITY         mu, covariance                 risk_aversion
-     IMPORTANCE      mu, covariance                 importance
-     KELLY           mu, covariance, rate > -1      -
-     TRACKING_ERROR  returns (mu with a target)     target_return */
+     objective            requires                       also accepts, besides the bounds   leverage
+     MIN_VARIANCE         covariance (mu with a target)  target_return                      yes
+     MAX_RETURN           mu, covariance, max_volatility -                                  yes
+     MAX_SHARPE           mu, covariance                 -                                  yes
+     UTILITY              mu, covariance                 risk_aversion                      yes
+     IMPORTANCE           mu, covariance                 importance                         yes
+     KELLY                mu, covariance, rate > -1      -                                  yes
+     TRACKING_ERROR       returns (mu with a target)     target_return                      yes
+     MAX_DIVERSIFICATION  covariance                     -                                  yes
+
+   po_spec_set_leverage is accepted by every solved objective; PO_OBJECTIVE_RISK_PARITY will not take it. */
 #define PO_OBJECTIVE_MIN_VARIANCE 0
 #define PO_OBJECTIVE_MAX_RETURN 1
 #define PO_OBJECTIVE_MAX_SHARPE 2
@@ -91,7 +108,7 @@ typedef struct po_result po_result;
 /* Solve status of a result. An infeasible problem is a result with this status, not an error of po_solve. */
 #define PO_SOLVE_OPTIMAL 0
 #define PO_SOLVE_INFEASIBLE 1
-#define PO_SOLVE_UNBOUNDED 2
+#define PO_SOLVE_UNBOUNDED 2 /* the supremum exists but is not attained; weights and multipliers are NaN */
 #define PO_SOLVE_MAX_ITER 3
 
 /* Named constraints, for po_result_multiplier. */
@@ -127,6 +144,12 @@ PO_API po_status po_spec_set_importance(po_spec* s, double lambda);
 /* Volatility cap sigma of PO_OBJECTIVE_MAX_RETURN. sigma must be positive and finite.
    An invalid value of any of the three setters above leaves the spec unchanged and is PO_INVALID_ARGUMENT. */
 PO_API po_status po_spec_set_max_volatility(po_spec* s, double sigma);
+
+/* Gross exposure limit: sum_i |w_i| <= max_gross over the risky weights (the cash weight is not counted).
+   max_gross must be positive and finite; zero or negative, NaN and +-inf are PO_INVALID_ARGUMENT and leave the
+   spec unchanged. Without cash a limit below 1 is infeasible, because sum_i |w_i| >= |1' w| = 1; po_solve
+   reports it as PO_SOLVE_INFEASIBLE. */
+PO_API po_status po_spec_set_leverage(po_spec* s, double max_gross);
 
 PO_API void po_spec_free(po_spec* s);
 
@@ -171,15 +194,18 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    for PO_OBJECTIVE_MIN_VARIANCE f(w) = w' Sigma w, without the factor 1/2, and a maximized objective enters
    negated. At the optimum, over the risky weights w (the first po_data_asset_count entries),
        grad f(w) = lambda_budget * 1 + lambda_return * grad(return) + lambda_vol * Sigma w / vol(w)
-                   + sum_i beta_i e_i - beta_0 * 1
-   where lambda_budget, lambda_return and lambda_vol are po_result_multiplier for PO_CONSTRAINT_BUDGET,
-   PO_CONSTRAINT_TARGET_RETURN and PO_CONSTRAINT_VOLATILITY, vol(w) = sqrt(w' Sigma w), so Sigma w / vol(w) is
-   the gradient of the volatility, grad(return) is mu (mu - rate * 1 with cash), beta is
-   po_result_bound_multipliers
+                   + lambda_lev * g + sum_i beta_i e_i - beta_0 * 1
+   where lambda_budget, lambda_return, lambda_vol and lambda_lev are po_result_multiplier for
+   PO_CONSTRAINT_BUDGET, PO_CONSTRAINT_TARGET_RETURN, PO_CONSTRAINT_VOLATILITY and PO_CONSTRAINT_LEVERAGE,
+   vol(w) = sqrt(w' Sigma w), so Sigma w / vol(w) is the gradient of the volatility, grad(return) is mu
+   (mu - rate * 1 with cash), g is in the subdifferential of the 1-norm of w: g_i = sign(w_i) where w_i is not 0
+   and any value in [-1, 1] where w_i = 0, beta is po_result_bound_multipliers
    (lower-bound multiplier minus upper-bound multiplier: >= 0 at an active lower bound, <= 0 at an active upper
    bound) and beta_0 is its cash entry, which enters with a minus sign because the cash weight is 1 - 1'w. The term
    of an absent constraint is omitted: no budget term with cash, no return term without a target return, no
-   volatility term unless the objective is PO_OBJECTIVE_MAX_RETURN, no beta_0 without cash.
+   volatility term unless the objective is PO_OBJECTIVE_MAX_RETURN, no leverage term without a leverage, no
+   beta_0 without cash. For PO_OBJECTIVE_MAX_SHARPE and PO_OBJECTIVE_MAX_DIVERSIFICATION with cash the cash
+   weight is 0 and not a variable, so the budget term appears as beta_0 and lambda_budget is NaN.
 
    Each multiplier is the derivative of the optimal f with respect to the right-hand side of its constraint, so a
    '<=' constraint has a multiplier <= 0, like beta at an upper bound. When the constraints are dependent the
@@ -188,14 +214,19 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
    For PO_OBJECTIVE_MAX_RETURN, PO_CONSTRAINT_VOLATILITY is lambda_vol <= 0, the derivative of the optimal f
    with respect to the cap sigma; it is 0 when the cap is inactive.
 
+   PO_CONSTRAINT_LEVERAGE is lambda_lev <= 0, the derivative of the optimal f with respect to the limit; it is 0
+   when the leverage is set but inactive.
+
    A bound multiplier is 0 (not NaN) for a weight with no finite bound. NaN is only for an absent named
-   constraint: the budget constraint does not exist when there is cash, the target-return constraint when no
-   target was set (and for the objectives that take none), the volatility constraint unless the objective is
-   PO_OBJECTIVE_MAX_RETURN, and the leverage constraint is absent in this version.
+   constraint: the budget constraint does not exist when there is cash (nor for PO_OBJECTIVE_MAX_SHARPE and
+   PO_OBJECTIVE_MAX_DIVERSIFICATION with cash, see above), the target-return constraint when no target was set
+   (and for the objectives that take none), the volatility constraint unless the objective is
+   PO_OBJECTIVE_MAX_RETURN, and the leverage constraint when po_spec_set_leverage was not called.
 
    One documented exception, for PO_OBJECTIVE_MAX_RETURN: when the cap equals the minimum volatility of the
    feasible set and the efficient frontier is vertical there, lambda_vol = -inf, and the budget multiplier
-   (without cash) and the bound multipliers are NaN even though those constraints exist. */
+   (when present), the bound multipliers and the leverage multiplier (when a leverage was set, active or not)
+   are NaN even though those constraints exist. */
 PO_API po_status po_result_status(const po_result* r, int32_t* out);
 
 /* The weight count of the data the result was solved on. */
@@ -231,6 +262,16 @@ PO_API po_status po_utility(const po_data* d, const double* w, size_t n, double 
    vanishes without cash), b the benchmark. Needs the returns (po_data_set_returns); otherwise
    PO_INVALID_ARGUMENT. */
 PO_API po_status po_tracking_error(const po_data* d, const double* w, size_t n, double* out);
+
+/* (return - rf) / volatility over the risky weights, with the return and the volatility as above and rf the rate
+   (rf = 0 without cash). Needs mu and the covariance, otherwise PO_INVALID_ARGUMENT; NaN when the volatility is 0.
+   For weights that sum to one it is mu~' w / vol(w), the quantity PO_OBJECTIVE_MAX_SHARPE maximizes. */
+PO_API po_status po_sharpe_ratio(const po_data* d, const double* w, size_t n, double* out);
+
+/* sigma' w / volatility over the risky weights, with sigma = sqrt(diag Sigma): the quantity
+   PO_OBJECTIVE_MAX_DIVERSIFICATION maximizes. Needs the covariance (not mu), otherwise PO_INVALID_ARGUMENT; NaN
+   when the volatility is 0. */
+PO_API po_status po_diversification_ratio(const po_data* d, const double* w, size_t n, double* out);
 
 #ifdef __cplusplus
 }

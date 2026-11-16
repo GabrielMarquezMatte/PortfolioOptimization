@@ -16,6 +16,13 @@ double portfolio_volatility(const Data& data, std::span<const double> weights);
 // return - delta / 2 w' Sigma w; needs mu and the covariance.
 double utility(const Data& data, std::span<const double> weights, double delta);
 
+// (return - rf) / volatility with rf = 0 without cash; needs mu and the covariance. NaN when the volatility is 0.
+double sharpe_ratio(const Data& data, std::span<const double> weights);
+
+// sigma'w / volatility over the risky weights, sigma = sqrt(diag Sigma); needs the covariance. NaN when the
+// volatility is 0.
+double diversification_ratio(const Data& data, std::span<const double> weights);
+
 // sqrt(sum_t (r_t'w + w_0 rf - b_t)^2 / T), the cash term present only with cash; needs returns.
 double tracking_error(const Data& data, std::span<const double> weights);
 

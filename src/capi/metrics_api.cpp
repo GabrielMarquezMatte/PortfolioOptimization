@@ -29,6 +29,29 @@ po_status check_weights(const po::Data& data, const double* w, std::size_t n)
     return PO_OK;
 }
 
+template <typename Compute>
+po_status with_checked_weights(const po_data* d, const double* w, size_t n, double* out, Compute&& compute)
+{
+    return guard(
+        [&]
+        {
+            if (d == nullptr)
+            {
+                return null_handle("d");
+            }
+            if (out == nullptr)
+            {
+                return null_argument("out");
+            }
+            po_status status = check_weights(d->data, w, n);
+            if (status != PO_OK)
+            {
+                return status;
+            }
+            return compute(d->data, std::span<const double>(w, n), *out);
+        });
+}
+
 } // namespace
 
 extern "C" po_status po_portfolio_return(const po_data* d, const double* w, size_t n, double* out)
@@ -145,4 +168,37 @@ extern "C" po_status po_tracking_error(const po_data* d, const double* w, size_t
             *out = po::metrics::tracking_error(d->data, std::span<const double>(w, n));
             return PO_OK;
         });
+}
+
+extern "C" po_status po_sharpe_ratio(const po_data* d, const double* w, size_t n, double* out)
+{
+    return with_checked_weights(d, w, n, out,
+                        [](const po::Data& data, std::span<const double> weights, double& value)
+                        {
+                            if (!data.has_mu())
+                            {
+                                return set_error(PO_INVALID_ARGUMENT, "the Sharpe ratio needs mu");
+                            }
+                            if (!data.has_covariance())
+                            {
+                                return set_error(PO_INVALID_ARGUMENT, "the Sharpe ratio needs the covariance");
+                            }
+                            value = po::metrics::sharpe_ratio(data, weights);
+                            return PO_OK;
+                        });
+}
+
+extern "C" po_status po_diversification_ratio(const po_data* d, const double* w, size_t n, double* out)
+{
+    return with_checked_weights(d, w, n, out,
+                        [](const po::Data& data, std::span<const double> weights, double& value)
+                        {
+                            if (!data.has_covariance())
+                            {
+                                return set_error(PO_INVALID_ARGUMENT,
+                                                 "the diversification ratio needs the covariance");
+                            }
+                            value = po::metrics::diversification_ratio(data, weights);
+                            return PO_OK;
+                        });
 }

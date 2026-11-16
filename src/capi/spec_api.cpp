@@ -206,6 +206,24 @@ extern "C" po_status po_spec_set_max_volatility(po_spec* s, double sigma)
         });
 }
 
+extern "C" po_status po_spec_set_leverage(po_spec* s, double max_gross)
+{
+    return guard(
+        [&]
+        {
+            if (s == nullptr)
+            {
+                return null_handle("s");
+            }
+            if (!std::isfinite(max_gross) || max_gross <= 0.0)
+            {
+                return set_error(PO_INVALID_ARGUMENT, "max_gross must be positive and finite");
+            }
+            s->spec.leverage = max_gross;
+            return PO_OK;
+        });
+}
+
 extern "C" void po_spec_free(po_spec* s)
 {
     std::unique_ptr<po_spec> owner(s);

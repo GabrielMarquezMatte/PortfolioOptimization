@@ -126,7 +126,7 @@ void expect_same_as_core(const po_spec* spec, const po::Spec& core_spec, const D
     double target = multiplier_of(handle, PO_CONSTRAINT_TARGET_RETURN);
     EXPECT_TRUE(same_value(target, expected.target_return_multiplier));
     EXPECT_TRUE(same_value(multiplier_of(handle, PO_CONSTRAINT_VOLATILITY), expected.volatility_multiplier));
-    EXPECT_TRUE(std::isnan(multiplier_of(handle, PO_CONSTRAINT_LEVERAGE)));
+    EXPECT_TRUE(same_value(multiplier_of(handle, PO_CONSTRAINT_LEVERAGE), expected.leverage_multiplier));
 }
 
 po::Spec core_spec_of(po::Objective objective)
@@ -174,6 +174,133 @@ TEST(CapiSolve, EachQpObjectiveEndToEnd)
         po::Spec core_max_return = core_spec_of(po::Objective::MaxReturn);
         core_max_return.max_volatility = 0.3;
         expect_same_as_core(max_return.get(), core_max_return, pair);
+    }
+}
+
+constexpr double kLeverage = 1.4;
+
+TEST(CapiSolve, SharpeAndDiversificationEndToEnd)
+{
+    for (bool with_cash : {false, true})
+    {
+        DataPair pair = full_data(with_cash);
+        for (po::Objective objective : {po::Objective::MaxSharpe, po::Objective::MaxDiversification})
+        {
+            for (bool with_leverage : {false, true})
+            {
+                SCOPED_TRACE(with_cash);
+                SCOPED_TRACE(static_cast<int32_t>(objective));
+                SCOPED_TRACE(with_leverage);
+                SpecPtr spec = po::testing::make_spec(static_cast<int32_t>(objective));
+                ASSERT_EQ(po_spec_set_bounds(spec.get(), -1.0, 1.0), PO_OK);
+                po::Spec core_spec = core_spec_of(objective);
+                core_spec.lower = -1.0;
+                if (with_leverage)
+                {
+                    ASSERT_EQ(po_spec_set_leverage(spec.get(), kLeverage), PO_OK);
+                    core_spec.leverage = kLeverage;
+                }
+                expect_same_as_core(spec.get(), core_spec, pair);
+                ResultPtr result = po::testing::solve_ok(spec.get(), pair.handle.get());
+                EXPECT_EQ(po::testing::status_of(result.get()), PO_SOLVE_OPTIMAL);
+            }
+        }
+    }
+}
+
+DataPtr cash_above_every_mean()
+{
+    DataPtr data = po::testing::make_data(6, po::testing::random_vector(6, 509, 0.03, 0.15),
+                                          po::testing::random_covariance(6, 9));
+    EXPECT_EQ(po_data_set_risk_free(data.get(), 0.2), PO_OK);
+    return data;
+}
+
+TEST(CapiSolve, UnboundedIsResultNotError)
+{
+    DataPtr data = cash_above_every_mean();
+    SpecPtr spec = po::testing::make_spec(PO_OBJECTIVE_MAX_SHARPE);
+    po_result* raw = nullptr;
+    ASSERT_EQ(po_solve(spec.get(), data.get(), &raw), PO_OK);
+    ResultPtr result(raw);
+    EXPECT_EQ(po::testing::status_of(result.get()), PO_SOLVE_UNBOUNDED);
+    std::vector<double> weights = po::testing::weights_of(result.get());
+    ASSERT_EQ(weights.size(), 7u);
+    for (double weight : weights)
+    {
+        EXPECT_TRUE(std::isnan(weight));
+    }
+    for (double multiplier : bound_multipliers_of(result.get(), 7))
+    {
+        EXPECT_TRUE(std::isnan(multiplier));
+    }
+    for (int32_t constraint : {PO_CONSTRAINT_BUDGET, PO_CONSTRAINT_TARGET_RETURN, PO_CONSTRAINT_VOLATILITY,
+                               PO_CONSTRAINT_LEVERAGE})
+    {
+        EXPECT_TRUE(std::isnan(multiplier_of(result.get(), constraint)));
+    }
+}
+
+double gross_of(const po_result* result)
+{
+    double gross = 0.0;
+    for (double weight : po::testing::weights_of(result))
+    {
+        gross += std::abs(weight);
+    }
+    return gross;
+}
+
+// Correlations that make the unrestricted optimum of every objective short some assets.
+DataPtr hedged_data()
+{
+    const double volatility[kAssets] = {0.1, 0.2, 0.3, 0.25};
+    const double correlation[kAssets][kAssets] = {
+        {1.0, 0.7, 0.1, 0.5}, {0.7, 1.0, -0.1, 0.2}, {0.1, -0.1, 1.0, -0.1}, {0.5, 0.2, -0.1, 1.0}};
+    std::vector<double> covariance;
+    for (std::size_t i = 0; i < kAssets; ++i)
+    {
+        for (std::size_t j = 0; j < kAssets; ++j)
+        {
+            covariance.push_back(volatility[i] * volatility[j] * correlation[i][j]);
+        }
+    }
+    return po::testing::make_data(kAssets, sample_mu(), covariance);
+}
+
+SpecPtr boxed_spec(int32_t objective)
+{
+    SpecPtr spec = po::testing::make_spec(objective);
+    EXPECT_EQ(po_spec_set_bounds(spec.get(), -3.0, 3.0), PO_OK);
+    if (objective == PO_OBJECTIVE_MAX_RETURN)
+    {
+        EXPECT_EQ(po_spec_set_max_volatility(spec.get(), 0.3), PO_OK);
+    }
+    return spec;
+}
+
+TEST(CapiSolve, LeverageMultiplierOnlyWithLeverage)
+{
+    DataPtr data = hedged_data();
+    for (int32_t objective : {PO_OBJECTIVE_MIN_VARIANCE, PO_OBJECTIVE_UTILITY, PO_OBJECTIVE_MAX_RETURN,
+                              PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_MAX_DIVERSIFICATION})
+    {
+        SCOPED_TRACE(objective);
+        SpecPtr spec = boxed_spec(objective);
+        ResultPtr unrestricted = po::testing::solve_ok(spec.get(), data.get());
+        ASSERT_EQ(po::testing::status_of(unrestricted.get()), PO_SOLVE_OPTIMAL);
+        EXPECT_TRUE(std::isnan(multiplier_of(unrestricted.get(), PO_CONSTRAINT_LEVERAGE)));
+        double gross = gross_of(unrestricted.get());
+        ASSERT_GT(gross, 1.0);
+
+        ASSERT_EQ(po_spec_set_leverage(spec.get(), 2.0 * gross), PO_OK);
+        ResultPtr inactive = po::testing::solve_ok(spec.get(), data.get());
+        EXPECT_EQ(multiplier_of(inactive.get(), PO_CONSTRAINT_LEVERAGE), 0.0);
+
+        ASSERT_EQ(po_spec_set_leverage(spec.get(), 0.5 * (1.0 + gross)), PO_OK);
+        ResultPtr binding = po::testing::solve_ok(spec.get(), data.get());
+        ASSERT_EQ(po::testing::status_of(binding.get()), PO_SOLVE_OPTIMAL);
+        EXPECT_LT(multiplier_of(binding.get(), PO_CONSTRAINT_LEVERAGE), 0.0);
     }
 }
 
@@ -345,6 +472,7 @@ TEST(CapiSolve, NullHandles)
     EXPECT_EQ(po_spec_set_risk_aversion(nullptr, 2.0), PO_INVALID_HANDLE);
     EXPECT_EQ(po_spec_set_importance(nullptr, 0.5), PO_INVALID_HANDLE);
     EXPECT_EQ(po_spec_set_max_volatility(nullptr, 0.2), PO_INVALID_HANDLE);
+    EXPECT_EQ(po_spec_set_leverage(nullptr, 2.0), PO_INVALID_HANDLE);
     EXPECT_EQ(po_data_set_returns(nullptr, values, values, 1), PO_INVALID_HANDLE);
     EXPECT_EQ(po_data_set_risk_free(nullptr, 0.1), PO_INVALID_HANDLE);
     EXPECT_EQ(po_data_asset_count(nullptr, &count), PO_INVALID_HANDLE);

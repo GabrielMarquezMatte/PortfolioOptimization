@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 
 namespace po::metrics
 {
@@ -49,6 +50,17 @@ double cash_return(const Data& data, std::span<const double> weights)
     return weights[data.asset_count()] * *data.risk_free();
 }
 
+double weighted_volatilities(const Data& data, std::span<const double> weights)
+{
+    std::size_t n = data.asset_count();
+    double total = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        total += weights[i] * std::sqrt(data.covariance()[i * n + i]);
+    }
+    return total;
+}
+
 double squared_tracking_gaps(const Data& data, std::span<const double> weights)
 {
     std::size_t n = data.asset_count();
@@ -77,6 +89,26 @@ double portfolio_volatility(const Data& data, std::span<const double> weights)
 double utility(const Data& data, std::span<const double> weights, double delta)
 {
     return portfolio_return(data, weights) - 0.5 * delta * variance(data, weights);
+}
+
+double sharpe_ratio(const Data& data, std::span<const double> weights)
+{
+    double volatility = portfolio_volatility(data, weights);
+    if (volatility == 0.0)
+    {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return (portfolio_return(data, weights) - data.risk_free().value_or(0.0)) / volatility;
+}
+
+double diversification_ratio(const Data& data, std::span<const double> weights)
+{
+    double volatility = portfolio_volatility(data, weights);
+    if (volatility == 0.0)
+    {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return weighted_volatilities(data, weights) / volatility;
 }
 
 double tracking_error(const Data& data, std::span<const double> weights)
