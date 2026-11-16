@@ -696,7 +696,8 @@ tolerance of the QP solver, `qp::kRelativeTolerance`). Measurements (Windows, GC
 - **The residual is computed far below its noise.** Against the same residual in `long double` the computed
   stationarity differed by at most `1.4e-4` of its noise (`n` in {10, 20, 50}, `cond(Sigma) = 1e8`, no box, with
   a target volatility: 12 points). `Sigma w` is the compensated product of the section above.
-- **The factor 16.** Over the 2788 `OPTIMAL` results of the sweep below the largest residual is 15.0. Outside
+- **The factor 16.** Over the 2788 `OPTIMAL` results of the sweep below the largest residual is 15.0 (this
+  bullet was measured before the multipliers were settled at the final point, and not again after). Outside
   the shapes with a target volatility and no box at `cond(Sigma) = 1e8` and `n >= 20` it is 1.65. On those
   shapes the augmented Lagrangian stops at the first iterate within the factor and the polish does not improve
   it (its Newton system is solved to about that accuracy), so their residuals sit just under whatever factor is
@@ -728,25 +729,57 @@ uneven budget:
 | 1e6 | 6.8e-12 | 1.6e-7 | 1.5e-6 | 1.2e-10 | 7.7e-16 | 1e-9 |
 | 1e8 | 4.2e-12 | 8.4e-3 | 2.4e-3 | 1.0e-8 | 9.7e-16 | 1e-7 |
 
-One ulp of the weights there moves the stationarity by more than the band, so a stationarity inside the band is
-not to be expected of any vector of doubles near such a solution. That is an inference from the one-ulp
-measurement above: the roundings of a solution were not searched. These results are `OPTIMAL`: their KKT
-residual is within 16 times what one ulp of the weights moves it by, the equalities and the bounds hold at the
-band, and so do the sign and complementarity of the multipliers and the identity `w'grad f = 0`. They are **reported, not given a wider band**: 251 of the 2788
-`OPTIMAL` results of the sweep below fail the stationarity of `expect_risk_parity_kkt` at the band of their
-`cond(Sigma)` and nothing else, all with a target volatility, none at `cond(Sigma) = 1e2`:
+One ulp of the weights there moves the stationarity by more than the band, so the band alone cannot be the
+test of these points. `expect_risk_parity_kkt` passes the stationarity residual `r` in one of two ways, both
+computed in the test in `long double` and without `src/riskparity/kkt.cpp`:
 
-| cond(Sigma) | OPTIMAL | stationarity above the band | largest stationarity / band |
-|---|---|---|---|
-| 1e2 | 684 | 0 | |
-| 1e4 | 692 | 14 | 31 |
-| 1e6 | 706 | 114 | 4.9e3 |
-| 1e8 | 706 | 123 | 2.4e5 |
+- relative to the largest term of `grad f` or of the constraints, at the band of `cond(Sigma)`; or
+- entry by entry, `abs(r_j) <= 2 floor_j`, with the **rounding floor**
+  `floor_j = eps ((abs(hess f - lambda_vol hess vol) abs(w))_j + sum_k abs(lambda_k grad h_k)_j + abs(beta_j))`:
+  how far `r_j` moves when every weight and every multiplier of the result, all doubles, is rounded once. The
+  Hessian is the central difference of the reference gradient (step `1e-12` of the largest weight), which
+  agrees with the analytic Hessian of the library within `1e-6` at `cond(Sigma)` up to `1e6`
+  (`RiskParityReference.HessianByDifferencesMatchesTheObjective`).
 
-`RiskParitySolveSweep.OptimalRunsAreKkt` pins the count on its own grid (47 of 564) and requires each of them
-to fail on the stationarity alone, with a target volatility, at `cond(Sigma) >= 1e4` and within the noise
-factor. Whether such a result should instead be `MAX_ITER` (the solver would need a band of its own), or the
-check should measure the stationarity against the rounding of the weights, is open.
+The equalities, the bounds, the sign and complementarity of the multipliers and the identity `w'grad f = 0`
+are checked at the band as before. The factor 2 is not the solver's 16: the largest `abs(r_j) / floor_j` of the
+251 results of the sweep below that are above the band is 1.36 (and one ulp of the weights moved the residual
+by up to 0.84 of the solver's noise, which is a little larger than this floor). The floor is not a wider band:
+the weights of such a result moved by 64 ulps each are more than 8 floors away and are rejected, while their
+equalities still hold at the band (`RiskParityReference.KktRejectsAStationarityAboveItsRoundingFloor`).
+
+**Forward error of the results above the band.** A stationarity at its floor bounds the backward error, not
+the distance to the solution, which is larger by the conditioning of the KKT system. So every result that
+passes by the floor alone is also compared with the KKT point of its own active set refined in `long double`
+(`tests/unit/fuzz/risk_parity/risk_parity_refinement.hpp`: six Newton steps on the KKT system from the result,
+with the reference gradient and its Hessian by differences; the refined point is at most `4.3e-4` of the floor
+from stationarity and satisfies the equalities at the band). Of the 2788 `OPTIMAL` results of the sweep below,
+251 are above the band, all with a target volatility, none at `cond(Sigma) = 1e2`:
+
+| cond(Sigma) | OPTIMAL | above the band | largest `abs(r_j) / floor_j` | largest weight error | band | largest value error over `band (1 + f)` |
+|---|---|---|---|---|---|---|
+| 1e2 | 684 | 0 | | | 1e-10 | |
+| 1e4 | 692 | 14 | 0.74 | 4.3e-15 | 1e-10 | 1.4e-7 |
+| 1e6 | 706 | 114 | 1.36 | 3.1e-13 | 1e-9 | 3.1e-5 |
+| 1e8 | 706 | 123 | 1.29 | 1.6e-8 | 1e-7 | 2.8e-5 |
+
+The weight error is `max_i abs(w_i - w_ref_i) / max_i abs(w_i)` and the value error `abs(f(w) - f(w_ref))`.
+By `cond(Sigma)`, `n` and box, the largest weight error (number of results above the band):
+
+| cond(Sigma) | box | n = 3 | n = 5 | n = 10 | n = 20 | n = 50 |
+|---|---|---|---|---|---|---|
+| 1e4 | LongOnly | | 1.2e-16 (2) | 1.6e-16 (1) | | |
+| 1e4 | None | | | 9.9e-16 (5) | 4.3e-15 (3) | 3.6e-15 (3) |
+| 1e6 | LongOnly | | 1.6e-16 (4) | 5.5e-14 (9) | 1.3e-16 (2) | 2.1e-14 (4) |
+| 1e6 | None | 3.0e-15 (9) | 2.0e-15 (15) | 1.0e-13 (24) | 2.4e-13 (23) | 3.1e-13 (24) |
+| 1e8 | LongOnly | | 1.9e-15 (4) | 1.6e-12 (14) | | 4.9e-13 (8) |
+| 1e8 | None | 1.5e-13 (9) | 9.6e-14 (16) | 4.1e-11 (24) | 7.4e-12 (24) | 1.6e-8 (24) |
+
+The weights are right at the band everywhere, by a factor of at least `1e3` except at `cond(Sigma) = 1e8`,
+`n = 50`, no box, where the factor is 6. `RiskParitySolveSweep.OptimalRunsAreKkt` requires, on its grid of 576
+shapes, that every `OPTIMAL` passes `expect_risk_parity_kkt` and that every one above the band has a weight
+error at most the band and a value error at most `band (1 + f)` against a refined point within `1e-2` of the
+floor. The refinement needs a `long double` wider than `double`; where it is not (MSVC) that part is skipped.
 
 ### The Newton polish
 
@@ -757,8 +790,8 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
 `H`), never an inverse. Decisions:
 
 - **Acceptance.** A step is taken only when it decreases the largest KKT residual in noise units, feasibility
-  included; the first step that does not ends the polish (`improved = false` when none did), and so does a
-  residual at or below 1. From a descent stopped at a relative residual of `1e-6` (`n = 5`, box `[0, 0.24]`,
+  included; the first step that does not ends the polish, and so does a residual at or below 1 (`improved`
+  says whether the residual ended below that of the start). From a descent stopped at a relative residual of `1e-6` (`n = 5`, box `[0, 0.24]`,
   three weights at the cap, with and without a target return) one or two steps reach a residual below 1 and a
   second call takes no step (`NewtonPolish.ReachesRoundingFloor`). At most 20 steps; the most used is 4 at the
   first effort of the solver on the grid below and 10 at `s = sigma_min (1 + 1e-10)`.
@@ -769,8 +802,13 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
   `s = sigma_min (1 + 1e-9)` (`n = 5`, `cond(Sigma) = 1e4`), where `lambda_vol s = -2.5e5`, the polish refused
   its first step from every point the augmented Lagrangian reached and the result was `MAX_ITER`; with the
   estimate it takes 4 to 8 steps to a residual of 0.3.
+- **The settling is done at the start too**, whether or not a step follows: the weights the start names at a
+  bound are put exactly there and the multipliers are the settled ones, so a point that no step improves does
+  not keep the multipliers of the descent (`NewtonPolish.SettlesTheMultipliersWithoutAStep`: a budget
+  multiplier off by half the noise of the stationarity left 0.48 of that noise along the budget row before
+  this, and at most 0.05 after).
 - **A multiplier of the wrong sign releases its bound**, and a free weight that a step takes out of the box is
-  held at the bound it crossed.
+  held at the bound it crossed (`NewtonPolish.ReleasesABoundWhoseMultiplierHasTheWrongSign`).
 - **Dependent equalities** (equal means with a target return) are dropped from the system by the rule of the
   QP solver (the part of the gradient outside the span of the earlier ones at most `1e-12` of it); their
   multipliers stay as the descent left them.
@@ -855,37 +893,39 @@ budget row) gave the same count of each status in every row, with a longest solv
 and a mean of 2212 against 584 iterations on the shapes with a target volatility alone and no box.
 
 **Sweep** (`RiskParitySolveSweep.DISABLED_MeasureSweep`, run with `--gtest_also_run_disabled_tests`; 98 s, of
-which 88 s on the shapes with a target volatility and no box, nearly all of it at `n = 50`). Every combination of `cond(Sigma)` in
+which 86 s on the shapes with a target volatility and no box, nearly all of it at `n = 50`; the checks of the
+results come on top). Every combination of `cond(Sigma)` in
 {1e2, 1e4, 1e6, 1e8}, scale {1, 1e-4}, equal and uneven budgets, box None, LongOnly and Capped, with and without
 `target_return` and `target_volatility` (`s` between `sigma_min` and `1.5 sigma_min`): 192 shapes, at `n` in
 {3, 5, 10, 20, 50} and seeds 1 to 3, 2880 calls of `po::solve`. Every `OPTIMAL` is checked by
-`expect_risk_parity_kkt` at the band of its `cond(Sigma)`; "above the band" counts those that fail the
-stationarity and nothing else (the section on the noise), "other" any other failure:
+`expect_risk_parity_kkt` at the band of its `cond(Sigma)`; "above the band" counts those whose stationarity
+passes by its rounding floor and not by the band (the section on the noise), "KKT failed" any failure of the
+check:
 
-| constraints | OPTIMAL | MAX_ITER | above the band | other | iterations, mean (max) | largest residual / noise | seconds, total (longest) |
-|---|---|---|---|---|---|---|---|
-| Capped | 240 / 240 | 0 | 0 | 0 | 26.3 (83) | 0.98 | 0.59 (0.025) |
-| Capped + return | 240 / 240 | 0 | 0 | 0 | 23.9 (146) | 1.00 | 0.65 (0.058) |
-| Capped + return + volatility | 196 / 240 | 44 | 0 | 0 | 51.3 (188) | 0.97 | 1.49 (0.078) |
-| Capped + volatility | 240 / 240 | 0 | 0 | 0 | 51.6 (168) | 0.97 | 1.45 (0.056) |
-| LongOnly | 240 / 240 | 0 | 0 | 0 | 14.3 (39) | 1.25 | 0.01 (0.001) |
-| LongOnly + return | 240 / 240 | 0 | 0 | 0 | 28.2 (208) | 1.05 | 0.31 (0.012) |
-| LongOnly + return + volatility | 212 / 240 | 28 | 6 | 0 | 119.4 (773) | 0.99 | 2.83 (0.264) |
-| LongOnly + volatility | 238 / 240 | 2 | 42 | 0 | 113.8 (902) | 0.93 | 2.53 (0.271) |
-| None | 240 / 240 | 0 | 0 | 0 | 14.3 (39) | 1.25 | 0.01 (0.000) |
-| None + return | 222 / 240 | 18 | 0 | 0 | 34.0 (213) | 1.65 | 0.27 (0.009) |
-| None + return + volatility | 240 / 240 | 0 | 84 | 0 | 1582.9 (59027) | 15.04 | 51.53 (9.829) |
-| None + volatility | 240 / 240 | 0 | 119 | 0 | 1404.7 (50754) | 14.19 | 36.00 (7.758) |
+| constraints | OPTIMAL | MAX_ITER | above the band | KKT failed | iterations, mean (max) | seconds, total (longest) |
+|---|---|---|---|---|---|---|
+| Capped | 240 / 240 | 0 | 0 | 0 | 26.3 (83) | 0.60 (0.026) |
+| Capped + return | 240 / 240 | 0 | 0 | 0 | 23.9 (146) | 0.68 (0.057) |
+| Capped + return + volatility | 196 / 240 | 44 | 0 | 0 | 51.3 (188) | 1.49 (0.077) |
+| Capped + volatility | 240 / 240 | 0 | 0 | 0 | 51.6 (168) | 1.48 (0.068) |
+| LongOnly | 240 / 240 | 0 | 0 | 0 | 14.3 (39) | 0.01 (0.000) |
+| LongOnly + return | 240 / 240 | 0 | 0 | 0 | 28.2 (208) | 0.32 (0.012) |
+| LongOnly + return + volatility | 212 / 240 | 28 | 6 | 0 | 119.4 (773) | 2.81 (0.266) |
+| LongOnly + volatility | 238 / 240 | 2 | 42 | 0 | 113.8 (902) | 2.57 (0.277) |
+| None | 240 / 240 | 0 | 0 | 0 | 14.3 (39) | 0.01 (0.000) |
+| None + return | 222 / 240 | 18 | 0 | 0 | 34.0 (213) | 0.27 (0.008) |
+| None + return + volatility | 240 / 240 | 0 | 84 | 0 | 1582.9 (59027) | 50.48 (9.730) |
+| None + volatility | 240 / 240 | 0 | 119 | 0 | 1404.7 (50754) | 35.27 (7.615) |
 
 | n | OPTIMAL | MAX_ITER | above the band | iterations, mean (max) | seconds, total (longest) |
 |---|---|---|---|---|---|
 | 3 | 540 / 576 | 36 | 18 | 73.6 (3133) | 0.12 (0.007) |
-| 5 | 538 / 576 | 38 | 41 | 91.1 (3362) | 0.20 (0.012) |
-| 10 | 566 / 576 | 10 | 77 | 108.3 (2385) | 0.44 (0.015) |
-| 20 | 568 / 576 | 8 | 52 | 175.7 (6081) | 2.33 (0.150) |
-| 50 | 576 / 576 | 0 | 63 | 998.7 (59027) | 94.59 (9.829) |
+| 5 | 538 / 576 | 38 | 41 | 91.1 (3362) | 0.23 (0.015) |
+| 10 | 566 / 576 | 10 | 77 | 108.3 (2385) | 0.46 (0.019) |
+| 20 | 568 / 576 | 8 | 52 | 175.7 (6081) | 2.31 (0.118) |
+| 50 | 576 / 576 | 0 | 63 | 998.7 (59027) | 92.88 (9.730) |
 
-No result is `INFEASIBLE` (the shapes are built feasible) and none fails a check other than the stationarity.
+No result is `INFEASIBLE` (the shapes are built feasible) and none fails the check.
 The 92 `MAX_ITER`:
 
 - 74 with a target volatility, LongOnly or Capped. On each of them the augmented Lagrangian, run again from the
@@ -900,10 +940,10 @@ The descents that did not converge in the sweep of the polyhedral descent above 
 The start is not the same (the point nearest to the Spinu point, not the minimum-variance point), so this says
 that the policy solves those shapes, not that the polish repaired those 70 runs.
 
-**Cost.** One solve at `n = 50`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 9.8 s and
+**Cost.** One solve at `n = 50`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 9.7 s and
 59 027 iterations: every subproblem of the augmented Lagrangian is a descent that converges slowly there (296.8
 iterations on average for the descent alone at `cond(Sigma) = 1e8` without a box, in the table above), and the
-second effort starts the multiplier method again. At `n <= 20` the longest solve of the sweep is 0.15 s.
+second effort starts the multiplier method again. At `n <= 20` the longest solve of the sweep is 0.28 s.
 
 ## Fuzz battery
 
@@ -1057,9 +1097,9 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
 | `tests/unit/riskparity/spinu_test.cpp` | Spinu against the diagonal and the two-asset closed forms (1e-12), the contributions against an equal budget (n up to 100, `cond(Sigma)` 1e2 to 1e6, 20 seeds) and an uneven one (`b_i` from 1e-6 to 1, `cond(Sigma)` up to 1e8, both scales), in the bands of the table above |
 | `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s` |
-| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps, no step from there, never a worse point than the start; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN |
+| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
-| `tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp` | `po::solve` over 576 shapes: no status other than `OPTIMAL` carries a point, every `OPTIMAL` passes the equalities, the bounds and the multiplier checks at the band of its `cond(Sigma)`, and the 47 results whose stationarity is above the band are pinned and required to be within the noise factor |
+| `tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp` | `po::solve` over 576 shapes: no status other than `OPTIMAL` carries a point, every `OPTIMAL` passes `expect_risk_parity_kkt` at the band of its `cond(Sigma)` (the stationarity at the band or within twice its rounding floor), and every one above the band agrees in weights and in `f` with the KKT point of its active set refined in `long double` |
 | `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives that take it, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`; `RISK_PARITY` takes `target_return`, `target_volatility` and `risk_budget` and no cash), its messages and the order of the checks |
 | `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |
 | `tests/unit/metrics/portfolio_test.cpp` | Portfolio return and volatility, utility and tracking error, with and without cash |
