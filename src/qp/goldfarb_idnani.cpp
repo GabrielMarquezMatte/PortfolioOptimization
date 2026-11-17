@@ -640,8 +640,11 @@ Solution solve(const Problem& problem, BasisCache& cache)
                        std::memcmp(cache.factor.data(), factor.data(), factor.size_bytes()) == 0;
     if (!same_factor)
     {
-        cache.factor.assign(factor.begin(), factor.end());
-        cache.basis = initial_basis(factor, problem.n);
+        // Build both in locals first: a throw (bad_alloc) must not leave the new key with the old basis.
+        std::vector<double> key(factor.begin(), factor.end());
+        std::vector<double> basis = initial_basis(factor, problem.n);
+        cache.factor = std::move(key);
+        cache.basis = std::move(basis);
     }
     return solve_factored(problem, factor, active_set_from(cache.basis, problem.n));
 }

@@ -3,10 +3,13 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -18,6 +21,57 @@
 #include "linalg/cholesky.hpp"
 #include "random_covariance.hpp"
 #include "user_kkt.hpp"
+
+// GCC cannot see that the replaced operator new below is the one that hands out the pointers freed here.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
+
+// A failure of the global operator new on demand, for the tests of exception safety: with the countdown at -1
+// (its value outside those tests) every allocation goes to malloc, and with it at k >= 0 the allocation after
+// the next k throws std::bad_alloc, once.
+std::atomic<long> allocations_until_failure{-1};
+
+void* operator new(std::size_t size)
+{
+    long remaining = allocations_until_failure.load(std::memory_order_relaxed);
+    if (remaining >= 0 && allocations_until_failure.fetch_sub(1, std::memory_order_relaxed) == 0)
+    {
+        allocations_until_failure.store(-1, std::memory_order_relaxed);
+        throw std::bad_alloc();
+    }
+    void* pointer = std::malloc(size == 0 ? 1 : size);
+    if (pointer == nullptr)
+    {
+        throw std::bad_alloc();
+    }
+    return pointer;
+}
+
+void* operator new[](std::size_t size)
+{
+    return operator new(size);
+}
+
+void operator delete(void* pointer) noexcept
+{
+    std::free(pointer);
+}
+
+void operator delete(void* pointer, std::size_t) noexcept
+{
+    std::free(pointer);
+}
+
+void operator delete[](void* pointer) noexcept
+{
+    std::free(pointer);
+}
+
+void operator delete[](void* pointer, std::size_t) noexcept
+{
+    std::free(pointer);
+}
 
 namespace
 {
@@ -582,6 +636,52 @@ TEST(GoldfarbIdnani, BasisCacheIsBitIdenticalToAFreshBasis)
             }
         }
     }
+}
+
+// A solve that throws while it builds the basis of a new factor must leave the cache as it was, not with the
+// new key over the old basis: the next solve with that factor would start from the wrong J0.
+TEST(GoldfarbIdnani, BasisCacheKeepsItsPairWhenAnAllocationFails)
+{
+    std::size_t n = 12;
+    Problem problem = path_problem(n, 1e2);
+    Problem other = problem;
+    for (double& entry : other.hessian_factor)
+    {
+        entry *= 2.0;
+    }
+    po::qp::BasisCache before;
+    po::qp::solve(problem, before);
+    po::qp::BasisCache after_other;
+    po::qp::solve(other, after_other);
+    int failures = 0;
+    for (long countdown = 0; countdown < 200; ++countdown)
+    {
+        SCOPED_TRACE(testing::Message() << "countdown = " << countdown);
+        po::qp::BasisCache cache = before;
+        allocations_until_failure.store(countdown);
+        bool threw = false;
+        try
+        {
+            po::qp::solve(other, cache);
+        }
+        catch (const std::bad_alloc&)
+        {
+            threw = true;
+        }
+        allocations_until_failure.store(-1);
+        if (!threw)
+        {
+            EXPECT_TRUE(same_bits(cache.factor, after_other.factor));
+            EXPECT_TRUE(same_bits(cache.basis, after_other.basis));
+            break;
+        }
+        ++failures;
+        bool old_pair = same_bits(cache.factor, before.factor) && same_bits(cache.basis, before.basis);
+        bool new_pair = same_bits(cache.factor, after_other.factor) && same_bits(cache.basis, after_other.basis);
+        EXPECT_TRUE(old_pair || new_pair);
+        expect_same_solution(po::qp::solve(other, cache), po::qp::solve(other));
+    }
+    EXPECT_GT(failures, 0);
 }
 
 } // namespace
