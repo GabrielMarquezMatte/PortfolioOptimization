@@ -68,6 +68,8 @@ Build targets (`CMakeLists.txt`):
 | `portopt_tests` | GoogleTest executable; links `portopt_capi` and `portopt_core`, so a test sees the same thread-local error as the entry points it calls (static `libstdc++` on MinGW) |
 | `portopt_c_header_check` | Compiles the public header as C11 |
 | ctest `style` | `tests/style/check_style.py` |
+| `portopt_benchmarks` | Google Benchmark suite (`BM_Solve/*`, `BM_Kernel/*`); opt-in (`PO_BUILD_BENCHMARKS`, preset `gcc-bench`); links `portopt_core` directly and counts allocations with a replaced `operator new` that no other target has |
+| `portopt_profile` | One pass over every benchmark case: the per-case table and the dump of solutions in hex-float for `quick.py compare-solutions`; opt-in like `portopt_benchmarks` |
 
 ## Where each responsibility lives
 
@@ -109,9 +111,11 @@ Build targets (`CMakeLists.txt`):
 | `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
 | `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `tests/unit/fuzz/risk_parity/` holds the risk parity references (the scan of the feasible curve, the KKT check with its rounding floor, and the refinement of a result in `long double` that measures its forward error), the `RiskParityDescentFuzz` sweep of the polyhedral descent, the `RiskParitySolveSweep` of `po::solve` and the `RiskParityFuzz` battery |
 | `tests/unit/kkt.hpp`, `user_kkt.hpp`, `random_covariance.hpp`, `capi_scope.hpp` | KKT residuals of a QP (the generated rows of the family included), the KKT conditions in the user's variables for every objective, random covariances of a chosen condition number, RAII for C handles |
+| `tests/benchmarks` | The benchmark and profile tools: `instances.hpp` and `cases.hpp` (deterministic instances, cached, and the objective x variant x size table), `bm_solve.cpp`, `bm_kernel.cpp`, `bench_main.cpp`, `profile.cpp`, `alloc_counter.*` and `quick.py` (`run`, `compare`, `compare-solutions`, `selftest`); how to use them is in [docs/performance/measuring.md](docs/performance/measuring.md) |
 | `tests/style/check_style.py` | Style rules that can be checked without a compiler; runs as the `style` ctest |
 | `python/tests` | Python tests; they skip cleanly (pytest exit 5) when the native library is missing |
 | `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION, RISK_PARITY (Spinu, the QP sequence, the augmented Lagrangian, the multipliers) and the multiplier convention |
+| `docs/performance/measuring.md` | How to measure: the `gcc-bench` and `msvc-profile` presets, the quick suite, A/B by medians against noise, the comparison of solutions, the uProf recipe and the guards an optimization must keep green |
 | `docs/guide/validation.md` | Validation policy, tolerances, the numerical decisions of the solver and of each objective, and the fuzz battery |
 
 ## Stability rules of the C API

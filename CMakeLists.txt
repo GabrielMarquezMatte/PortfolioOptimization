@@ -158,3 +158,44 @@ if(PO_BUILD_TESTS)
     add_test(NAME style
         COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/style/check_style.py ${CMAKE_SOURCE_DIR})
 endif()
+
+if(PO_BUILD_BENCHMARKS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_WERROR OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(benchmark
+        URL https://github.com/google/benchmark/archive/refs/tags/v1.9.1.tar.gz
+        URL_HASH SHA256=32131c08ee31eeff2c8968d7e874f3cb648034377dfc32a4c377fa8796d84981
+        SYSTEM)
+    FetchContent_MakeAvailable(benchmark)
+
+    # Both executables replace the global operator new to count allocations (alloc_counter.cpp); nothing else does.
+    # They call the core directly and compile its headers, so they need the same rounding as the core.
+    add_executable(portopt_benchmarks
+        tests/benchmarks/alloc_counter.cpp
+        tests/benchmarks/bench_main.cpp
+        tests/benchmarks/bm_kernel.cpp
+        tests/benchmarks/bm_solve.cpp)
+    add_executable(portopt_profile
+        tests/benchmarks/alloc_counter.cpp
+        tests/benchmarks/profile.cpp)
+    target_link_libraries(portopt_benchmarks PRIVATE portopt_core benchmark::benchmark)
+    target_link_libraries(portopt_profile PRIVATE portopt_core)
+    foreach(target portopt_benchmarks portopt_profile)
+        target_include_directories(${target} PRIVATE tests/unit tests/benchmarks)
+        target_compile_options(${target} PRIVATE ${PO_WARNING_FLAGS})
+        if(NOT MSVC)
+            target_compile_options(${target} PRIVATE -ffp-contract=off)
+        endif()
+        if(MINGW)
+            target_link_options(${target} PRIVATE -static-libgcc -static-libstdc++)
+        endif()
+    endforeach()
+
+    enable_testing()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME benchmark_allocation_selftest COMMAND portopt_benchmarks --selftest)
+    add_test(NAME benchmark_quick_selftest
+        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/benchmarks/quick.py selftest)
+endif()

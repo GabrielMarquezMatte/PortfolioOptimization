@@ -31,6 +31,15 @@
       }
     },
     {
+      "name": "gcc-bench",
+      "inherits": "gcc-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PO_BUILD_BENCHMARKS": "ON",
+        "PO_BUILD_TESTS": "OFF"
+      }
+    },
+    {
       "name": "native-release",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
@@ -42,6 +51,16 @@
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/${presetName}"
+    },
+    {
+      "name": "msvc-profile",
+      "inherits": "msvc-release",
+      "cacheVariables": {
+        "PO_BUILD_BENCHMARKS": "ON",
+        "PO_BUILD_TESTS": "OFF",
+        "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG /Zi",
+        "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/DEBUG /OPT:REF /OPT:ICF"
+      }
     }
   ],
   "buildPresets": [
@@ -54,6 +73,10 @@
       "configurePreset": "gcc-release"
     },
     {
+      "name": "gcc-bench",
+      "configurePreset": "gcc-bench"
+    },
+    {
       "name": "native-release",
       "configurePreset": "native-release",
       "configuration": "Release"
@@ -61,6 +84,11 @@
     {
       "name": "msvc-release",
       "configurePreset": "msvc-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "msvc-profile",
+      "configurePreset": "msvc-profile",
       "configuration": "Release"
     }
   ],
@@ -75,6 +103,13 @@
     {
       "name": "gcc-release",
       "configurePreset": "gcc-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "gcc-bench",
+      "configurePreset": "gcc-bench",
       "output": {
         "outputOnFailure": true
       }
