@@ -76,12 +76,13 @@ version or `CHANGELOG.md` has no dated `## [X.Y.Z] - YYYY-MM-DD` section.
 2. Optionally run `release.yml` by hand (`dry_run` on by default): it builds and tests everything and publishes
    nothing.
 3. Push a release candidate tag, `vX.Y.Z-rc.N`: the GitHub Release is marked as a prerelease and the wheels go to
-   TestPyPI (version `X.Y.ZrcN`, derived from the tag; no commit changes the version for a candidate). Install it
-   in a clean environment from TestPyPI to check it.
+   PyPI as the prerelease `X.Y.ZrcN` (derived from the tag; no commit changes the version for a candidate), which
+   pip installs only when asked for (`pip install --pre pyportopt` or `pyportopt==X.Y.ZrcN`). Install it in a clean
+   environment to check it.
 4. Push `vX.Y.Z`: the GitHub Release and PyPI.
 
-PyPI and TestPyPI publish by trusted publishing: each project names this repository, the workflow `release.yml` and
-the environment `pypi` or `testpypi`, so no token is stored.
+PyPI publishes by trusted publishing: the project names this repository, the workflow `release.yml` and the
+environment `pypi`, so no token is stored.
 
 ## Documentation
 

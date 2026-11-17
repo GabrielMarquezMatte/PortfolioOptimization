@@ -151,7 +151,7 @@ wrapper adds no computation. One script builds a platform's library and wheel an
 (`python/scripts/build_wheel.sh`); `wheels.yml` runs it on the seven platforms on every push that touches the build,
 in `manylinux_2_28` and `musllinux_1_2` containers on Linux, so a release never builds a platform for the first
 time. `release.yml` takes a `v*` tag through the same workflow and publishes the libraries to the GitHub Release
-and the wheels to PyPI (TestPyPI for a prerelease). The distributed libraries are generic builds (no `-march`)
+and the wheels to PyPI (a prerelease tag as a PyPI prerelease). The distributed libraries are generic builds (no `-march`)
 with the C++ runtime linked statically.
 
 ## Anatomy of a `po_solve`

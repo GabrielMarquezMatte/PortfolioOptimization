@@ -105,8 +105,8 @@ The first release.
   source of the Windows export list, and a check that the shared library exports `po_*` and nothing else.
 - `portopt.__version__`, the installed version.
 - Release automation: `wheels.yml` on every push that touches the build, `cpp.yml` for the wrapper and its CMake
-  package on GCC, Clang and MSVC (and under ASan and UBSan), `release.yml` on a `v*` tag (TestPyPI for a tag with `-`),
-  and the benchmarks built in CI.
+  package on GCC, Clang and MSVC (and under ASan and UBSan), `release.yml` on a `v*` tag (a prerelease tag is a
+  PyPI prerelease), and the benchmarks built in CI.
 ### Changed
 
 - Performance, with every result bit for bit identical (70 cases at 10 and 100 assets and all 35 at 1000 assets,

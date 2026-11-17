@@ -1,8 +1,8 @@
 name: Release
 
 # A v* tag publishes the wheels and the native libraries to a GitHub Release and the wheels to PyPI; a prerelease tag
-# (v0.1.0-rc.1, or v0.1.0rc1: decided by the version, not by a '-') is a GitHub prerelease and goes to TestPyPI
-# instead. Only a tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
+# (v0.1.0-rc.1, or v0.1.0rc1: decided by the version, not by a '-') is a GitHub prerelease, and its wheels are a
+# PyPI prerelease (0.1.0rc1), which pip installs only with --pre or an explicit version. Only a tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
 # v<version>-rc.0, so the path of a release candidate runs before the first real one, and publishes nothing.
 on:
   push:
@@ -178,15 +178,15 @@ jobs:
             assets/portopt-abi-linux-x64.xml
             portopt.spdx.json
 
-  # Trusted publishing: the PyPI and TestPyPI projects name this workflow and these two environments as their
-  # publisher, so no token is stored. A prerelease goes to TestPyPI, a release to PyPI.
+  # Trusted publishing: the PyPI project names this workflow and the environment pypi as its publisher, so no token
+  # is stored.
   publish-pypi:
     name: PyPI
     needs: [ version, publish-github ]
     # Skipped as a whole outside a tag, so a dry run never enters the environment (and never waits on its rules).
     if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run)
     runs-on: ubuntu-latest
-    environment: ${{ needs.version.outputs.prerelease == 'true' && 'testpypi' || 'pypi' }}
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -200,10 +200,5 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Publish to TestPyPI
-        if: needs.version.outputs.prerelease == 'true'
-        run: uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always dist/*
-
       - name: Publish to PyPI
-        if: needs.version.outputs.prerelease != 'true'
         run: uv publish --trusted-publishing always dist/*
