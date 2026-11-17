@@ -13,6 +13,7 @@ on:
       - 'src/**'
       - 'CMakeLists.txt'
       - '.github/workflows/cpp.yml'
+  workflow_dispatch:
   pull_request:
     paths:
       - 'cpp/**'
@@ -37,7 +38,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # GCC 15 from the toolchain PPA, as in ci.yml; adding the PPA is retried for Launchpad's transient HTTP 500.
+      # GCC 15 from the toolchain PPA, as in ci.yml; adding the PPA and fetching from it are retried, for Launchpad's
+      # transient HTTP 500 and 503.
       - name: Install GCC 15 and Ninja
         run: |
           for attempt in 1 2 3 4 5; do
@@ -45,8 +47,8 @@ jobs:
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             sleep $((attempt * 15))
           done
-          sudo apt-get update
-          sudo apt-get install -y gcc-15 g++-15 ninja-build
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y gcc-15 g++-15 ninja-build
 
       - name: Use the wrapper from another project
         env:

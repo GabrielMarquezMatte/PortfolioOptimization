@@ -55,8 +55,8 @@ jobs:
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             sleep $((attempt * 15))
           done
-          sudo apt-get update
-          sudo apt-get install -y gcc-15 g++-15
+          sudo apt-get -o Acquire::Retries=5 update
+          sudo apt-get -o Acquire::Retries=5 install -y gcc-15 g++-15
           echo "CC=gcc-15" >> "$GITHUB_ENV"
           echo "CXX=g++-15" >> "$GITHUB_ENV"
 
@@ -134,7 +134,7 @@ jobs:
         run: |
           wget -qO llvm.sh https://apt.llvm.org/llvm.sh
           sudo bash llvm.sh 20
-          sudo apt-get install -y clang-tidy-20 ninja-build
+          sudo apt-get -o Acquire::Retries=5 install -y clang-tidy-20 ninja-build
 
       - name: Configure
         run: |
