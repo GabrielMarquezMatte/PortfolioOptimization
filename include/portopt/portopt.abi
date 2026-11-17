@@ -1,0 +1,64 @@
+define PO_ABI_VERSION 0
+function int32_t po_abi_version(void)
+function const char* po_version(void)
+typedef int32_t po_status
+define PO_OK 0
+define PO_INVALID_ARGUMENT 1
+define PO_INVALID_HANDLE 2
+define PO_UNSUPPORTED 3
+define PO_OUT_OF_MEMORY 4
+define PO_INTERNAL_ERROR 5
+function const char* po_last_error(void)
+typedef struct po_spec po_spec
+typedef struct po_data po_data
+typedef struct po_result po_result
+define PO_OBJECTIVE_MIN_VARIANCE 0
+define PO_OBJECTIVE_MAX_RETURN 1
+define PO_OBJECTIVE_MAX_SHARPE 2
+define PO_OBJECTIVE_UTILITY 3
+define PO_OBJECTIVE_IMPORTANCE 4
+define PO_OBJECTIVE_KELLY 5
+define PO_OBJECTIVE_TRACKING_ERROR 6
+define PO_OBJECTIVE_MAX_DIVERSIFICATION 7
+define PO_OBJECTIVE_RISK_PARITY 8
+define PO_SOLVE_OPTIMAL 0
+define PO_SOLVE_INFEASIBLE 1
+define PO_SOLVE_UNBOUNDED 2
+define PO_SOLVE_MAX_ITER 3
+define PO_CONSTRAINT_BUDGET 0
+define PO_CONSTRAINT_TARGET_RETURN 1
+define PO_CONSTRAINT_VOLATILITY 2
+define PO_CONSTRAINT_LEVERAGE 3
+function po_status po_spec_create(int32_t, po_spec**)
+function po_status po_spec_set_bounds(po_spec*, double, double)
+function po_status po_spec_set_asset_bounds(po_spec*, const double*, const double*, size_t)
+function po_status po_spec_set_target_return(po_spec*, double)
+function po_status po_spec_set_risk_aversion(po_spec*, double)
+function po_status po_spec_set_importance(po_spec*, double)
+function po_status po_spec_set_max_volatility(po_spec*, double)
+function po_status po_spec_set_target_volatility(po_spec*, double)
+function po_status po_spec_set_risk_budget(po_spec*, const double*, size_t)
+function po_status po_spec_set_leverage(po_spec*, double)
+function void po_spec_free(po_spec*)
+function po_status po_data_create(size_t, const double*, const double*, po_data**)
+function po_status po_data_set_risk_free(po_data*, double)
+function po_status po_data_set_returns(po_data*, const double*, const double*, size_t)
+function po_status po_data_asset_count(const po_data*, size_t*)
+function po_status po_data_weight_count(const po_data*, size_t*)
+function void po_data_free(po_data*)
+function po_status po_solve(const po_spec*, const po_data*, po_result**)
+function po_status po_result_status(const po_result*, int32_t*)
+function po_status po_result_weight_count(const po_result*, size_t*)
+function po_status po_result_weights(const po_result*, double*, size_t)
+function po_status po_result_iterations(const po_result*, int32_t*)
+function po_status po_result_multiplier(const po_result*, int32_t, double*)
+function po_status po_result_bound_multipliers(const po_result*, double*, size_t)
+function po_status po_result_residual(const po_result*, double*)
+function void po_result_free(po_result*)
+function po_status po_portfolio_return(const po_data*, const double*, size_t, double*)
+function po_status po_portfolio_volatility(const po_data*, const double*, size_t, double*)
+function po_status po_utility(const po_data*, const double*, size_t, double, double*)
+function po_status po_tracking_error(const po_data*, const double*, size_t, double*)
+function po_status po_sharpe_ratio(const po_data*, const double*, size_t, double*)
+function po_status po_diversification_ratio(const po_data*, const double*, size_t, double*)
+function po_status po_risk_contributions(const po_data*, const double*, size_t, double*)
