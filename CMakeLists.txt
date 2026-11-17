@@ -90,10 +90,11 @@ add_library(portopt SHARED $<TARGET_OBJECTS:portopt_capi>)
 target_include_directories(portopt PUBLIC include)
 target_link_libraries(portopt PRIVATE portopt_core)
 if(MINGW)
+    # No --output-def: ld 2.47 fails at random with it and writes an empty file. The export list of the release .lib
+    # comes from the ABI contract (scripts/abi_contract.py def), checked against the DLL's own export table.
     target_link_options(portopt PRIVATE
         -static-libgcc -static-libstdc++
-        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
-        -Wl,--output-def,${CMAKE_CURRENT_BINARY_DIR}/portopt.def)
+        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
 elseif(NOT WIN32 AND NOT APPLE)
     # libstdc++.so.6 and libgcc_s.so.1 are not on every distribution (musl, minimal images).
     target_link_options(portopt PRIVATE -static-libstdc++ -static-libgcc)
@@ -172,6 +173,7 @@ if(PO_BUILD_TESTS)
         COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/scripts/abi_contract.py check)
     add_test(NAME abi_contract_unit
         COMMAND Python3::Interpreter -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/abi)
+
 endif()
 
 if(PO_BUILD_BENCHMARKS)

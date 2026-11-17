@@ -5,7 +5,8 @@
                                                                  with --base, also if a line of FILE is gone
     python scripts/abi_contract.py base-ref                      the latest stable tag v1.x or later, or nothing
     python scripts/abi_contract.py def --library NAME OUT        the Windows export list of the contract
-    python scripts/abi_contract.py exports DEF                   fail if a linker .def differs from the contract
+    python scripts/abi_contract.py exports LISTING               fail if the exports of a DLL (`objdump -p DLL`)
+                                                                 differ from the contract
 
 A line is `define NAME value`, `typedef ...` or `function RETURN name(PARAMETER TYPES)`. Comments, parameter names and
 the PO_API platform macro are not part of it, so renaming a parameter is not an ABI change. Until 1.0 a line may
@@ -98,10 +99,14 @@ def def_file(lines: list[str], library: str) -> str:
     return "\n".join(["LIBRARY " + library, "EXPORTS", *function_names(lines)]) + "\n"
 
 
-def export_differences(lines: list[str], linker_def: str) -> list[str]:
-    """How the exports a linker wrote differ from the contract's functions."""
+# A row of the "[Ordinal/Name Pointer] Table" of `objdump -p`: "[   0] +base[   1]  0000 po_abi_version".
+EXPORT_ROW = re.compile(r"^\s*\[\s*\d+\]\s+\+base\[\s*\d+\]\s+[0-9a-fA-F]+\s+(\S+)\s*$", re.MULTILINE)
+
+
+def export_differences(lines: list[str], objdump: str) -> list[str]:
+    """How the export table of a DLL (`objdump -p`) differs from the contract's functions."""
     contract = set(function_names(lines))
-    exported = set(re.findall(r"^\s*(po_\w+)", linker_def, re.MULTILINE))
+    exported = set(EXPORT_ROW.findall(objdump))
     problems = [f"exported but not in the contract: {name}" for name in sorted(exported - contract)]
     problems += [f"in the contract but not exported: {name}" for name in sorted(contract - exported)]
     return problems
@@ -146,7 +151,7 @@ def stable_tag() -> str | None:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["write", "check", "base-ref", "def", "exports"])
-    parser.add_argument("target", nargs="?", type=Path, help="def: the output file; exports: the linker .def")
+    parser.add_argument("target", nargs="?", type=Path, help="def: the output file; exports: the output of objdump -p")
     parser.add_argument("--header", type=Path, default=HEADER)
     parser.add_argument("--contract", type=Path, default=CONTRACT)
     parser.add_argument("--base", type=Path)

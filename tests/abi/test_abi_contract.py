@@ -87,13 +87,28 @@ class ExportList(unittest.TestCase):
         text = abi_contract.def_file(self.CONTRACT, "x.dll")
         self.assertEqual(text.split(), ["LIBRARY", "x.dll", "EXPORTS", "po_a", "po_b"])
 
-    def test_linker_exports_must_match(self) -> None:
-        linker = "LIBRARY libx.dll\nEXPORTS\n    po_a @ 1\n    po_b @ 2\n"
-        self.assertEqual(abi_contract.export_differences(self.CONTRACT, linker), [])
-        extra = linker + "    po_c @ 3\n"
-        self.assertEqual(abi_contract.export_differences(self.CONTRACT, extra), ["exported but not in the contract: po_c"])
-        missing = "EXPORTS\n    po_a @ 1\n"
-        self.assertEqual(abi_contract.export_differences(self.CONTRACT, missing), ["in the contract but not exported: po_b"])
+    def test_dll_exports_must_match(self) -> None:
+        # The export table of `objdump -p`: every exported name, ours or not.
+        table = (
+            "[Ordinal/Name Pointer] Table -- Ordinal Base 1\n"
+            "\t          Ordinal   Hint Name\n"
+            "\t[   0] +base[   1]  0000 po_a\n"
+            "\t[   1] +base[   2]  0001 po_b\n"
+        )
+        self.assertEqual(abi_contract.export_differences(self.CONTRACT, table), [])
+        extra = table + "\t[   2] +base[   3]  0002 _ZNSt9exceptionD2Ev\n"
+        self.assertEqual(
+            abi_contract.export_differences(self.CONTRACT, extra),
+            ["exported but not in the contract: _ZNSt9exceptionD2Ev"],
+        )
+        missing = "\t[   0] +base[   1]  0000 po_a\n"
+        self.assertEqual(
+            abi_contract.export_differences(self.CONTRACT, missing), ["in the contract but not exported: po_b"]
+        )
+        self.assertEqual(
+            abi_contract.export_differences(self.CONTRACT, ""),
+            ["in the contract but not exported: po_a", "in the contract but not exported: po_b"],
+        )
 
 
 class CommittedContract(unittest.TestCase):
