@@ -604,7 +604,11 @@ TEST(RiskParity, ActiveBoundsKkt)
 
 // The contributions are homogeneous of degree 0, so w'grad f = 0, which at a KKT point reads
 // budget = -target_return r - volatility s - sum_i beta_i w_i. At cond(Sigma) 1e4 and 1e6, with the
-// multipliers the Newton correction of the polish returns.
+// multipliers the Newton correction of the polish returns, the bound multipliers of the held weights (box
+// [0, 0.3]) included. The tolerance is the largest relative gap measured, 1.9e-16 at 1e4 (5.2e-17 at 1e6),
+// times 10: measured, not derived. The least-squares multipliers at the same weights leave gaps of the same
+// order (1.1e-15 and 1.0e-16), so the identity checks that the corrected beta are consistent to rounding,
+// not that they are nearer the KKT point (RiskParityFuzz.TargetVolatilityBoundMultipliersByCondition does).
 TEST(RiskParity, HomogeneityIdentity)
 {
     std::size_t n = 6;
@@ -633,7 +637,7 @@ TEST(RiskParity, HomogeneityIdentity)
         double gap = result.budget_multiplier + return_term + volatility_term + bound_term;
         RecordProperty("relative_gap_" + std::to_string(static_cast<int>(std::log10(condition))),
                        ::testing::PrintToString(std::fabs(gap) / scale));
-        EXPECT_NEAR(result.budget_multiplier, -return_term - volatility_term - bound_term, 1e-9 * scale);
+        EXPECT_NEAR(result.budget_multiplier, -return_term - volatility_term - bound_term, 2e-15 * scale);
     }
 }
 
