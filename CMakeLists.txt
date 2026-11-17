@@ -79,6 +79,11 @@ add_library(portopt_capi OBJECT
 set_target_properties(portopt_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(portopt_capi PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
 target_compile_options(portopt_capi PRIVATE ${PO_WARNING_FLAGS})
+# The entry points do no arithmetic of their own, but they include core headers: inline core code (and, under LTO,
+# any core function) compiled here is contracted into fma unless this unit says otherwise.
+if(NOT MSVC)
+    target_compile_options(portopt_capi PRIVATE -ffp-contract=off)
+endif()
 target_link_libraries(portopt_capi PUBLIC portopt_core)
 
 add_library(portopt SHARED $<TARGET_OBJECTS:portopt_capi>)
