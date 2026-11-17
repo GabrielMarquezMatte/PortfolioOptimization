@@ -3,7 +3,7 @@ requires = ["hatchling", "packaging"]
 build-backend = "hatchling.build"
 
 [project]
-name = "portopt"
+name = "pyportopt"
 version = "0.1.0"
 description = "Portfolio optimization over the PortOpt C API"
 requires-python = ">=3.11"

@@ -135,6 +135,8 @@ library whose ABI version differs).
   `Data(returns=r, benchmark=b)` (before: `Data(None, None, returns=r, benchmark=b)`, which still works).
 - Python, breaking: an allocation failure in the library (`PO_OUT_OF_MEMORY`) raises `MemoryError` (before:
   `PortOptError` with `status == 4`).
+- Python: `portopt.__version__`, the version of the installed distribution. The distribution is named
+  `pyportopt` (`pip install pyportopt`; the import stays `import portopt`), because `portopt` is taken on PyPI.
 
 ### Known limitations
 

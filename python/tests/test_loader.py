@@ -32,3 +32,10 @@ def test_out_of_memory_is_memory_error() -> None:
     with pytest.raises(MemoryError):
         _native.check(_native.PO_OUT_OF_MEMORY)
 
+
+def test_version_is_the_installed_distribution_version() -> None:
+    import importlib.metadata
+
+    import portopt
+
+    assert portopt.__version__ == importlib.metadata.version("pyportopt")

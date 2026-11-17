@@ -61,4 +61,4 @@ The wrapper takes the Python names in `snake_case`, so one vocabulary serves bot
 
 ## Status
 
-Approved by the author on 2026-11-17 as proposed: C9, P3, P7 and P8 are made; every other item is kept.
+Approved by the author on 2026-11-17 as proposed; every other item is kept. Done: C9, P3, P7, P8.
