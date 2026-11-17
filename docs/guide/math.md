@@ -433,12 +433,17 @@ result can be up to about 1e-4 relative from the exact KKT point (measured up to
 objective value is right to its band. **The multipliers** are not settled by least squares at the rounded weights
 alone, which loses the `H dw` term of the Newton step (relative errors of 3.7e-2 at `cond(Sigma) = 1e8` were measured
 that way): one more Newton solve at the returned weights corrects them, `lambda + dlambda` for the equalities and
-`beta_j = (grad f - A'lambda)_j + (H dw)_j` for a held weight, kept only when a safeguard accepts it (full rank, a
-second solve that contracts, a stationarity within the noise of the gate and the signs of the held bounds). With a
-target volatility their measured relative error is then up to 2.0e-14 at `cond(Sigma) = 1e4`, 5.2e-11 at 1e6 and
-5.3e-10 at 1e8 (bands 1e-10, 1e-9, 1e-7), bound multipliers included; measured, not derived. At 1e10 an `OPTIMAL`
-result is not validated: the correction reaches about 2e-6 where it is accepted and is refused (rank) on some shapes,
-which then keep least-squares multipliers wrong by `O(1)`. `RiskParity.MultipliersAreDerivatives` runs on
+`beta_j = (grad f - A'lambda)_j + (H dw)_j` for a held weight, kept only when a safeguard accepts it (a finite
+solution, a second solve that contracts, a stationarity within the noise of the gate and the signs of the held
+bounds; not the rank test of the QR, which the scaled KKT matrix fails at `cond(Sigma) = 1e8` and `N >= 12` on about
+half the shapes while the correction is right). With a target volatility at least `1e-3` relative above `sigma_min`
+their measured relative error is then up to 2.7e-13 at `cond(Sigma) = 1e4`, 5.2e-11 at 1e6 and 5.3e-10 at 1e8 (bands
+1e-10, 1e-9, 1e-7; `N` from 5 to 50, bound multipliers on `N` = 5 and 8), at weights right to 2.3e-11 or better;
+measured, not derived. Where the weights are further off the multipliers follow (8.7e-5 at a weight error of 2.3e-5).
+Nearer the minimum, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: at `cond(Sigma) = 1e4` up to
+2.7e-12 at `delta = 1e-4`, 5.9e-11 at `1e-6`, 7.8e-9 at `1e-8` and 4.5e-7 at `1e-10` (1.3e-6 at `1e-10` over
+`cond(Sigma) <= 1e8`). At 1e10 an `OPTIMAL` result is not validated: the multipliers were measured up to 0.25 off,
+with weights up to 1.5e-2 off. `RiskParity.MultipliersAreDerivatives` runs on
 well-conditioned data only. A solve with a target volatility, no box and `N = 50` at `cond(Sigma) = 1e8` can take
 about 10 s; at `N <= 20` it takes at most about 0.15 s. See
 [validation.md](validation.md#numerical-decisions-of-risk_parity).

@@ -95,10 +95,15 @@ library whose ABI version differs).
 - `RISK_PARITY` reports the multipliers of one more Newton solve of the KKT system at the returned weights (the
   budget, target-return and volatility multipliers and the bound multipliers of the held weights), kept when a
   safeguard accepts it, instead of the least-squares ones at the rounded weights. The weights, the status and the KKT
-  gate do not change. With a target volatility the measured relative error of the multipliers went from 4.8e-10,
-  3.3e-7 and 3.7e-2 to 2.0e-14, 5.2e-11 and 5.3e-10 at `cond(Sigma)` 1e4, 1e6 and 1e8 (bound multipliers within
-  1.5e-10 at 1e8); measured, not derived, and pinned by ceilings 10 times above. At `cond(Sigma) >= 1e10` an
-  `OPTIMAL` result is still not validated. See
+  gate do not change. The correction is made only at a point that passed the gate, and the rank test of the QR does
+  not veto it (at `cond(Sigma) = 1e8` with `N >= 12` and no box the KKT matrix fails that test on about half the
+  shapes while the correction is right). With a target volatility at least 1e-3 relative above the minimum
+  volatility the measured relative error of the multipliers went from up to 1.5e-8, 1.6e-5 and 1.3 to up to 2.7e-13,
+  5.2e-11 and 5.3e-10 at `cond(Sigma)` 1e4, 1e6 and 1e8 (`N` from 5 to 50; bound multipliers within 1.5e-10 at 1e8,
+  `N` = 5 and 8); measured, not derived, and pinned by ceilings 10 times the largest measured on the cases of each
+  test. Nearer the minimum volatility, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: up to
+  1.4e-10 at `delta = 1e-6` and 1.3e-6 at `1e-10`. At `cond(Sigma) >= 1e10` an `OPTIMAL` result is still not
+  validated. See
   [docs/guide/validation.md](docs/guide/validation.md#the-kkt-residual-and-its-noise).
 
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.

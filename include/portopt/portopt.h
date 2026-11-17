@@ -121,10 +121,15 @@ typedef struct po_result po_result;
    weights are determined only to the rounding of the KKT residual amplified by the conditioning of the
    problem: the weights of an OPTIMAL result can be up to about 1e-4 relative from the exact KKT point
    (measured up to 3.7e-5), while its objective value is right to 1e-7 (1 + f). The multipliers carry a
-   Newton correction at the returned weights; with a target volatility they are measured (not derived)
-   right to about 2e-13 relative at cond(Sigma) = 1e4, 5e-10 at 1e6 and 5e-9 at 1e8, bound multipliers
-   included. Above that they can be wrong by O(1) where the correction is refused (an OPTIMAL result at
-   cond(Sigma) >= 1e10 is not validated). Such a solve is also slow: about 10 s at
+   Newton correction at the returned weights. With a target volatility s at least 1e-3 relative above the
+   minimum volatility they are measured (not derived) within 2.7e-13 relative at cond(Sigma) = 1e4,
+   5.2e-11 at 1e6 and 5.3e-10 at 1e8: the largest errors measured, on n = 5 to 50 for the equality
+   multipliers and n = 5 and 8 for the bound multipliers, at weights right to 2.3e-11 or better; where the
+   weights are further off, the multipliers follow (8.7e-5 measured at a weight error of 2.3e-5). Nearer
+   the minimum, s = sigma_min (1 + delta), the error grows roughly like 1 / delta: at cond(Sigma) = 1e4 it
+   was measured up to 2.7e-12 at delta = 1e-4, 5.9e-11 at 1e-6, 7.8e-9 at 1e-8 and 4.5e-7 at 1e-10, and up
+   to 1.3e-6 at 1e-10 over cond(Sigma) <= 1e8. An OPTIMAL result at cond(Sigma) >= 1e10 is not validated
+   (multipliers measured up to 0.25 off, weights up to 1.5e-2). Such a solve is also slow: about 10 s at
    n = 50, cond(Sigma) = 1e8, no box and a target volatility, and at most about 0.15 s for n <= 20.
    The Spinu point is computed before the feasibility check, so a Spinu iteration that does not converge
    reports PO_SOLVE_MAX_ITER even for an infeasible problem. */

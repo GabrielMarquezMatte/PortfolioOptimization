@@ -865,9 +865,10 @@ what the floor bounds; the multipliers are not. With a target volatility the lea
 rounded weights lose the correction `H dw` that the Newton step would have put in them, and that error was the
 one reported until the polish kept the Newton correction of the multipliers at its last point (the section on
 the polish; the measurement below). Against the multipliers of the KKT point refined in `long double` from the
-result (`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`; no box, equal budget, `n` in {5, 8},
-4 seeds, `s` between `sigma_min` and `1.5 sigma_min`; `RiskParityFuzz.TargetVolatilityMultipliersByCondition`,
-0.3 s; one run, Windows, GCC 16.2, MSYS2 UCRT64):
+result (`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`; no box, equal budget, `n` in
+{5, 8, 12, 20}, 4 seeds, `s` between `sigma_min` and `1.5 sigma_min` (here `1.098 sigma_min` to `1.40 sigma_min`);
+`RiskParityFuzz.TargetVolatilityMultipliersByCondition`, 0.9 s; one run, Windows, GCC 16.2, MSYS2 UCRT64; every
+largest is at `n = 5`):
 
 | cond(Sigma) | least squares (before) | largest multiplier error | band | ceiling pinned by the test |
 |---|---|---|---|---|
@@ -893,16 +894,49 @@ the ceiling, so a `beta` without that term fails. Capped results hold most weigh
 the least-squares and the corrected multipliers agree to `1e-15`; the difference is in the LongOnly shapes, which
 hold one to four weights at 0.
 
-Every ceiling is the measured largest times 10: measured, not derived. The research note proposed targets of
-`1e-12` up to `1e6` and `1e-9` at `1e8`; the measurement, not that model, sets the ceilings, which are above both
-targets (`5.2e-10` and `5.3e-9`). The weights of the same results are right to `1e-12` or better.
+Every ceiling is the measured largest times 10: measured, not derived. **The targets of plan 5 are missed.** The
+plan (and the research note) asked for `1e-12` up to `cond(Sigma) = 1e6` and `1e-9` at `1e8` with a slack of 10
+over the measured. At `1e6` the measured `5.2e-11` (`n = 5`, seed 404; the other seven shapes are below `2.6e-12`)
+misses `1e-12` by a factor of about 50, before any slack. At `1e8` the measured `5.3e-10` here (`7.6e-10` in either
+multiplier on the probe cases of the measurement below) is under `1e-9`, but not with the slack of 10: the ceiling
+`5.3e-9` is above the target. The measurement, not that model, sets the ceilings. The weights of the same results
+are right to `1e-11` or better.
+
+**Why the rank test of the QR does not veto the correction.** At `cond(Sigma) = 1e8` with `n >= 12` and no box the
+scaled KKT matrix `[H, -A'; A, 0]` fails `has_full_column_rank` (`16 N eps` times its largest column norm) on about
+half the shapes, yet the solution of that same QR is the right correction: with the test as a veto, `n = 12` of
+`TargetVolatilityMultipliersByCondition` (seed 404) kept least-squares multipliers wrong by `4.1e-2` and `n = 20`
+(seeds 403 to 405) by up to `1.3e-3`; corrected they are within `2.9e-11`. A step of the weights still requires the
+rank test (`newton_step`); the correction requires a finite solution, and contraction, stationarity and sides
+decide. A wider grid (`n` in {5, 8, 12, 20, 50}, no box and long only, both budgets, seeds 601 to 604, two at
+`n = 50`; `po::solve` with the veto and without, the KKT point refined in `long double`; one run) shows the change
+at `1e8` and its effect at `1e10`:
+
+| cond(Sigma) | results `OPTIMAL` | refused by the rank test before | largest error, before | largest error, now | largest error, least squares |
+|---|---|---|---|---|---|
+| 1e4 | 72 / 72 | 0 | 2.7e-13 | 2.7e-13 | 1.5e-8 |
+| 1e6 | 72 / 72 | 0 | 4.2e-12 | 4.2e-12 | 1.6e-5 |
+| 1e8 | 72 / 72 | 12 (3 of 8 at `n = 12`, 5 of 8 at `n = 20`, 4 of 4 at `n = 50`, all no box) | 1.3 | 3.8e-10 | 1.3 |
+| 1e10 | 60 / 72 | 17 (no box at `n >= 8`, one long only at `n = 20`) | 31 | 0.25 | 48 |
+
+At `1e8`, of the 16 thinnest-class shapes (`n` in {12, 20}, uneven budget, 8 seeds) two fail the rank test: seed 7
+of `n = 20` goes from `8.8e-4` to `2.5e-12`, and seed 4 from `1.3e-2` to `8.7e-5`, its weights being `2.3e-5` from
+the refined point (the multipliers can only be as right as the weights). Every one of the 35 corrections the rank
+test refused before was accepted without it except two at `1e10` that the contraction test refuses
+(ratio 0.57 and 0.69), and every one accepted is nearer the refined KKT point than least squares. The weights and
+the statuses of all 550 results of these measurements (527 `OPTIMAL`; the near-`sigma_min` cases below included)
+are bit for bit the same
+with and without the veto. At `1e10` the error left is that of the weights (`1.5e-2` at the worst result, `n = 20`).
+
 `RiskParity.HomogeneityIdentity` (`budget = -target_return r - volatility s - sum_i beta_i w_i`) holds with the
 corrected multipliers at `cond(Sigma)` `1e4` and `1e6` (relative gap `1.9e-16` and `5.2e-17`; box `[0, 0.3]`, both
-targets). Above `cond(Sigma) = 1e8` an `OPTIMAL` result is not validated: at `1e10` the correction reaches
-`2.3e-6` where it is accepted, and where the KKT matrix fails the rank test (the four grid shapes with `n = 8` of
-the measurement below) the least-squares multipliers are kept, wrong by `O(1)`. `Data` accepts `cond(Sigma) >= 1e10`. The path with a target return alone
-is not affected (multipliers within `1e-14` at 1e8). `RiskParity.MultipliersAreDerivatives` runs on
-well-conditioned data only.
+targets), within `2e-15` of the scale: the largest measured times 10. The least-squares multipliers at the same
+weights leave gaps of the same order (`1.1e-15` and `1.0e-16`): the identity checks that the corrected `beta` are
+consistent to rounding, not that they are nearer the KKT point. Above `cond(Sigma) = 1e8` an `OPTIMAL` result is not
+validated: at `1e10` the correction reaches `2.7e-5` in either multiplier on the 8 shapes of the measurement below
+and `0.25` on the wider grid above, where the weights are themselves off. `Data` accepts `cond(Sigma) >= 1e10`. The
+path with a target return alone is not affected (multipliers within `1e-14` at 1e8).
+`RiskParity.MultipliersAreDerivatives` runs on well-conditioned data only.
 
 **The QP path, for comparison (measured once).** `RiskParityMultiplierMeasure.DISABLED_MeasureQpMultipliers`
 (`tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp`, run with
@@ -931,8 +965,8 @@ shows the Hessian is not the limit). A second phase would evaluate that residual
 `kkt.cpp` over the pair), take two or three steps reusing the factorization of the last one, stop by the rule of
 Demmel et al. (a correction at most `eps` of the multipliers, or a ratio of successive corrections at least
 1/2), and still report `w_hi`; no `long double`, so that MSVC keeps it. It would be activated if a use needs
-multipliers validated at `cond(Sigma)` around `1e10` (now `2.3e-6` where accepted and `O(1)` where the rank test
-refuses), or if a measurement at `1e8` exceeds the ceilings above (a regression of the one solve, or a class of
+multipliers validated at `cond(Sigma)` around `1e10` (now up to `2.7e-5` on the 8 shapes of the measurement below
+and `0.25` on the wider grid above, there with weights `1.5e-2` off), or if a measurement at `1e8` exceeds the ceilings above (a regression of the one solve, or a class of
 problems not covered by these cases); until then the ceilings above are the documented accuracy and `1e10` stays
 not validated.
 
@@ -945,8 +979,8 @@ QR) and keeps `lambda_LS + dlambda` with `w` unchanged, `lambda_LS` being the mu
 compared with the KKT point refined in `long double` from the result: `lambda_vol` relative to `abs(lambda_vol*)`,
 `lambda_budget` relative to `max(abs(lambda_budget*), abs(lambda_vol*) s)`. The cases are those of the 80-digit
 probe of `docs/research/2026-11-16-multiplier-accuracy.md` (no box, equal budget, `s = 1.2 sigma_min`) on the
-covariances of `random_covariance` (not the probe's), and the 8 shapes of
-`RiskParityFuzz.TargetVolatilityMultipliersByCondition` (`n` in {5, 8}, seeds 402 to 405), each at
+covariances of `random_covariance` (not the probe's), and the 8 shapes with `n` in {5, 8} of
+`RiskParityFuzz.TargetVolatilityMultipliersByCondition` (seeds 402 to 405), each at
 `cond(Sigma)` in {1e4, 1e6, 1e8, 1e10}. One run (Windows, GCC 16.2, MSYS2 UCRT64); the probe cases:
 
 | cond(Sigma) | n, seed | weight error | `lambda_LS` vol / budget | `lambda_LS + dlambda` vol / budget | `abs(dlambda) / abs(lambda_LS)` | stationarity over floor, `lambda_LS` / Newton | eta |
@@ -964,7 +998,7 @@ covariances of `random_covariance` (not the probe's), and the 8 shapes of
 | 1e10 | 5, 11 | 1.2e-16 | 0.86 / 6.7 | 3.3e-9 / 4.8e-9 | 0.60 | 0.22 / 0.08 | 3.2e-16 |
 | 1e10 | 8, 3 | 1.2e-15 | 61 / 2.5 | 1.9e-10 / 4.0e-10 | 0.98 | 0.04 / 0.03 | 3.0e-16 |
 
-The 8 shapes of the fuzz test, largest by `cond(Sigma)` (combined is the error of that test,
+The 8 shapes of the fuzz test with `n` in {5, 8}, largest by `cond(Sigma)` (combined is the error of that test,
 `max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`):
 
 | cond(Sigma) | `lambda_LS`, combined | `lambda_LS + dlambda`, combined | `lambda_LS + dlambda`, either multiplier | `abs(dlambda) / abs(lambda_LS)` | stationarity over floor, Newton | eta |
@@ -972,15 +1006,17 @@ The 8 shapes of the fuzz test, largest by `cond(Sigma)` (combined is the error o
 | 1e4 | 4.8e-10 | 2.0e-14 | 2.0e-14 | 5.1e-10 | 0.21 | 5.1e-16 |
 | 1e6 | 3.3e-7 | 5.2e-11 | 1.1e-10 | 3.7e-7 | 0.09 | 5.1e-16 |
 | 1e8 | 3.7e-2 | 5.3e-10 | 5.3e-10 | 4.3e-2 | 0.27 | 3.7e-16 |
-| 1e10 (`n = 5` only) | 89 | 6.3e-7 | 2.3e-6 | 1.2 | 0.17 | 1.3e-15 |
+| 1e10 | 89 | 7.4e-6 | 2.7e-5 | 1.2 | 0.17 | 1.3e-15 |
 
-The `lambda_LS` column reproduces the table above (4.8e-10, 3.3e-7, 3.7e-2). At `cond(Sigma) = 1e10` the four
-shapes with `n = 8` give no correction: the scaled KKT matrix fails the rank test of the QR (`kRankFactor`), as
-`newton_step` would find it.
+The `lambda_LS` column reproduces the table above (4.8e-10, 3.3e-7, 3.7e-2). At `cond(Sigma) = 1e10` the scaled KKT
+matrix of the four shapes with `n = 8` fails the rank test of the QR (`kRankFactor`), as `newton_step` would find it;
+the correction, which no longer requires that test, is accepted on all four (the largest, `2.7e-5`, at seed 404,
+whose weights are `3.8e-7` from the refined point). Before, they gave no correction (`n = 5` alone: `6.3e-7` combined,
+`2.3e-6` in either multiplier).
 
 - **The Newton correction recovers the multipliers.** One solve at the returned point, all in `double`, brings
   them to at most `2.7e-14` at 1e4, `1.1e-10` at 1e6 (`3.2e-12` on the probe cases), `7.6e-10` at 1e8 and
-  `2.3e-6` at 1e10, from `6.6e-10`, `1.3e-6`, `1.4e-1` and `O(100)` (at 1e8 by 6 to 9 orders of magnitude in
+  `2.7e-5` at 1e10, from `6.6e-10`, `1.3e-6`, `1.4e-1` and `O(100)` (at 1e8 by 6 to 9 orders of magnitude in
   every case), with the weights untouched. That is the same order as the research note's prediction at 1e8
   (its model put it at `1e-10` to `5e-10` on its own cases; `7.6e-10` exceeds that).
 - **The 80-digit check.** An independent refinement of the dumped cases (`PORTOPT_MULTIPLIER_DUMP=path` writes
@@ -1002,7 +1038,8 @@ shapes with `n = 8` give no correction: the scaled KKT matrix fails the rank tes
 - **For a safeguard.** `abs(dlambda) / abs(lambda_LS)` is the error of `lambda_LS`: up to `4.3e-2` at 1e8 (two
   of the 11 cases above `1e-2`) and 0.6 to 1.2 at 1e10. A second solve from `(w, lambda_LS + dlambda)` changes
   the multipliers by at most `8.9e-4` of the first correction (at 1e4, where the correction is itself at the
-  rounding), `3.7e-9` at 1e6 and `3.4e-12` from 1e8 up.
+  rounding), `3.7e-9` at 1e6, `3.4e-12` at 1e8 and `7.0e-7` at 1e10 (seed 404 of `n = 8`, which the rank test
+  of the QR refused before).
 
 ### The Newton polish
 
@@ -1028,20 +1065,26 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
 - **The multipliers are corrected once more at the end** (`corrected_multipliers`): at the point the polish
   ends at, one more Newton solve at the same weights gives `dlambda`, added to the multipliers of the kept
   equalities, and `beta_j = (grad f - A'lambda_new)_j + (H dw)_j` for a held weight. The weights, the status,
-  the steps and the KKT gate (`is_kkt_point`, with the least-squares multipliers) do not change; `po::solve`
-  returns the corrected multipliers. The correction is kept only if both QR factorizations have full rank, a
+  the steps and the KKT gate (`is_kkt_point`, with the least-squares multipliers) do not change; the solver
+  makes the correction only at a point that passed the gate, and `po::solve` returns the corrected
+  multipliers. The correction is kept only if both solves give a finite solution (not the rank test of the QR,
+  which a step of the weights requires: see "Why the rank test of the QR does not veto the correction" above), a
   second solve from `(w, lambda_new)` changes the multipliers by at most half the first correction, every held
   `beta` keeps the sign of its bound, and the stationarity at `(w, lambda_new)` is within 16 times its noise
   (the factor of the gate). The last rule is measured, not derived: near `sigma_min` the contraction alone is
   not enough. At `s = sigma_min (1 + 1e-10)` (the table below) the correction is `6.1e-7` of `abs(lambda)` and
   its second solve contracts by `6.3e-7`, yet it takes the multipliers from `5.3e-8` to `5.5e-7` of the refined
-  ones and leaves a stationarity of 958 times its noise, against 0.027 with least squares. Every correction
-  that improved the multipliers left at most 0.50 (this table) and 0.27 (the 44 cases of the measurement
-  above) of the noise. A cap on `abs(dlambda) / abs(lambda)` cannot tell them apart: the good corrections at
-  `cond(Sigma) = 1e8` reach `4.3e-2`. On the 18 results of the table below (9 values of `delta` from `1e-2` to
+  ones and leaves a stationarity of 958 times its noise, against 0.027 with least squares. A cap on
+  `abs(dlambda) / abs(lambda)` cannot tell that correction from good ones: the good corrections at
+  `cond(Sigma) = 1e8` reach `4.3e-2`. Away from `sigma_min` every correction measured left at most 0.38 of the
+  noise (280 results at `cond(Sigma) <= 1e8`: the 216 of the grid above, 16 of the thinnest class and the 48
+  shapes of the fuzz test, `n` up to 20) and 0.27 on the 44 cases of the measurement above; near `sigma_min` the
+  rule refuses the worst corrections but does not separate good from bad (see "The multipliers near the minimum
+  volatility" below). On the 18 results of the table below (9 values of `delta` from `1e-2` to
   `1e-10`, no box and long only) the safeguard kept the least-squares multipliers twice, at `delta = 1e-10`
-  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`, which requires exactly that); on the 44 cases of the measurement above
-  it refused only where the QR has no full rank (`cond(Sigma) = 1e10`, `n = 8`). A point far from its KKT
+  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`, which requires exactly that); on the 44 cases
+  of the measurement above it refuses none (it refused the four with `cond(Sigma) = 1e10` and `n = 8` while the
+  rank test was one of its rules). A point far from its KKT
   point (`s = 1.1 sigma_min` solved, `s = sigma_min (1 + 1e-4)` asked) has a contraction of 0.71 and is
   refused (`NewtonPolish.RejectsACorrectionThatDoesNotContract`), and so is a correction that gives a held
   weight the sign of the other side of its bound (`NewtonPolish.RejectsACorrectionThatChangesTheSideOfABound`:
@@ -1075,6 +1118,45 @@ no box and long only; every result passes `expect_risk_parity_kkt` at `1e-10`):
 predicts. At `abs(s - sigma_min) <= 1e-12 s` (`problems::kMinimumVolatilityTolerance`, the feasibility tolerance
 of the QP that computes `sigma_min`) no iteration is run: the result is the minimum-variance portfolio with
 `lambda_vol = -inf` and the other multipliers NaN.
+
+**The multipliers near the minimum volatility (measured, not derived).** The accuracy of the corrected multipliers
+stated above holds for `s` at least `1e-3` relative above `sigma_min`. Nearer, it degrades roughly like `1 / delta`,
+corrected or not, because the gradients of the budget and of the volatility turn parallel (the LICQ nearly fails).
+Measured with `po::solve` against the KKT point refined in `long double` (no box, equal budget, `n` in {5, 8},
+seeds 7, 11 and 13, `s = sigma_min (1 + delta)` with `sigma_min` from `frontier_point`; largest over the `OPTIMAL`
+results, one run; the others are `MAX_ITER`, and one `INFEASIBLE` at `1e8` and `1e-10` where the reference
+`sigma_min` is above the solver's, the same before and after the corrections of plan 5):
+
+| delta | cond 1e4: returned | least squares | cond 1e6: returned | least squares | cond 1e8: returned | least squares |
+|---|---|---|---|---|---|---|
+| 1e-1 | 1.6e-13 | 6.8e-10 | 2.5e-12 | 1.0e-6 | 8.9e-11 | 4.9e-3 |
+| 1e-2 | 5.0e-14 | 8.2e-11 | 2.9e-12 | 5.9e-7 | 8.2e-11 | 5.8e-3 |
+| 1e-3 | 1.8e-13 | 2.3e-11 | 1.8e-13 | 6.0e-8 | 2.2e-10 | 5.2e-4 |
+| 1e-4 | 2.7e-12 | 2.8e-12 | 1.5e-12 | 1.9e-8 | 1.1e-10 | 1.2e-4 |
+| 1e-5 | 9.1e-12 | 9.1e-12 | 2.1e-11 | 1.9e-9 | 1.1e-11 | 1.2e-5 |
+| 1e-6 | 5.9e-11 | 3.6e-11 | 1.4e-10 | 7.9e-10 | 7.7e-11 | 2.6e-6 |
+| 1e-7 | 7.0e-10 | 7.0e-10 | 9.8e-10 | 1.4e-9 | 4.8e-10 | 4.1e-7 |
+| 1e-8 | 7.8e-9 | 7.8e-9 | 3.9e-9 | 3.8e-9 | 3.7e-8 | 9.6e-8 |
+| 1e-9 | 3.5e-8 | 3.5e-8 | 2.2e-8 | 2.2e-8 | 5.3e-8 | 6.1e-8 |
+| 1e-10 | 4.5e-7 | 4.5e-7 | 1.3e-6 | 1.3e-6 | 1.1e-7 | 2.4e-7 |
+
+Below `delta = 1e-3` at `cond(Sigma) = 1e4` the correction no longer improves on least squares, which is already
+at the same level, and at `delta <= 1e-8` the two are within a factor of 2.6 of each other at every `cond(Sigma)`:
+there the error is that of the point, not of the multiplier estimate. No test pins this table; `RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`
+pins only the statuses, the KKT band and the two refusals of `sample_data(5, 13)`.
+
+**The safeguard accepts corrections worse than least squares near the minimum.** Of the results of the table, 26
+corrections were accepted that leave the multipliers further from the refined point than least squares, all at
+`delta <= 1e-3`: by factors up to 26.6 (`cond(Sigma) = 1e6`, `n = 5`, seed 7, `delta = 1e-6`: `8.0e-11` against
+`3.0e-12`), 17.8 (`1e6`, `delta = 1e-5`: `1.1e-11` against `6.4e-13`), 10 (`1e4`, `n = 8`, `delta = 1e-4`: `1.1e-12`
+against `1.1e-13`), 8.3 (`1e4`, `delta = 1e-6`: `5.9e-11` against `7.2e-12`) and 2.5 (`1e8`, `delta = 1e-9`:
+`3.5e-8` against `1.4e-8`). The stationarity rule cannot be tightened to refuse them: their stationarity is 0.018 to
+11.3 times its noise, while the 486 accepted corrections of all the measurements of this section (the grid, the
+thinnest class, the fuzz shapes and this table) that leave the multipliers no further than least squares reach 7.9
+(near `sigma_min`; at most 0.38 away from it), and 456 of those are above 0.018. No measured threshold separates
+the two, so the factor stays that of the gate (16). It refuses 13 results of the table, at 19.5 to 959 times the
+noise: 9 of those corrections would have been worse than least squares and 4 better (the largest gain lost:
+`5.9e-8` against `1.3e-6`, `cond(Sigma) = 1e6`, `delta = 1e-10`).
 
 ### The augmented Lagrangian
 
