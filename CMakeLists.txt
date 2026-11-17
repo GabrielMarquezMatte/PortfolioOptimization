@@ -114,6 +114,7 @@ if(PO_BUILD_TESTS)
         tests/unit/capi/metrics_test.cpp
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/linalg/qr_test.cpp
+        tests/unit/qp/active_set_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp

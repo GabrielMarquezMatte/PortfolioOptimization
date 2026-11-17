@@ -4,9 +4,8 @@
 #include <cmath>
 #include <cstddef>
 #include <span>
+#include <utility>
 #include <vector>
-
-#include "linalg/cholesky.hpp"
 
 namespace po::qp
 {
@@ -54,17 +53,52 @@ inline std::span<double> basis_column(ActiveSet& set, std::size_t column)
     return std::span<double>(set.basis).subspan(column * set.n, set.n);
 }
 
+// rows (n x n, zero on entry) becomes J0 = L^{-T} by rows. Entry (i, c) is the back substitution of L' J0 = I
+// in its own order, (delta_ic - sum over k = i+1..c of L_ki J0_kc) / L_ii with k increasing: the order of
+// linalg::solve_lower_transposed on the unit column c, less the terms L_ki * 0 of k > c, which leave the sum
+// unchanged for a finite factor.
+inline void inverse_transposed_by_rows(std::span<const double> factor, std::size_t n, std::span<double> rows)
+{
+    for (std::size_t i = n; i-- > 0;)
+    {
+        std::span<double> row = rows.subspan(i * n, n);
+        row[i] = 1.0;
+        for (std::size_t k = i + 1; k < n; ++k)
+        {
+            double scale = factor[k * n + i];
+            std::span<const double> later = rows.subspan(k * n, n);
+            for (std::size_t c = k; c < n; ++c)
+            {
+                row[c] -= scale * later[c];
+            }
+        }
+        for (std::size_t c = i; c < n; ++c)
+        {
+            row[c] /= factor[i * n + i];
+        }
+    }
+}
+
+inline void transpose_in_place(std::span<double> square, std::size_t n)
+{
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = i + 1; j < n; ++j)
+        {
+            std::swap(square[i * n + j], square[j * n + i]);
+        }
+    }
+}
+
+// The entries below the diagonal of J0 stay +0, which is 0 / L_ii for the positive diagonal of a Cholesky
+// factor.
 inline ActiveSet empty_active_set(std::span<const double> factor, std::size_t n)
 {
     ActiveSet set;
     set.n = n;
     set.basis.assign(n * n, 0.0);
-    for (std::size_t column = 0; column < n; ++column)
-    {
-        std::span<double> unit = basis_column(set, column);
-        unit[column] = 1.0;
-        linalg::solve_lower_transposed(factor, n, unit);
-    }
+    inverse_transposed_by_rows(factor, n, set.basis);
+    transpose_in_place(set.basis, n);
     set.triangle.assign(n * n, 0.0);
     set.projection.assign(n, 0.0);
     set.primal_direction.assign(n, 0.0);
