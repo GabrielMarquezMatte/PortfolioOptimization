@@ -116,6 +116,7 @@ Build targets (`CMakeLists.txt`):
 | `python/tests` | Python tests; they skip cleanly (pytest exit 5) when the native library is missing |
 | `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION, RISK_PARITY (Spinu, the QP sequence, the augmented Lagrangian, the multipliers) and the multiplier convention |
 | `docs/performance/measuring.md` | How to measure: the `gcc-bench` and `msvc-profile` presets, the quick suite, A/B by medians against noise, the comparison of solutions, the uProf recipe and the guards an optimization must keep green |
+| `docs/performance/benchmarks.md`, `baseline.md`, `profile-1.md` | Results of the suite and the machine they come from; the plan 6 baseline (every case by objective, variant and size, and the kernels); where the time goes before plan 6 (uProf shares, calls per solve, assembly) and the hot-spot hypotheses it confirms or refutes |
 | `docs/guide/validation.md` | Validation policy, tolerances, the numerical decisions of the solver and of each objective, and the fuzz battery |
 
 ## Stability rules of the C API
