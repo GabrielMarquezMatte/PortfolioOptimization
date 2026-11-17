@@ -12,7 +12,6 @@
 #include <cstdio>
 #include <format>
 #include <fstream>
-#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -135,7 +134,9 @@ Record run_case(const Case& instance, int repeat)
     Record record;
     record.name = instance.name;
     std::uint64_t before = po::bench::allocation_count();
+    auto started = std::chrono::steady_clock::now();
     auto first = po::solve(instance.spec, *instance.data);
+    auto finished = std::chrono::steady_clock::now();
     record.allocations = po::bench::allocation_count() - before;
     if (!first.has_value())
     {
@@ -143,8 +144,8 @@ Record run_case(const Case& instance, int repeat)
     }
     record.result = std::move(*first);
     record.objective = objective_value(instance, record.result);
-    record.seconds = std::numeric_limits<double>::infinity();
-    for (int run = 0; run < repeat; ++run)
+    record.seconds = std::chrono::duration<double>(finished - started).count();
+    for (int run = 1; run < repeat; ++run)
     {
         record.seconds = std::min(record.seconds, seconds_of(instance));
     }

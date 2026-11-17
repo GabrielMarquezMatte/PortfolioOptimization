@@ -124,17 +124,10 @@ inline std::vector<Family> families()
     return list;
 }
 
-// The sizes a family runs at. n = 1000 is only the long-only family of each objective (and the plain RISK_PARITY
-// case): the other variants at that size take minutes per solve.
-inline std::vector<std::size_t> sizes_of(const Family& family)
+// Every case runs at 10, 100 and 1000; the slowest at 1000 takes about 90 s (docs/performance/measuring.md).
+inline std::vector<std::size_t> sizes_of(const Family&)
 {
-    std::vector<std::size_t> sizes = {10, 100};
-    bool large = family.variant == Variant::LongOnly || family.variant == Variant::Budget;
-    if (large)
-    {
-        sizes.push_back(1000);
-    }
-    return sizes;
+    return {10, 100, 1000};
 }
 
 inline double box_cap(const Family& family, std::size_t n)

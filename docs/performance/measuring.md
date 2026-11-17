@@ -44,15 +44,34 @@ Cases are `BM_Solve/<objective>/<variant>/<n>`, `po::solve` end to end (the C++ 
 
 | Objective | Variants | n |
 |---|---|---|
-| `min_variance` | `free`, `long_only`, `box`, `leverage`, `cash`, `target_return` | 10, 100; 1000 for `long_only` |
-| `max_return` | `free`, `long_only`, `box`, `leverage`, `cash` (the volatility cap is 1.5 times the minimum volatility of the feasible set) | idem |
-| `max_sharpe`, `utility`, `tracking_error`, `max_diversification` | `free`, `long_only`, `box`, `leverage`, `cash` | idem |
-| `risk_parity` | `budget` (the Spinu point is the answer), `target_return`, `target_volatility` (1.5 times the minimum volatility), `box` (a cap of 1.5 / n that cuts the Spinu point) | 10, 100; 1000 for `budget` and `box` |
+| `min_variance` | `free`, `long_only`, `box`, `leverage`, `cash`, `target_return` | 10, 100, 1000 |
+| `max_return` | `free`, `long_only`, `box`, `leverage`, `cash` (the volatility cap is 1.5 times the minimum volatility of the feasible set) | 10, 100, 1000 |
+| `max_sharpe`, `utility`, `tracking_error`, `max_diversification` | `free`, `long_only`, `box`, `leverage`, `cash` | 10, 100, 1000 |
+| `risk_parity` | `budget` (the Spinu point is the answer), `target_return`, `target_volatility` (1.5 times the minimum volatility), `box` (a cap of 1.5 / n that cuts the Spinu point) | 10, 100, 1000 |
 
 `box` is [0, max(0.3, 2/n)] on every weight, `leverage` a gross exposure limit of 1.5 with free weights, `long_only`
-a lower bound of 0. `IMPORTANCE` and `KELLY` share the builder of `UTILITY` and are not benchmarked. The n = 1000
-cases are registered with `Iterations(1)` (their name ends in `/iterations:1`); a variant other than the ones in the
-table at n = 1000 takes minutes per solve and has no case.
+a lower bound of 0. `IMPORTANCE` and `KELLY` share the builder of `UTILITY` and are not benchmarked. Every case runs at
+all three sizes (35 cases at n = 1000, 105 in all). The n = 1000 cases are registered with `Iterations(1)` (their name
+ends in `/iterations:1`) and are not in the quick suite.
+
+### Cost of the n = 1000 cases
+
+One probe solve of each n = 1000 case on 2026-11-16, with `portopt_profile --max-n 1000 --repeat 1 --filter CASE`, four
+processes at a time on the desktop (so the times carry some contention), each under a wall-time cap of 150 s per
+process (about 3 to 8 s of it is generating the instance). **No case exceeded the cap and none is excluded**; all 35
+end `OPTIMAL`. Times of the solve:
+
+| Time | Cases |
+|---|---|
+| under 1 s | `min_variance/{free,cash,leverage}`, `max_sharpe/{free,leverage}`, `max_diversification/{free,leverage}`, `utility/free` |
+| 1 to 5 s | `min_variance/{long_only,box,target_return}`, `max_sharpe/{long_only,box,cash}`, `max_diversification/{long_only,box,cash}`, `utility/{long_only,box,cash}`, `max_return/free`, `risk_parity/budget`, `tracking_error/{free,cash}` |
+| 5 to 10 s | `utility/leverage`, `tracking_error/{long_only,box,leverage}` |
+| 17 to 46 s | `max_return/cash` 17.3 s, `max_return/long_only` 18.8 s, `max_return/box` 23.0 s, `max_return/leverage` 46.0 s, `risk_parity/target_volatility` 28.1 s |
+| 70 to 90 s | `risk_parity/target_return` 70.5 s, `risk_parity/box` 89.5 s |
+
+A pass of the whole n = 1000 set is about 6 minutes of solves, more than half of it the three `risk_parity` cases that take
+more than 25 s; five repetitions of the full suite are therefore about half an hour. Use `--benchmark_filter` to
+select a slice.
 
 Every case asserts `status == OPTIMAL` and finite weights, before the loop (on a first solve) and on every solve
 inside it, and ends with `SkipWithError` otherwise: a benchmark that measures a solve that failed would publish the
@@ -62,15 +81,14 @@ time of the failure.
 
 | Counter | Where | Source | State |
 |---|---|---|---|
-| `iterations` | `BM_Solve`, profile | `Result::iterations`, counted in a method-specific way (QP iterations; for `max_return` those of every QP of the path; for `risk_parity` the Spinu Newton steps, the steps of every descent and the Newton steps on the KKT system) | real |
+| `solver_iterations` | `BM_Solve` (the profile prints `iterations`) | `Result::iterations`, counted in a method-specific way (QP iterations; for `max_return` those of every QP of the path; for `risk_parity` the Spinu Newton steps, the steps of every descent and the Newton steps on the KKT system) | real |
 | `allocations` | `BM_Solve`, profile | calls of the global `operator new` per solve | real |
 | `status`, `residual` | `BM_Solve`, profile | `Result::status` (0 is OPTIMAL); `Result::residual` of `risk_parity` | real |
 | `qp_iterations`, `seconds_per_qp_iteration` | `BM_Kernel/qp_iteration` | `qp::Solution::iterations` | real |
 | `qp_solves` | - | no result field or accessor counts the calls of `qp::solve`; observing it needs a counter in `src/` | **unavailable** |
 | `descent_iterations`, `polish_steps` | - | folded into `Result::iterations` for `risk_parity`, not separable without touching `src/` | **unavailable** |
 
-The `iterations` counter shares its JSON key with Google Benchmark's own iteration count; in the JSON the counter is
-written last and wins. Aligned (over-aligned type) allocations keep the library's allocation function and are not
+The counter is `solver_iterations` and not `iterations`, which is Google Benchmark's own key in the JSON report. Aligned (over-aligned type) allocations keep the library's allocation function and are not
 counted; nothing measured here uses them.
 
 `BM_Kernel/<kernel>/<n>` for n in 10, 100, 300, 1000: `cholesky`, `solve_lower`, `qr` (a 2n x n matrix, the shape of the
@@ -118,7 +136,7 @@ build/gcc-bench/portopt_profile [--filter TEXT] [--max-n N] [--repeat K] [--json
 ```
 
 Runs every case once through `po::solve` (`--max-n` limits the size, 100 by default; `--filter` is a substring of the
-case name; `--repeat` takes the best of K timings, 3 by default; on Git Bash a filter must not start with `/`, which
+case name; `--repeat` takes the best of K timed solves, the first of which also gives the dump, 3 by default; on Git Bash a filter must not start with `/`, which
 the shell turns into a path) and prints, per case, the status, the solver iterations, the time and the allocations.
 With `--json` it writes the solutions: status, iterations, objective value (computed by `metrics::`; the residual
 for `risk_parity`), weights, the four named multipliers, bound multipliers and residual, all as hex-float (`%a`, exact).

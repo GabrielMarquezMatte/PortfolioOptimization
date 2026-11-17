@@ -66,7 +66,7 @@ void run_solve(benchmark::State& state, const Family& family)
         benchmark::ClobberMemory();
     }
     std::uint64_t allocations = po::bench::allocation_count() - before;
-    state.counters["iterations"] = probe->iterations;
+    state.counters["solver_iterations"] = probe->iterations;
     state.counters["status"] = static_cast<int>(probe->status);
     state.counters["allocations"] = static_cast<double>(allocations) / static_cast<double>(state.iterations());
     if (family.objective == po::Objective::RiskParity)
