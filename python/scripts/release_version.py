@@ -4,6 +4,9 @@
     python python/scripts/release_version.py check [TAG]  fail unless PO_VERSION of CMakeLists.txt equals the version
                                                            of python/pyproject.toml; with TAG, also unless the tag is
                                                            that version and CHANGELOG.md has its dated section
+    python python/scripts/release_version.py prerelease TAG  "true" for a prerelease tag (v0.1.0rc1 too), else "false"
+    python python/scripts/release_version.py rehearsal       a prerelease tag of the repository's version (v0.1.0-rc.0),
+                                                           which a dry run builds with so it takes the path of a tag
 
 A release candidate is built from the tag alone (v0.1.0-rc.1 gives the wheel 0.1.0rc1 and CMake 0.1.0), so no commit
 changes a version for it.
@@ -34,6 +37,14 @@ def cmake_version(tag: str) -> str:
     return parse(tag).base_version
 
 
+def is_prerelease(tag: str) -> bool:
+    return parse(tag).is_prerelease
+
+
+def rehearsal_tag(cmake: str) -> str:
+    return f"v{found(CMAKE_VERSION, cmake, 'CMakeLists.txt')}-rc.0"
+
+
 def found(pattern: re.Pattern[str], text: str, where: str) -> str:
     match = pattern.search(text)
     if match is None:
@@ -61,6 +72,12 @@ def mismatches(cmake: str, pyproject: str, changelog: str, tag: str | None) -> l
 
 
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["prerelease"]:
+        print("true" if is_prerelease(argv[1]) else "false")
+        return 0
+    if argv[:1] == ["rehearsal"]:
+        print(rehearsal_tag((ROOT / "CMakeLists.txt").read_text(encoding="utf-8")))
+        return 0
     if argv[:1] != ["check"]:
         print(python_version(argv[0]))
         print(cmake_version(argv[0]))

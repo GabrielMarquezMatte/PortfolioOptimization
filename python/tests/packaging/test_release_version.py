@@ -54,3 +54,15 @@ def test_tag_needs_a_dated_changelog_section() -> None:
 
 def test_real_repository_agrees() -> None:
     assert release_version.main(["check"]) == 0
+
+
+def test_prerelease_is_decided_by_the_version_not_by_a_dash() -> None:
+    # The release workflow routes to TestPyPI and a GitHub prerelease by this flag: v0.1.0rc1 has no '-'.
+    for tag in ("v0.1.0-rc.1", "v0.1.0rc1", "v0.1.0.dev1", "v0.1.0b2"):
+        assert release_version.is_prerelease(tag)
+    assert not release_version.is_prerelease("v0.1.0")
+
+
+def test_rehearsal_tag_is_a_prerelease_of_the_repository_version() -> None:
+    assert release_version.rehearsal_tag(CMAKE) == "v0.1.0-rc.0"
+    assert release_version.is_prerelease(release_version.rehearsal_tag(CMAKE))

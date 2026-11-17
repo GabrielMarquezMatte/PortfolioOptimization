@@ -1,8 +1,9 @@
 name: Release
 
-# A v* tag publishes the native libraries to a GitHub Release and the wheels to PyPI; a tag with a '-' (v0.1.0-rc.1)
-# is a prerelease, and its wheels go to TestPyPI instead. A manual run is a dry run unless dry_run is turned off: it
-# builds and tests everything and skips the two steps that publish.
+# A v* tag publishes the wheels and the native libraries to a GitHub Release and the wheels to PyPI; a prerelease tag
+# (v0.1.0-rc.1, or v0.1.0rc1: decided by the version, not by a '-') is a GitHub prerelease and goes to TestPyPI
+# instead. Only a tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
+# v<version>-rc.0, so the path of a release candidate runs before the first real one, and publishes nothing.
 on:
   push:
     tags: [ 'v*' ]
@@ -22,6 +23,9 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,18 +34,28 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Check the versions
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          tag=""
-          if [ "${{ github.ref_type }}" = tag ]; then tag="${{ github.ref_name }}"; fi
-          uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py check $tag
+          versions() { uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py "$@"; }
+          if [ "$REF_TYPE" = tag ]; then
+            tag="$REF_NAME"
+            versions check "$tag"
+          else
+            tag=$(versions rehearsal)
+            versions check
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$(versions prerelease "$tag")" >> "$GITHUB_OUTPUT"
 
   wheels:
     name: Wheels
     needs: version
     uses: ./.github/workflows/wheels.yml
     with:
-      # A manual run builds the version in the repository: the ref is a branch there, not a tag.
-      version: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+      version: ${{ needs.version.outputs.tag }}
 
   # The Windows DLL is built by MinGW; MSVC users link against a .lib made from the export list of the ABI contract. The
   # .lib and the MinGW .dll.a both record libportopt.dll, so one file name serves both toolchains. The .lib is then
@@ -107,7 +121,7 @@ jobs:
 
   publish-github:
     name: GitHub Release
-    needs: [ wheels, windows-lib, abi-dump ]
+    needs: [ version, wheels, windows-lib, abi-dump ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,6 +130,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: native-*
+          path: assets
+          merge-multiple: true
+
+      - name: Download the wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
           path: assets
           merge-multiple: true
 
@@ -141,13 +162,14 @@ jobs:
           upload-release-assets: false
 
       - name: Publish the GitHub Release
-        if: github.event_name == 'push' || !inputs.dry_run
+        if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           files: |
+            assets/*.whl
             assets/*.dll
             assets/*.dll.a
             assets/*.lib
@@ -160,9 +182,11 @@ jobs:
   # publisher, so no token is stored. A prerelease goes to TestPyPI, a release to PyPI.
   publish-pypi:
     name: PyPI
-    needs: publish-github
+    needs: [ version, publish-github ]
+    # Skipped as a whole outside a tag, so a dry run never enters the environment (and never waits on its rules).
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run)
     runs-on: ubuntu-latest
-    environment: ${{ contains(github.ref_name, '-') && 'testpypi' || 'pypi' }}
+    environment: ${{ needs.version.outputs.prerelease == 'true' && 'testpypi' || 'pypi' }}
     permissions:
       id-token: write
     steps:
@@ -177,9 +201,9 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       - name: Publish to TestPyPI
-        if: (github.event_name == 'push' || !inputs.dry_run) && contains(github.ref_name, '-')
+        if: needs.version.outputs.prerelease == 'true'
         run: uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always dist/*
 
       - name: Publish to PyPI
-        if: (github.event_name == 'push' || !inputs.dry_run) && !contains(github.ref_name, '-')
+        if: needs.version.outputs.prerelease != 'true'
         run: uv publish --trusted-publishing always dist/*
