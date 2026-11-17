@@ -20,8 +20,10 @@ if [ -n "${VERSION:-}" ]; then
     wheel_version=$(echo "$versions" | sed -n 1p)
     cmake_version=$(echo "$versions" | sed -n 2p)
     echo "release ${VERSION}: wheel ${wheel_version}, CMake ${cmake_version}"
+    # Only the wheel takes the rc version: pyproject.toml is put back once the wheel is built, so the tests (which
+    # check that it agrees with CMakeLists.txt) and the working tree see the version in the repository.
     sed -i.bak "s/^version = .*/version = \"${wheel_version}\"/" python/pyproject.toml
-    rm python/pyproject.toml.bak
+    trap 'if [ -f python/pyproject.toml.bak ]; then mv python/pyproject.toml.bak python/pyproject.toml; fi' EXIT
     cmake_args+=("-DPO_VERSION=${cmake_version}")
 fi
 
@@ -42,6 +44,7 @@ if [ "$ASSET" = win-x64 ]; then
 fi
 
 uv build --wheel python --out-dir dist
+if [ -f python/pyproject.toml.bak ]; then mv python/pyproject.toml.bak python/pyproject.toml; fi
 wheel=$(ls dist/*.whl)
 py python/scripts/check_wheel_tag.py dist "$EXPECTED_TAG"
 if [ "$(uname)" = Linux ]; then
