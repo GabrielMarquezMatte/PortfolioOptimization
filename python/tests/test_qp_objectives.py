@@ -212,3 +212,9 @@ def test_metrics_utility_and_tracking_error() -> None:
         data.utility(w, -1.0)
     with pytest.raises(ValueError, match="returns"):
         po.Data(MU, COV).tracking_error(w[:3])
+
+
+def test_data_takes_the_series_by_keyword_alone() -> None:
+    returns = random_series()
+    data = po.Data(returns=returns, benchmark=returns @ np.array([0.5, 0.3, 0.2]))
+    assert data.asset_count == 3

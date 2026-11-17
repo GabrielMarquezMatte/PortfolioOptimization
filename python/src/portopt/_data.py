@@ -73,8 +73,8 @@ def optional_pointer(array: NDArray[np.float64] | None) -> Any:
 class Data:
     def __init__(
         self,
-        mu: ArrayLike | None,
-        cov: ArrayLike | None,
+        mu: ArrayLike | None = None,
+        cov: ArrayLike | None = None,
         *,
         risk_free: float | None = None,
         returns: ArrayLike | None = None,

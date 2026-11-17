@@ -131,6 +131,8 @@ library whose ABI version differs).
   [docs/guide/validation.md](docs/guide/validation.md#the-kkt-residual-and-its-noise).
 
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.
+- Python: `mu` and `cov` of `Data` default to `None`, so the tracking-error data is
+  `Data(returns=r, benchmark=b)` (before: `Data(None, None, returns=r, benchmark=b)`, which still works).
 
 ### Known limitations
 
