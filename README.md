@@ -2,8 +2,9 @@
 
 PortOpt is a portfolio optimization library. The numerical core is C++23; its only stable contract is a C API
 (`include/portopt/portopt.h`), so other languages can bind to it, and a Python package, `portopt`, is the first
-consumer. Optimization problems are quadratic programs, solved by a dense Goldfarb-Idnani dual active-set method
-written from the paper; the library has no dependency besides GoogleTest (for its tests).
+consumer (`pip install pyportopt`), with a header-only C++ wrapper as the second. Optimization problems are
+quadratic programs, solved by a dense Goldfarb-Idnani dual active-set method written from the paper; the library has
+no dependency besides GoogleTest (for its tests).
 
 ## Status
 
@@ -24,6 +25,34 @@ with NaN weights, multipliers and residual, for every objective. A `MAX_SHARPE` 
 risk-free rate above the minimum-variance return, has status `UNBOUNDED` and NaN weights. Portfolio return, volatility,
 utility, tracking error and the Sharpe and diversification ratios of a weight vector are available too. Until 1.0 the C
 ABI may change between releases. See [CHANGELOG.md](CHANGELOG.md).
+
+## Install
+
+Python 3.11 or newer, with `numpy`:
+
+```
+pip install pyportopt
+```
+
+The distribution is `pyportopt` (the name `portopt` is taken on PyPI); the module is `portopt`. Wheels are built for
+Windows x64, macOS arm64 and x64, and Linux (glibc and musl) x64 and arm64, each with the native library inside.
+
+C and C++: every [GitHub Release](https://github.com/GabrielMarquezMatte/PortfolioOptimization/releases) has the
+library of each platform, `portopt-native-<platform>.so`, `.dylib` or `.dll`, to be saved as `libportopt.so`,
+`libportopt.dylib` or `libportopt.dll` (the name the loader looks for), and for Windows the import libraries
+`portopt-native-win-x64.dll.a` (MinGW) and `portopt-native-win-x64.lib` (MSVC). The headers are
+`include/portopt/portopt.h` (C) and `cpp/include/portopt/portopt.hpp` (C++23) of the tag. From a source tree,
+`cmake --install` installs the library, both headers and a CMake package:
+
+```
+cmake --preset native-release
+cmake --build --preset native-release
+cmake --install build/native-release --prefix <prefix>
+```
+
+and a CMake project then uses it with `find_package(PortOpt 0.1 REQUIRED)` and the target `PortOpt::cpp` (or
+`PortOpt::portopt` for the C API alone). Until 1.0 the package accepts only the same minor version, since the ABI may
+change between minor versions. `add_subdirectory` of a checkout gives the same targets.
 
 ## Python example
 
@@ -69,7 +98,7 @@ print(capped.leverage_multiplier)              # -0.3105 (rounded): the change o
 # Risk parity with a risk budget (50% / 30% / 20% of the risk) and the volatility fixed at 17%
 # (the minimum volatility of this covariance is 16.3%, so a target below it is INFEASIBLE)
 cov = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.012], [0.002, 0.012, 0.16]])
-data = po.Data(None, cov)
+data = po.Data(cov=cov)
 budget = [0.5, 0.3, 0.2]
 spec = po.Spec(po.Objective.RISK_PARITY, risk_budget=budget, target_volatility=0.17)
 result = po.solve(spec, data)
@@ -87,7 +116,7 @@ Its keyword fields are `bounds`, `target_return`, `risk_aversion` (`UTILITY`), `
 (`RISK_PARITY`; the budget is stored as a tuple, so a `Spec` still compares and hashes by value); a value the C setter rejects
 raises `ValueError` when the spec is built, and a
 setter or input that does not apply to the objective raises it from `po.solve`. `TRACKING_ERROR` takes the
-return series instead of `mu` and `cov`: `po.Data(None, None, returns=returns, benchmark=benchmark)`, with `returns`
+return series instead of `mu` and `cov`: `po.Data(returns=returns, benchmark=benchmark)`, with `returns`
 a periods-by-assets array. `data.utility(weights, risk_aversion)`, `data.tracking_error(weights)`,
 `data.sharpe_ratio(weights)`, `data.diversification_ratio(weights)` and `data.risk_contributions(weights)` evaluate the
 metrics, and the result has `leverage_multiplier` next to the other multipliers (NaN without a leverage, 0 when it is
@@ -96,7 +125,42 @@ inactive) and `residual`, the `RISK_PARITY` sum of squares `sum_i (c_i - b_i)^2`
 An infeasible or unbounded problem is a result with `status == po.SolveStatus.INFEASIBLE` or
 `po.SolveStatus.UNBOUNDED` and NaN weights, not an exception. With
 `po.Data(mu, cov, risk_free=0.02)` the weights have one more entry, the cash, last. Invalid input raises
-`ValueError`. `RISK_PARITY` with cash (`risk_free`) or a `leverage` is invalid input too.
+`ValueError`. `RISK_PARITY` with cash (`risk_free`) or a `leverage` is invalid input too. `portopt.__version__` is the
+installed version.
+
+## C++ example
+
+```cpp
+#include <cstdio>
+#include <portopt/portopt.hpp>
+#include <vector>
+
+int main()
+{
+    const std::vector<double> mu{0.08, 0.12, 0.10};
+    const std::vector<double> cov{0.040, 0.006, 0.010, 0.006, 0.090, 0.012, 0.010, 0.012, 0.060};
+    po::Expected<po::Data> data = po::Data::create(3, mu, cov);   // cov is 3 x 3, row-major
+    if (!data || !data->set_risk_free(0.02))
+    {
+        return 1;
+    }
+    const po::Expected<po::Result> result =
+        po::solve(po::Spec{.objective = po::Objective::max_sharpe, .bounds = po::Bounds{0.0, 1.0}}, *data);
+    if (!result)
+    {
+        std::fprintf(stderr, "%s\n", result.error().message.c_str()); // the status and the message of the C API
+        return 1;
+    }
+    for (const double weight : result->weights) // 3 assets and the cash, last
+    {
+        std::printf("%.4f\n", weight); // 0.3749 0.3031 0.3221 0.0000 (rounded)
+    }
+}
+```
+
+`po::Spec` takes the same fields as the Python `Spec`, `po::Data` the same metrics as the Python `Data`, and every
+call returns `std::expected`: an infeasible problem is a `Result` with `status == po::SolveStatus::infeasible`, not
+an error. See [cpp/README.md](cpp/README.md).
 
 ## Build
 

@@ -139,6 +139,21 @@ Types on the boundary are `int32_t`, `size_t`, `double` and pointers. A null han
 output pointer or a null required input array `PO_INVALID_ARGUMENT` (the one exception: `mu` and `cov` of
 `po_data_create` may be `NULL`), and every `*_free` accepts `NULL`.
 
+`include/portopt/portopt.abi` is the contract written out, one normalized line per declaration of the header
+(`scripts/abi_contract.py`); `ctest` fails when the two differ, so an ABI change is a reviewed change to that file.
+The Windows export list of the MSVC import library comes from it, and the release checks that the DLL exports
+exactly its functions and that the Linux and macOS libraries export `po_*` and nothing else.
+
+## Distribution
+
+The C++ wrapper (`cpp/include/portopt/portopt.hpp`) and the Python package are two consumers of the same C API; the
+wrapper adds no computation. One script builds a platform's library and wheel and tests the wheel installed
+(`python/scripts/build_wheel.sh`); `wheels.yml` runs it on the seven platforms on every push that touches the build,
+in `manylinux_2_28` and `musllinux_1_2` containers on Linux, so a release never builds a platform for the first
+time. `release.yml` takes a `v*` tag through the same workflow and publishes the libraries to the GitHub Release
+and the wheels to PyPI (TestPyPI for a prerelease). The distributed libraries are generic builds (no `-march`)
+with the C++ runtime linked statically.
+
 ## Anatomy of a `po_solve`
 
 The Python `solve` builds the handles below and then makes one call; any C client does the same.

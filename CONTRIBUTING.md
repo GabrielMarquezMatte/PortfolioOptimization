@@ -24,6 +24,9 @@ ctest --preset gcc-release
 
 `gcc-debug` and `msvc-release` work the same way. `native-release` uses the default compiler (`CC` and `CXX`)
 and is what CI uses on Linux and macOS. GCC 15 or newer is the supported GCC.
+The Linux wheels are built with GCC 15 too: `gcc-toolset-15` (15.2.1) from AlmaLinux 8 in `manylinux_2_28` and
+the `g++` of Alpine 3.23 in `musllinux_1_2` (`python/scripts/build_in_container.sh`); the macOS wheels declare
+macOS 11.0.
 
 `ctest` runs the GoogleTest suite, a C11 compile of the public header and the `style` test.
 
@@ -61,6 +64,24 @@ skipped and pytest exits with status 5.
   ```
   clang-tidy -p build/gcc-release src/solve/solve.cpp
   ```
+
+## Making a release
+
+The version lives in `CMakeLists.txt` (`PO_VERSION`) and `python/pyproject.toml`; `python
+python/scripts/release_version.py check` fails when they differ, and `check vX.Y.Z` also when the tag is another
+version or `CHANGELOG.md` has no dated `## [X.Y.Z] - YYYY-MM-DD` section.
+
+1. Rename `## [Unreleased]` in `CHANGELOG.md` to the version with today's date, keep an empty `## [Unreleased]`
+   above it, set the version in both files, and push; `ci.yml`, `cpp.yml` and `wheels.yml` must be green.
+2. Optionally run `release.yml` by hand (`dry_run` on by default): it builds and tests everything and publishes
+   nothing.
+3. Push a release candidate tag, `vX.Y.Z-rc.N`: the GitHub Release is marked as a prerelease and the wheels go to
+   TestPyPI (version `X.Y.ZrcN`, derived from the tag; no commit changes the version for a candidate). Install it
+   in a clean environment from TestPyPI to check it.
+4. Push `vX.Y.Z`: the GitHub Release and PyPI.
+
+PyPI and TestPyPI publish by trusted publishing: each project names this repository, the workflow `release.yml` and
+the environment `pypi` or `testpypi`, so no token is stored.
 
 ## Documentation
 

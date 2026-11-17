@@ -1446,6 +1446,16 @@ cover:
   0.7). Task 0's pinned case of `AgainstFrontierReference` (shape seed
   11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
+- **Other platforms.** Everything above was measured on Windows (MinGW and MSVC). The generators build `Sigma` with
+  `std::log`, `std::exp` and `std::cos`, which glibc rounds differently from the Windows UCRT: on Linux 561 of the 576
+  covariance entries of the known residual's shape differ, by up to 1856 ulp (3.6e-13 relative; `mu` is the same).
+  With that covariance the case is `MAX_ITER` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, while the
+  Windows covariance is `OPTIMAL` at every fraction on both: the solver is the same, the problem is not, and this
+  shape turns from `OPTIMAL` to `MAX_ITER` under a perturbation of 3.6e-13 of `Sigma`. So `MaxReturnFuzz.LeverageFuzz`
+  fails on Linux and macOS, and `RiskParity.TargetVolatilityEllipseAgainstScan` fails on macOS (its solve lands below
+  the value of the scan, a reference of limited resolution). Generators that give the same bits everywhere, and the
+  robustness of that `MAX_RETURN` case, are left to the next plan; with them every test instance changes, and seven
+  tests that rely on the present ones fail on Windows as well.
 - **Runtime.** In `gcc-release` `AgainstFrontierReference` 1.3 s, `NeverSilentlyWrong` 0.8 s, `MaxReturnFuzz.LeverageFuzz`
   6.5 s, `LeverageFuzz.AgainstSignPatterns` 0.9 s and `RatioFuzz.AgainstFrontierReference` 3.1 s; in `gcc-debug` 25.0 s,
   11.9 s, 37.7 s (117 s in full, hence the smaller debug run above), 11.6 s and 43.7 s (in full). The other tests
@@ -1484,7 +1494,7 @@ Verified means the text was read for the claim it supports. The full list, with 
 `docs/research/2026-11-16-risk-parity-and-numerics.md`; [math.md](math.md#sources) repeats it by objective.
 
 - Bruder and Roncalli (2012, section 2.3.3): the positive-orthant solution exists and is unique. Verified.
-- Bai, Scheinberg and Tütüncü (2016), lemmas 2.1 to 2.3 and examples 3.1 and 3.2: at most `2^(n-1)` normalized solutions,
+- Bai, Scheinberg and TÃ¼tÃ¼ncÃ¼ (2016), lemmas 2.1 to 2.3 and examples 3.1 and 3.2: at most `2^(n-1)` normalized solutions,
   and an indefinite Hessian. Verified on the 2013 preprint; the published version was not read.
 - Andreani, Birgin, Martinez and Schuverdt (2007), algorithm 3.1: the augmented Lagrangian of the volatility. Verified.
   Its penalty rule (halving test, growth factor 10) is the one used; the plan had attributed a different rule

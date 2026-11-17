@@ -9,6 +9,10 @@ library whose ABI version differs).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-17
+
+The first release.
+
 ### Added
 
 - The C API in `include/portopt/portopt.h`: opaque `po_spec`, `po_data` and `po_result` handles, the complete
@@ -88,6 +92,21 @@ library whose ABI version differs).
   case), `baseline.md`, `profile-1.md`, `profile-2.md` and
   [docs/performance/python-vs-arch.md](docs/performance/python-vs-arch.md) (the C and Python layers against the solve).
 
+- The distribution `pyportopt` on PyPI (`pip install pyportopt`, `import portopt`): wheels for Windows x64, macOS
+  arm64 and x64, and Linux glibc (`manylinux_2_25`) and musl (`musllinux_1_2`) on x64 and arm64, each with its native
+  library and tested installed. The native libraries of every platform (with the Windows import libraries `.dll.a` and
+  `.lib`), the libabigail dump of the Linux x64 library and an SBOM are assets of the GitHub Release.
+- A header-only C++23 wrapper, `cpp/include/portopt/portopt.hpp`: `po::Spec`, `po::Data`, `po::solve` and
+  `po::Result` with the names of the Python package, `std::expected` for errors and `std::span` for inputs; a solve
+  through it is the C solve bit for bit.
+- `cmake --install` installs the library, `portopt.h`, `portopt.hpp` and a CMake package: `find_package(PortOpt 0.1)`
+  with the targets `PortOpt::portopt` (C) and `PortOpt::cpp` (C++); until 1.0 it accepts the same minor version only.
+- The ABI contract `include/portopt/portopt.abi` (one line per declaration of `portopt.h`, checked by `ctest`), the
+  source of the Windows export list, and a check that the shared library exports `po_*` and nothing else.
+- `portopt.__version__`, the installed version.
+- Release automation: `wheels.yml` on every push that touches the build, `cpp.yml` for the wrapper and its CMake
+  package on GCC, Clang and MSVC (and under ASan and UBSan), `release.yml` on a `v*` tag (TestPyPI for a tag with `-`),
+  and the benchmarks built in CI.
 ### Changed
 
 - Performance, with every result bit for bit identical (70 cases at 10 and 100 assets and all 35 at 1000 assets,
@@ -150,3 +169,12 @@ library whose ABI version differs).
 - A bounded problem with the budget row only (Capped box, equal budget, `n = 20`, `cond(Sigma) = 1e8`, seed 31696) ends
   as `MAX_ITER`, without a point. Documented, not fixed.
 - A target return without bounds has no minimizer in general and is `MAX_ITER`.
+- The test generators build their covariances with `std::log`, `std::exp` and `std::cos`, which glibc, the Windows
+  UCRT and Apple's libm round differently, so the fuzz batteries test slightly different problems on each platform.
+  Two tests that pass on Windows fail on Linux and macOS: `MaxReturnFuzz.LeverageFuzz` (its known residual case, `cond(Sigma) = 1e8` with cash and a
+  leverage, is `MAX_ITER` under a perturbation of 3.6e-13 relative of the covariance; see
+  [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery)) and, on macOS, `RiskParity.TargetVolatilityEllipseAgainstScan`.
+  Portable generators and the robustness of that `MAX_RETURN` case are the next plan.
+
+[Unreleased]: https://github.com/GabrielMarquezMatte/PortfolioOptimization/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/GabrielMarquezMatte/PortfolioOptimization/releases/tag/v0.1.0

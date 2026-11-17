@@ -6,8 +6,25 @@ build-backend = "hatchling.build"
 name = "pyportopt"
 version = "0.1.0"
 description = "Portfolio optimization over the PortOpt C API"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = ["numpy"]
+keywords = ["portfolio-optimization", "quadratic-programming", "finance", "risk-parity"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+[project.urls]
+Homepage = "https://github.com/GabrielMarquezMatte/PortfolioOptimization"
+Changelog = "https://github.com/GabrielMarquezMatte/PortfolioOptimization/blob/master/CHANGELOG.md"
+Issues = "https://github.com/GabrielMarquezMatte/PortfolioOptimization/issues"
 
 [dependency-groups]
 dev = ["pytest", "mypy", "hatchling"]
@@ -18,6 +35,10 @@ exclude = ["src/portopt/_lib"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
+
+# The MIT notice travels with the wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"../LICENSE" = "portopt/LICENSE"
 
 [tool.mypy]
 strict = true
