@@ -115,6 +115,7 @@ inline ActiveSet active_set_from(std::vector<double> basis, std::size_t n)
     set.n = n;
     set.basis = std::move(basis);
     set.triangle.assign(n * n, 0.0);
+    set.active.reserve(n);
     set.projection.assign(n, 0.0);
     set.primal_direction.assign(n, 0.0);
     set.dual_direction.assign(n, 0.0);

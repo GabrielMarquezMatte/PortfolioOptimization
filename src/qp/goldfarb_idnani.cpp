@@ -46,6 +46,11 @@ struct Constraints
     std::vector<std::size_t> unit_columns;
     const GrossExposure* family = nullptr;
     GeneratedRows generated;
+    // Buffers kept between candidates so that the family does not allocate in the loop: the sign vector and the
+    // normal of the most violated row of the family, and the rows discard_inactive_generated renumbers into.
+    std::vector<double> family_signs;
+    std::vector<double> family_normal;
+    GeneratedRows renumbered;
 };
 
 // G x + g = N u holds for the active normals N and multipliers u of set.active.
@@ -178,10 +183,12 @@ Constraints gather_constraints(const Problem& problem)
     Constraints constraints;
     constraints.n = problem.n;
     constraints.equality_count = problem.equality_rhs.size();
-    constraints.rows = problem.equality_rows;
+    constraints.rows.reserve(problem.equality_rows.size() + problem.inequality_rows.size());
+    constraints.rows.insert(constraints.rows.end(), problem.equality_rows.begin(), problem.equality_rows.end());
     constraints.rows.insert(constraints.rows.end(), problem.inequality_rows.begin(),
                             problem.inequality_rows.end());
-    constraints.rhs = problem.equality_rhs;
+    constraints.rhs.reserve(problem.equality_rhs.size() + problem.inequality_rhs.size());
+    constraints.rhs.insert(constraints.rhs.end(), problem.equality_rhs.begin(), problem.equality_rhs.end());
     constraints.rhs.insert(constraints.rhs.end(), problem.inequality_rhs.begin(),
                            problem.inequality_rhs.end());
     constraints.explicit_count = constraints.rhs.size();
@@ -254,9 +261,9 @@ Violation most_violated_explicit(const Constraints& constraints, const State& st
 
 // s'x is largest over {-1, 1}^n at s = sign(x), taken as +1 where x_i = 0, so (a - s)'x >= b is the generated row
 // most violated at x and its slack a'x - ||x||_1 - b is that of the family.
-std::vector<double> sign_vector(std::span<const double> x)
+void fill_sign_vector(std::span<const double> x, std::vector<double>& signs)
 {
-    std::vector<double> signs(x.size(), 1.0);
+    signs.assign(x.size(), 1.0);
     for (std::size_t i = 0; i < x.size(); ++i)
     {
         if (x[i] < 0.0)
@@ -264,7 +271,6 @@ std::vector<double> sign_vector(std::span<const double> x)
             signs[i] = -1.0;
         }
     }
-    return signs;
 }
 
 // The generated row (a - s)'x >= b duplicates an active row: a generated row of the same signs, or an explicit row
@@ -285,10 +291,9 @@ bool duplicates_active(const Constraints& constraints, const State& state, std::
                                });
 }
 
-std::size_t append_generated(Constraints& constraints, std::span<const double> normal,
-                             std::span<const double> signs)
+std::size_t append_generated(const Constraints& constraints, GeneratedRows& generated,
+                             std::span<const double> normal, std::span<const double> signs)
 {
-    GeneratedRows& generated = constraints.generated;
     generated.rows.insert(generated.rows.end(), normal.begin(), normal.end());
     generated.signs.insert(generated.signs.end(), signs.begin(), signs.end());
     generated.norms.push_back(std::sqrt(dot(normal, normal)));
@@ -302,8 +307,10 @@ std::optional<ActiveConstraint> most_violated_inequality(Constraints& constraint
     Violation worst = most_violated_explicit(constraints, state);
     if (constraints.family != nullptr)
     {
-        std::vector<double> signs = sign_vector(state.x);
-        std::vector<double> normal = constraints.family->offset;
+        std::vector<double>& signs = constraints.family_signs;
+        std::vector<double>& normal = constraints.family_normal;
+        fill_sign_vector(state.x, signs);
+        normal.assign(constraints.family->offset.begin(), constraints.family->offset.end());
         for (std::size_t i = 0; i < normal.size(); ++i)
         {
             normal[i] -= signs[i];
@@ -313,7 +320,7 @@ std::optional<ActiveConstraint> most_violated_inequality(Constraints& constraint
         double limit = feasibility_tolerance(constraints.family->rhs, norm, max_abs(state.x));
         if (value < -limit && value < worst.slack && !duplicates_active(constraints, state, signs, normal))
         {
-            return ActiveConstraint{append_generated(constraints, normal, signs), 1.0, 0.0};
+            return ActiveConstraint{append_generated(constraints, constraints.generated, normal, signs), 1.0, 0.0};
         }
     }
     if (!worst.index.has_value())
@@ -453,8 +460,11 @@ void discard_inactive_generated(Constraints& constraints, State& state)
         return;
     }
     std::size_t n = constraints.n;
-    GeneratedRows previous = std::move(constraints.generated);
-    constraints.generated = GeneratedRows{};
+    GeneratedRows& previous = constraints.generated;
+    GeneratedRows& kept = constraints.renumbered;
+    kept.rows.clear();
+    kept.signs.clear();
+    kept.norms.clear();
     for (ActiveConstraint& constraint : state.set.active)
     {
         if (!is_generated(constraints, constraint.index))
@@ -464,8 +474,9 @@ void discard_inactive_generated(Constraints& constraints, State& state)
         std::size_t k = constraint.index - constraints.explicit_count;
         std::span<const double> normal = std::span<const double>(previous.rows).subspan(k * n, n);
         std::span<const double> signs = std::span<const double>(previous.signs).subspan(k * n, n);
-        constraint.index = append_generated(constraints, normal, signs);
+        constraint.index = append_generated(constraints, kept, normal, signs);
     }
+    std::swap(previous, kept);
 }
 
 void refine_active(const Constraints& constraints, State& state)
@@ -521,6 +532,10 @@ Solution optimal_solution(const Constraints& constraints, State& state)
     solution.status = Status::Optimal;
     solution.equality_multipliers.assign(constraints.equality_count, 0.0);
     solution.inequality_multipliers.assign(constraints.explicit_count - constraints.equality_count, 0.0);
+    std::ptrdiff_t active_inequalities = std::ranges::count_if(
+        state.set.active, [&](const ActiveConstraint& constraint)
+        { return constraint.index >= constraints.equality_count && !is_generated(constraints, constraint.index); });
+    solution.active_inequalities.reserve(static_cast<std::size_t>(active_inequalities));
     for (const ActiveConstraint& constraint : state.set.active)
     {
         double multiplier = constraint.sign * constraint.multiplier;

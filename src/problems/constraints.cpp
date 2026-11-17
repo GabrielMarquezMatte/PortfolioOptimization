@@ -26,11 +26,33 @@ std::size_t add_inequality(qp::Problem& problem, std::span<const double> row, do
     return problem.inequality_rhs.size() - 1;
 }
 
-std::vector<double> unit_row(std::size_t n, std::size_t index, double value)
+// The inequality row of zeros with value at index, written in place at the end of the problem's rows.
+std::size_t add_unit_inequality(qp::Problem& problem, std::size_t n, std::size_t index, double value, double rhs)
 {
-    std::vector<double> row(n, 0.0);
-    row[index] = value;
-    return row;
+    problem.inequality_rows.resize(problem.inequality_rows.size() + n, 0.0);
+    problem.inequality_rows[problem.inequality_rows.size() - n + index] = value;
+    problem.inequality_rhs.push_back(rhs);
+    return problem.inequality_rhs.size() - 1;
+}
+
+// Room for the bound rows of n assets and the two of the cash weight, so that adding them does not reallocate the
+// rows (nothing reserved when no asset has a bound, so that such a problem does not allocate more than before).
+void reserve_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
+{
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        count += static_cast<std::size_t>(std::isfinite(lower_of(spec, i)));
+        count += static_cast<std::size_t>(std::isfinite(upper_of(spec, i)));
+    }
+    if (count == 0)
+    {
+        return;
+    }
+    count += 2;
+    problem.inequality_rows.reserve(problem.inequality_rows.size() + count * n);
+    problem.inequality_rhs.reserve(problem.inequality_rhs.size() + count);
+    rows.bounds.reserve(rows.bounds.size() + count);
 }
 
 void add_equalities(const Spec& spec, const Data& data, qp::Problem& problem, ConstraintRows& rows)
@@ -55,17 +77,18 @@ void add_equalities(const Spec& spec, const Data& data, qp::Problem& problem, Co
 
 void add_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
 {
+    reserve_asset_bounds(spec, n, problem, rows);
     for (std::size_t i = 0; i < n; ++i)
     {
         double lower = lower_of(spec, i);
         double upper = upper_of(spec, i);
         if (std::isfinite(lower))
         {
-            rows.bounds.push_back(BoundRow{i, add_inequality(problem, unit_row(n, i, 1.0), lower), true});
+            rows.bounds.push_back(BoundRow{i, add_unit_inequality(problem, n, i, 1.0, lower), true});
         }
         if (std::isfinite(upper))
         {
-            rows.bounds.push_back(BoundRow{i, add_inequality(problem, unit_row(n, i, -1.0), -upper), false});
+            rows.bounds.push_back(BoundRow{i, add_unit_inequality(problem, n, i, -1.0, -upper), false});
         }
     }
 }

@@ -39,30 +39,48 @@ std::size_t add_row(qp::Problem& problem, std::span<const double> row)
     return problem.inequality_rhs.size() - 1;
 }
 
-// scale 1'y + sign y_weight >= 0: the lower row y_i - lo_i 1'y (scale -lo_i, sign 1) or the upper row
-// hi_i 1'y - y_i (scale hi_i, sign -1).
-std::vector<double> bound_row(std::size_t n, std::size_t weight, double scale, double sign)
+// scale 1'y + sign y_weight >= 0, written in place at the end of the rows: the lower row y_i - lo_i 1'y (scale
+// -lo_i, sign 1) or the upper row hi_i 1'y - y_i (scale hi_i, sign -1).
+std::size_t add_bound_row(qp::Problem& problem, std::size_t weight, double scale, double sign)
 {
-    std::vector<double> row(n, scale);
-    row[weight] += sign;
-    return row;
+    std::size_t n = problem.n;
+    problem.inequality_rows.resize(problem.inequality_rows.size() + n, scale);
+    problem.inequality_rows[problem.inequality_rows.size() - n + weight] += sign;
+    problem.inequality_rhs.push_back(0.0);
+    return problem.inequality_rhs.size() - 1;
+}
+
+// Room for the bound rows and the row of kappa, so that adding them does not reallocate the rows.
+void reserve_rows(const Spec& spec, Homogeneous& homogeneous)
+{
+    std::size_t n = homogeneous.problem.n;
+    std::size_t count = 1;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        count += static_cast<std::size_t>(std::isfinite(lower_of(spec, i)));
+        count += static_cast<std::size_t>(std::isfinite(upper_of(spec, i)));
+    }
+    homogeneous.problem.inequality_rows.reserve(count * n);
+    homogeneous.problem.inequality_rhs.reserve(count);
+    homogeneous.bounds.reserve(count - 1);
 }
 
 void add_bound_rows(const Spec& spec, Homogeneous& homogeneous)
 {
     std::size_t n = homogeneous.problem.n;
+    reserve_rows(spec, homogeneous);
     for (std::size_t i = 0; i < n; ++i)
     {
         double lower = lower_of(spec, i);
         double upper = upper_of(spec, i);
         if (std::isfinite(lower))
         {
-            std::size_t row = add_row(homogeneous.problem, bound_row(n, i, -lower, 1.0));
+            std::size_t row = add_bound_row(homogeneous.problem, i, -lower, 1.0);
             homogeneous.bounds.push_back(BoundRow{i, row, true});
         }
         if (std::isfinite(upper))
         {
-            std::size_t row = add_row(homogeneous.problem, bound_row(n, i, upper, -1.0));
+            std::size_t row = add_bound_row(homogeneous.problem, i, upper, -1.0);
             homogeneous.bounds.push_back(BoundRow{i, row, false});
         }
     }
