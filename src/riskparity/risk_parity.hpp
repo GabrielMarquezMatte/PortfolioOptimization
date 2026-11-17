@@ -38,9 +38,9 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 // value is right to 1e-7 (1 + f). The multipliers are those of one Newton solve at the returned weights,
 // kept when its safeguard accepts it (least squares at the weights otherwise). With a target volatility at
 // least 1e-3 relative above sigma_min they are measured, not derived, within 2.7e-13 relative at
-// cond(Sigma) = 1e4, 5.2e-11 at 1e6 and 5.3e-10 at 1e8 (the largest measured, n = 5 to 50, bound
-// multipliers on n = 5 and 8), at weights right to 2.3e-11 or better; further off, the multipliers follow
-// the weights. Nearer sigma_min the error grows roughly like 1 / delta, s = sigma_min (1 + delta): measured
+// cond(Sigma) = 1e4, 5.2e-11 at 1e6 and 5.3e-10 at 1e8 (the largest measured, n = 5 to 50, bound multipliers
+// on n = 5 and 8), at the weights those solves returned; further off, the multipliers follow the weights.
+// Nearer sigma_min the error grows roughly like 1 / delta, s = sigma_min (1 + delta): measured
 // up to 2.7e-12 at delta = 1e-4 and 4.5e-7 at 1e-10 (cond(Sigma) = 1e4), 1.3e-6 at 1e-10 over
 // cond(Sigma) <= 1e8. Above 1e8 they are not validated (measured up to 0.25 off at 1e10;
 // docs/guide/validation.md). A local method: Optimal means a stationary point reached

@@ -438,7 +438,7 @@ solution, a second solve that contracts, a stationarity within the noise of the 
 bounds; not the rank test of the QR, which the scaled KKT matrix fails at `cond(Sigma) = 1e8` and `N >= 12` on about
 half the shapes while the correction is right). With a target volatility at least `1e-3` relative above `sigma_min`
 their measured relative error is then up to 2.7e-13 at `cond(Sigma) = 1e4`, 5.2e-11 at 1e6 and 5.3e-10 at 1e8 (bands
-1e-10, 1e-9, 1e-7; `N` from 5 to 50, bound multipliers on `N` = 5 and 8), at weights right to 2.3e-11 or better;
+1e-10, 1e-9, 1e-7; `N` from 5 to 50, bound multipliers on `N` = 5 and 8), at the weights those solves returned;
 measured, not derived. Where the weights are further off the multipliers follow (8.7e-5 at a weight error of 2.3e-5).
 Nearer the minimum, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: at `cond(Sigma) = 1e4` up to
 2.7e-12 at `delta = 1e-4`, 5.9e-11 at `1e-6`, 7.8e-9 at `1e-8` and 4.5e-7 at `1e-10` (1.3e-6 at `1e-10` over
