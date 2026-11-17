@@ -172,3 +172,44 @@ computed this way) and `risk_parity/budget/1000` are bit for bit identical. In t
 update loop is `movupd` × 3, `mulpd`, `subpd`, `mulpd`, `subpd`, `movups`: two entries per instruction, the two
 subtractions of each entry in order; the square root stays an inline `sqrtsd` (the `call sqrt` is the errno path of a
 negative argument, which the pivot test excludes).
+
+### L3: Householder reflections by rows
+
+`householder_qr` reflected each trailing column j on its own (`reflect` with a stride of cols): a projection summed
+down the column and an update down the column, both reading one entry per row of a row-major matrix. It now reflects
+all trailing columns of reflector k together, a row at a time (`reflect_trailing_columns`): a vector of cols
+projections, each summed from zero over the rows i ≥ k in increasing i, then doubled, then `x_ij -= (2 p_j) v_i` row
+by row. Column j sees the same operations in the same order as before (`2.0 * projection * v[i]` is `(2.0 *
+projection) * v[i]`). One vector of cols doubles is allocated per factorization. `reflect`, still used by
+`apply_transposed` on a contiguous vector, lost its stride parameter, which was always 1 there.
+
+`BM_Kernel/qr` factors a 2n × n matrix. The A executable (L1 + L2) was run three times, because its strided loop moved
+by up to 40% between runs on the noisy desktop (the baseline table has 1.20 s at n = 1000):
+
+| Measure | A (L1 + L2) | B (L1 + L2 + L3) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/qr/10` | 1.18 to 1.30 µs | 1.18 to 1.20 µs | 0.92 to 1.0 |
+| `BM_Kernel/qr/100` | 874 to 1140 µs | 310 and 353 µs | 0.27 to 0.40 |
+| `BM_Kernel/qr/300` | 25.3 to 27.4 ms | 10.8 and 10.9 ms | 0.39 to 0.43 |
+| `BM_Kernel/qr/1000` | 1.34 to 1.88 s | 0.381 and 0.403 s | 0.20 to 0.30 |
+| `BM_Solve/tracking_error/long_only/100` (two A/B pairs) | 1904 and 1928 µs | 1492 and 1262 µs | 0.78 and 0.65 |
+| `BM_Solve/tracking_error/box/1000` (one solve, `portopt_profile`) | 3.65 s | 2.71 s | 0.74 |
+
+The other cases of the quick suite, which do not factor by QR in the solve or do it on a small system (`risk_parity`),
+moved between 0.74 and 1.63 in the first pair and between 0.84 and 1.17 in the second, in both directions: noise of
+the desktop, not of the change. All 70 cases at n ≤ 100, the 6 `long_only` cases at n = 1000 and
+`tracking_error/box/1000` are bit for bit identical.
+
+In the assembly (`qr.cpp.obj`, inlined in `householder_qr`) GCC unrolls the row loop of the projections by two and
+jams it: one pass loads the projections once and adds `v_i x_ij` and then `v_i+1 x_i+1,j` (`mulpd`, `addpd`, `mulpd`,
+`addpd`), in the order of i, which is legal without reassociation. The doubling is `addpd x, x`, exact like `2.0 *
+x`; the update is `movupd`, `movupd`, `mulpd`, `subpd`, `movups`. `column_norm` and the copy of column k in
+`make_reflector` still read with a stride; they are O(rows · cols) per factorization against the O(rows · cols²) of the
+reflections.
+
+### The three together
+
+`risk_parity/target_volatility/1000`, one solve each with `portopt_profile --max-n 1000 --repeat 1`, the executables of
+`1297db0` (before L1) and of L1 + L2 + L3, one right after the other: 25.8 s and 12.7 s (0.49), bit for bit identical
+(status, objective, weights, multipliers and residual), with 7 more allocations (the projections of its 7 QR
+factorizations).

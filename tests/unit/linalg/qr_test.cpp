@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <span>
 #include <vector>
 
 #include "random_covariance.hpp"
@@ -57,7 +59,11 @@ std::vector<double> conditioned_matrix(std::size_t rows, std::size_t cols, doubl
     std::vector<double> a(rows * cols, 0.0);
     for (std::size_t k = 0; k < cols; ++k)
     {
-        double fraction = static_cast<double>(k) / static_cast<double>(cols - 1);
+        double fraction = 0.0;
+        if (cols > 1)
+        {
+            fraction = static_cast<double>(k) / static_cast<double>(cols - 1);
+        }
         double singular = std::exp(-fraction * std::log(condition));
         for (std::size_t i = 0; i < rows; ++i)
         {
@@ -68,6 +74,115 @@ std::vector<double> conditioned_matrix(std::size_t rows, std::size_t cols, doubl
         }
     }
     return a;
+}
+
+double reference_column_norm(std::span<const double> a, std::size_t rows, std::size_t cols, std::size_t j)
+{
+    double sum = 0.0;
+    for (std::size_t i = 0; i < rows; ++i)
+    {
+        sum += a[i * cols + j] * a[i * cols + j];
+    }
+    return std::sqrt(sum);
+}
+
+double reference_make_reflector(const std::vector<double>& work, po::linalg::Qr& qr, std::size_t k)
+{
+    std::size_t cols = qr.cols;
+    std::span<double> v = std::span<double>(qr.reflectors).subspan(k * qr.rows, qr.rows);
+    double norm_squared = 0.0;
+    for (std::size_t i = k; i < qr.rows; ++i)
+    {
+        v[i] = work[i * cols + k];
+        norm_squared += v[i] * v[i];
+    }
+    double norm = std::sqrt(norm_squared);
+    if (norm == 0.0)
+    {
+        return 0.0;
+    }
+    double diagonal = -norm;
+    if (v[k] < 0.0)
+    {
+        diagonal = norm;
+    }
+    v[k] -= diagonal;
+    double length = std::sqrt(2.0 * norm * (norm + std::fabs(work[k * cols + k])));
+    for (std::size_t i = k; i < qr.rows; ++i)
+    {
+        v[i] /= length;
+    }
+    return diagonal;
+}
+
+void reference_reflect(std::span<const double> v, std::size_t k, std::span<double> x, std::size_t stride)
+{
+    double projection = 0.0;
+    for (std::size_t i = k; i < v.size(); ++i)
+    {
+        projection += v[i] * x[i * stride];
+    }
+    for (std::size_t i = k; i < v.size(); ++i)
+    {
+        x[i * stride] -= 2.0 * projection * v[i];
+    }
+}
+
+// The factorization as it was before the reflections ran by rows: each trailing column reflected on its own,
+// read with a stride of cols.
+po::linalg::Qr column_order_qr(std::span<const double> a, std::size_t rows, std::size_t cols)
+{
+    po::linalg::Qr qr{rows, cols, std::vector<double>(cols * rows, 0.0), std::vector<double>(cols * cols, 0.0),
+                      0.0};
+    std::vector<double> work(a.begin(), a.end());
+    for (std::size_t j = 0; j < cols; ++j)
+    {
+        qr.largest_column_norm = std::max(qr.largest_column_norm, reference_column_norm(a, rows, cols, j));
+    }
+    for (std::size_t k = 0; k < cols; ++k)
+    {
+        double diagonal = reference_make_reflector(work, qr, k);
+        std::span<const double> v = std::span<const double>(qr.reflectors).subspan(k * rows, rows);
+        for (std::size_t j = k + 1; j < cols; ++j)
+        {
+            reference_reflect(v, k, std::span<double>(work).subspan(j), cols);
+        }
+        qr.upper[k * cols + k] = diagonal;
+        for (std::size_t j = k + 1; j < cols; ++j)
+        {
+            qr.upper[k * cols + j] = work[k * cols + j];
+        }
+    }
+    return qr;
+}
+
+void column_order_apply_transposed(const po::linalg::Qr& qr, std::span<double> b)
+{
+    for (std::size_t k = 0; k < qr.cols; ++k)
+    {
+        reference_reflect(std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows), k, b, 1);
+    }
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+void expect_same_factorization(const std::vector<double>& a, std::size_t rows, std::size_t cols)
+{
+    po::linalg::Qr qr = po::linalg::householder_qr(a, rows, cols);
+    po::linalg::Qr reference = column_order_qr(a, rows, cols);
+    EXPECT_EQ(qr.rows, reference.rows);
+    EXPECT_EQ(qr.cols, reference.cols);
+    EXPECT_TRUE(same_bits(qr.reflectors, reference.reflectors));
+    EXPECT_TRUE(same_bits(qr.upper, reference.upper));
+    EXPECT_EQ(std::memcmp(&qr.largest_column_norm, &reference.largest_column_norm, sizeof(double)), 0);
+    std::vector<double> b = po::testing::random_vector(rows, 41 + rows, -1.0, 1.0);
+    std::vector<double> reference_b = b;
+    po::linalg::apply_transposed(qr, b);
+    column_order_apply_transposed(reference, reference_b);
+    EXPECT_TRUE(same_bits(b, reference_b));
 }
 
 TEST(Qr, ReconstructsTheUpperFactor)
@@ -197,6 +312,19 @@ TEST(Qr, RankThresholdIsRelativeToTheColumns)
     }
     EXPECT_TRUE(po::linalg::has_full_column_rank(po::linalg::householder_qr(scaled, rows, cols)));
     EXPECT_LT(max_abs(scaled), 1e-8);
+}
+
+TEST(Qr, ReflectIsBitIdenticalToTheColumnOrder)
+{
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        for (double condition : {1e2, 1e8})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", condition = " << condition);
+            expect_same_factorization(conditioned_matrix(n, n, condition), n, n);
+            expect_same_factorization(conditioned_matrix(2 * n, n, condition), 2 * n, n);
+        }
+    }
 }
 
 } // namespace

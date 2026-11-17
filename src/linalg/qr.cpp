@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 namespace po::linalg
@@ -50,16 +51,45 @@ double make_reflector(const std::vector<double>& work, Qr& qr, std::size_t k)
     return diagonal;
 }
 
-void reflect(std::span<const double> v, std::size_t k, std::span<double> x, std::size_t stride)
+void reflect(std::span<const double> v, std::size_t k, std::span<double> x)
 {
     double projection = 0.0;
     for (std::size_t i = k; i < v.size(); ++i)
     {
-        projection += v[i] * x[i * stride];
+        projection += v[i] * x[i];
     }
     for (std::size_t i = k; i < v.size(); ++i)
     {
-        x[i * stride] -= 2.0 * projection * v[i];
+        x[i] -= 2.0 * projection * v[i];
+    }
+}
+
+// Reflects columns k + 1 .. cols - 1 of work (v.size() x cols) by v, a row at a time. Column j still sums its
+// projection v' x_j from zero in increasing i and subtracts (2 projection) v_i from each entry: the order of
+// reflect applied to the column alone.
+void reflect_trailing_columns(std::span<const double> v, std::size_t k, std::span<double> work,
+                              std::size_t cols, std::span<double> projections)
+{
+    std::fill(projections.begin() + static_cast<std::ptrdiff_t>(k + 1), projections.end(), 0.0);
+    for (std::size_t i = k; i < v.size(); ++i)
+    {
+        std::span<const double> row = work.subspan(i * cols, cols);
+        for (std::size_t j = k + 1; j < cols; ++j)
+        {
+            projections[j] += v[i] * row[j];
+        }
+    }
+    for (std::size_t j = k + 1; j < cols; ++j)
+    {
+        projections[j] = 2.0 * projections[j];
+    }
+    for (std::size_t i = k; i < v.size(); ++i)
+    {
+        std::span<double> row = work.subspan(i * cols, cols);
+        for (std::size_t j = k + 1; j < cols; ++j)
+        {
+            row[j] -= projections[j] * v[i];
+        }
     }
 }
 
@@ -83,6 +113,7 @@ Qr householder_qr(std::span<const double> a, std::size_t rows, std::size_t cols)
 {
     Qr qr{rows, cols, std::vector<double>(cols * rows, 0.0), std::vector<double>(cols * cols, 0.0), 0.0};
     std::vector<double> work(a.begin(), a.end());
+    std::vector<double> projections(cols, 0.0);
     for (std::size_t j = 0; j < cols; ++j)
     {
         qr.largest_column_norm = std::max(qr.largest_column_norm, column_norm(a, rows, cols, j));
@@ -91,10 +122,7 @@ Qr householder_qr(std::span<const double> a, std::size_t rows, std::size_t cols)
     {
         double diagonal = make_reflector(work, qr, k);
         std::span<const double> v = std::span<const double>(qr.reflectors).subspan(k * rows, rows);
-        for (std::size_t j = k + 1; j < cols; ++j)
-        {
-            reflect(v, k, std::span<double>(work).subspan(j), cols);
-        }
+        reflect_trailing_columns(v, k, work, cols, projections);
         qr.upper[k * cols + k] = diagonal;
         for (std::size_t j = k + 1; j < cols; ++j)
         {
@@ -122,7 +150,7 @@ void apply_transposed(const Qr& qr, std::span<double> b)
 {
     for (std::size_t k = 0; k < qr.cols; ++k)
     {
-        reflect(std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows), k, b, 1);
+        reflect(std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows), k, b);
     }
 }
 
