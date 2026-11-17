@@ -1,6 +1,9 @@
 #include "riskparity/objective.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 
 namespace po::riskparity
 {
@@ -184,7 +187,16 @@ Linearization linearize(const Data& data, std::span<const double> budget, std::s
     return linearization;
 }
 
-std::vector<double> gauss_newton(std::span<const double> jacobian, std::size_t n)
+namespace
+{
+
+constexpr std::size_t kPanel = 4;
+// Below this size, packing the panels costs more than the products that the symmetry saves
+// (docs/performance/benchmarks.md).
+constexpr std::size_t kSymmetricFrom = 16;
+
+// Entry (j, k) of 2 J'J is the sum over i of (2 J_ij) J_ik, from +0 in increasing i.
+std::vector<double> full_gauss_newton(std::span<const double> jacobian, std::size_t n)
 {
     std::vector<double> curvature(n * n, 0.0);
     for (std::size_t i = 0; i < n; ++i)
@@ -199,6 +211,100 @@ std::vector<double> gauss_newton(std::span<const double> jacobian, std::size_t n
         }
     }
     return curvature;
+}
+
+// 2 J_ij is exact for every entry, so (2 J_ij) J_ik and (2 J_ik) J_ij are the same rounding of 2 J_ij J_ik
+// and entry (k, j) of 2 J'J has the bits of entry (j, k). An entry above max / 2 (or one that is not finite)
+// breaks it.
+bool doubles_exactly(std::span<const double> jacobian)
+{
+    constexpr double kHalfLargest = std::numeric_limits<double>::max() / 2.0;
+    return std::ranges::all_of(jacobian, [](double entry) { return std::fabs(entry) <= kHalfLargest; });
+}
+
+// J by panels of kPanel columns: panel p holds J_i,(p kPanel + b) at i kPanel + b, with zeros past column n.
+std::vector<double> column_panels(std::span<const double> jacobian, std::size_t n)
+{
+    std::size_t count = (n + kPanel - 1) / kPanel;
+    std::vector<double> panels(count * n * kPanel, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            panels[((j / kPanel) * n + i) * kPanel + j % kPanel] = jacobian[i * n + j];
+        }
+    }
+    return panels;
+}
+
+// 2 J_ij of a panel.
+void double_panel(std::span<const double> panel, std::span<double> doubled)
+{
+    for (std::size_t e = 0; e < panel.size(); ++e)
+    {
+        doubled[e] = 2.0 * panel[e];
+    }
+}
+
+// The entries (j, k) of the rows of the doubled panel and the columns of panel, each summed from +0 in
+// increasing i as full_gauss_newton sums it, stored at (j, k) and at (k, j).
+void add_block(std::span<const double> doubled, std::span<const double> panel, std::size_t first_row,
+               std::size_t first_column, std::span<double> curvature)
+{
+    std::size_t n = panel.size() / kPanel;
+    std::array<double, kPanel * kPanel> sums{};
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t a = 0; a < kPanel; ++a)
+        {
+            double scale = doubled[i * kPanel + a];
+            for (std::size_t b = 0; b < kPanel; ++b)
+            {
+                sums[a * kPanel + b] += scale * panel[i * kPanel + b];
+            }
+        }
+    }
+    std::size_t rows = std::min(kPanel, n - first_row);
+    std::size_t columns = std::min(kPanel, n - first_column);
+    for (std::size_t a = 0; a < rows; ++a)
+    {
+        for (std::size_t b = 0; b < columns; ++b)
+        {
+            curvature[(first_row + a) * n + first_column + b] = sums[a * kPanel + b];
+            curvature[(first_column + b) * n + first_row + a] = sums[a * kPanel + b];
+        }
+    }
+}
+
+// The blocks of kPanel x kPanel entries on and above the diagonal, mirrored below it.
+std::vector<double> symmetric_gauss_newton(std::span<const double> jacobian, std::size_t n)
+{
+    std::vector<double> curvature(n * n, 0.0);
+    std::vector<double> panels = column_panels(jacobian, n);
+    std::vector<double> doubled(kPanel * n);
+    std::size_t panel_size = kPanel * n;
+    std::size_t count = (n + kPanel - 1) / kPanel;
+    std::span<const double> all(panels);
+    for (std::size_t p = 0; p < count; ++p)
+    {
+        double_panel(all.subspan(p * panel_size, panel_size), doubled);
+        for (std::size_t q = p; q < count; ++q)
+        {
+            add_block(doubled, all.subspan(q * panel_size, panel_size), p * kPanel, q * kPanel, curvature);
+        }
+    }
+    return curvature;
+}
+
+} // namespace
+
+std::vector<double> gauss_newton(std::span<const double> jacobian, std::size_t n)
+{
+    if (n < kSymmetricFrom || !doubles_exactly(jacobian))
+    {
+        return full_gauss_newton(jacobian, n);
+    }
+    return symmetric_gauss_newton(jacobian, n);
 }
 
 // With s = step, q = Sigma s and N_i = w_i p_i: dN_i = s_i p_i + w_i q_i + s_i q_i, dv = 2 p's + s'q,

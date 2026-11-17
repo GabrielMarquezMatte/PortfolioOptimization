@@ -275,3 +275,42 @@ the assembly (`goldfarb_idnani.cpp.obj`, inlined in `solve_factored` and `most_v
 loop is `movsd`/`movhpd` (two basis columns, a stride of n), `mulpd` by the entry, `addpd` of a zero register,
 `mulpd` by the sign, `movups`: the `+ 0.0` is kept, as it must be without `-ffast-math`. The scan of a unit row is
 `movsd`, `mulsd`, `addsd` of zero, `subsd` of the right-hand side, then its tolerance as before.
+
+### L4: `gauss_newton` by symmetry, in blocks
+
+`gauss_newton` added each row i of J to all n² entries of 2 J'J (`curvature[j][k] += (2 J_ij) J_ik`): it read and
+wrote the whole n² curvature n times, 8 MB a pass at n = 1000. It now computes the blocks of 4 × 4 entries on and
+above the diagonal and mirrors each one below it. J is first copied into panels of 4 columns (n rows of 4 entries,
+zeros past column n), and the 4 columns of the block's rows are doubled once per panel (`2.0 * J_ij`, as before).
+Each block keeps its 16 sums in registers over the whole loop in i: entry (j, k) is still summed from +0 in increasing
+i, with the same product `(2 J_ij) J_ik`. The entry (k, j) below the diagonal gets the bits of (j, k): `2 J_ij` is
+exact, so `(2 J_ij) J_ik` and `(2 J_ik) J_ij` are the same rounding of the same real number, overflow and subnormals
+included, and the two sums add the same terms in the same order. This holds while every |J_ij| ≤ max / 2: one pass
+over J checks it, and otherwise (an entry above it, inf or NaN) the old loop runs. The old loop also runs below
+n = 16, where the packing costs more than the half of the products it saves (a scratch timing of both on a random J,
+best of 7: 1.57 times slower at n = 10, 1.25 at n = 12, 0.92 at n = 16, 0.64 at n = 32). Two more allocations per
+call at n ≥ 16 (the panels and the doubled panel).
+
+`GaussNewton.SymmetricIsBitIdenticalToTheFullLoop` compares by `memcmp` with the old loop, kept verbatim in the test,
+on the Jacobian of `linearize` (n and condition as above); `GaussNewton.SymmetricIsBitIdenticalOnEdgeEntries` does
+it on a random J with ±0, subnormals, 1e150, -1e154 (products that overflow) and ±max / 2 in a third of its entries,
+and again with one entry of 0.75 max. Reversing the order of i in the blocks makes both fail; removing the check of
+max / 2 makes the second fail.
+
+| Measure | A (+ L5) | B (+ L4) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/gauss_newton/10` (old loop; two interleaved pairs) | 0.266 and 0.269 µs | 0.252 and 0.270 µs | noise |
+| `BM_Kernel/gauss_newton/100` | 159 µs | 81.8 µs | 0.51 |
+| `BM_Kernel/gauss_newton/300` | 4.63 ms | 2.09 ms | 0.45 |
+| `BM_Kernel/gauss_newton/1000` | 178 ms | 59.3 ms | 0.33 |
+| `BM_Solve/risk_parity/target_volatility/100` | 20.1 ms | 16.1 ms | 0.80 |
+| `BM_Solve/risk_parity/box/100` | 34.3 ms | 30.0 ms | 0.88 |
+| `risk_parity/target_volatility/1000` (one solve, `portopt_profile`) | 11.7 s | 6.37 s | 0.55 |
+| `risk_parity/box/1000` | 26.0 s | 18.4 s | 0.71 |
+| `risk_parity/target_return/1000` | 24.3 s | 16.3 s | 0.67 |
+
+The cases of the quick suite that do not call `gauss_newton` moved by 0.94 to 1.11, and two unchanged kernels by 1.42
+and 1.43 (`cholesky/100`, `qr/100`): noise of the desktop. All 70 cases at n ≤ 100 and the three `risk_parity` cases at
+n = 1000 are bit for bit identical. In the assembly (`objective.cpp.obj`, everything inlined in `gauss_newton`) the
+block loop is four `movupd` loads, the broadcasts and lane swaps of the two pairs (`unpcklpd`, `unpckhpd`,
+`shufpd`), then 8 `mulpd` and 8 `addpd` into 8 registers that hold the 16 sums; they are stored once, after the loop.

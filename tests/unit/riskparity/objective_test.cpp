@@ -5,7 +5,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <numeric>
+#include <span>
 #include <vector>
 
 #include "core/data.hpp"
@@ -192,6 +195,72 @@ TEST(RiskParityObjective, ValueChangeKeepsRelativeAccuracy)
         double variance_change = 2.0 * po::testing::dot(po::testing::covariance_times(data, weights), step) +
                                  po::testing::dot(po::testing::covariance_times(data, step), step);
         EXPECT_NEAR(change.variance, variance_change, 1e-14 * std::fabs(variance_change));
+    }
+}
+
+// 2 J'J as it was computed before the symmetry: every row i of J added to all n^2 entries, each entry summed
+// from +0 in increasing i.
+std::vector<double> reference_gauss_newton(std::span<const double> jacobian, std::size_t n)
+{
+    std::vector<double> curvature(n * n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            double scaled = 2.0 * jacobian[i * n + j];
+            for (std::size_t k = 0; k < n; ++k)
+            {
+                curvature[j * n + k] += scaled * jacobian[i * n + k];
+            }
+        }
+    }
+    return curvature;
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+TEST(GaussNewton, SymmetricIsBitIdenticalToTheFullLoop)
+{
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        for (double condition : {1e2, 1e8})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", condition = " << condition);
+            std::vector<double> mu = random_vector(n, n + 600, 0.03, 0.15);
+            Data data = Data::create(n, mu, random_covariance(n, n + 7, condition)).value();
+            std::vector<double> weights = normalized(random_vector(n, n + 700, 0.2, 1.0));
+            std::vector<double> budget(n, 1.0 / static_cast<double>(n));
+            Linearization linearization = linearize(data, budget, weights, false);
+            EXPECT_TRUE(same_bits(po::riskparity::gauss_newton(linearization.jacobian, n),
+                                  reference_gauss_newton(linearization.jacobian, n)));
+        }
+    }
+}
+
+// Signed zeros, subnormals and entries up to the largest that doubles exactly; and one entry above it, where
+// 2 J_ij overflows and the products of the two halves are no longer the same.
+TEST(GaussNewton, SymmetricIsBitIdenticalOnEdgeEntries)
+{
+    constexpr double kLargest = std::numeric_limits<double>::max();
+    constexpr double kSubnormal = std::numeric_limits<double>::denorm_min();
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        SCOPED_TRACE(testing::Message() << "n = " << n);
+        std::vector<double> jacobian = random_vector(n * n, n + 800, -1.0, 1.0);
+        std::vector<double> edges = {0.0, -0.0, kSubnormal, -3.0 * kSubnormal, 1e-310, -1e-300, 1e150,
+                                     -1e154, kLargest / 2.0, -kLargest / 2.0};
+        for (std::size_t e = 0; e < jacobian.size(); e += 3)
+        {
+            jacobian[e] = edges[(e / 3) % edges.size()];
+        }
+        std::vector<double> reference = reference_gauss_newton(jacobian, n);
+        EXPECT_TRUE(same_bits(po::riskparity::gauss_newton(jacobian, n), reference));
+        jacobian[n * n / 2] = 0.75 * kLargest;
+        reference = reference_gauss_newton(jacobian, n);
+        EXPECT_TRUE(same_bits(po::riskparity::gauss_newton(jacobian, n), reference));
     }
 }
 
