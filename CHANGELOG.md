@@ -171,9 +171,11 @@ The first release.
 - A target return without bounds has no minimizer in general and is `MAX_ITER`.
 - The test generators build their covariances with `std::log`, `std::exp` and `std::cos`, which glibc, the Windows
   UCRT and Apple's libm round differently, so the fuzz batteries test slightly different problems on each platform.
-  Two tests that pass on Windows fail on Linux and macOS: `MaxReturnFuzz.LeverageFuzz` (its known residual case, `cond(Sigma) = 1e8` with cash and a
-  leverage, is `MAX_ITER` under a perturbation of 3.6e-13 relative of the covariance; see
-  [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery)) and, on macOS, `RiskParity.TargetVolatilityEllipseAgainstScan`.
+  Tests that pass on Windows fail elsewhere: `MaxReturnFuzz.LeverageFuzz` on Linux and macOS (its known residual
+  case, `cond(Sigma) = 1e8` with cash and a leverage, is `MAX_ITER` under a perturbation of 3.6e-13 relative of the
+  covariance; see [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery)),
+  `RiskParityDescentFuzz.ConvergedRunsAreKkt`, `RiskParityReference.ForwardErrorMeasuresTheDistanceToTheRefinedPoint`
+  and `MaxReturn.FaceShiftCashMultiplier` on Linux, and `RiskParity.TargetVolatilityEllipseAgainstScan` on macOS.
   Portable generators and the robustness of that `MAX_RETURN` case are the next plan.
 
 [Unreleased]: https://github.com/GabrielMarquezMatte/PortfolioOptimization/compare/v0.1.0...HEAD

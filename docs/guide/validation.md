@@ -1452,8 +1452,10 @@ cover:
   With that covariance the case is `MAX_ITER` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, while the
   Windows covariance is `OPTIMAL` at every fraction on both: the solver is the same, the problem is not, and this
   shape turns from `OPTIMAL` to `MAX_ITER` under a perturbation of 3.6e-13 of `Sigma`. So `MaxReturnFuzz.LeverageFuzz`
-  fails on Linux and macOS, and `RiskParity.TargetVolatilityEllipseAgainstScan` fails on macOS (its solve lands below
-  the value of the scan, a reference of limited resolution). Generators that give the same bits everywhere, and the
+  fails on Linux and macOS; `RiskParityDescentFuzz.ConvergedRunsAreKkt`,
+  `RiskParityReference.ForwardErrorMeasuresTheDistanceToTheRefinedPoint` and `MaxReturn.FaceShiftCashMultiplier` fail
+  on Linux, and `RiskParity.TargetVolatilityEllipseAgainstScan` on macOS (its solve lands below the value of the scan,
+  a reference of limited resolution). The same sets fail on the commit before the 0.1.0 release work. Generators that give the same bits everywhere, and the
   robustness of that `MAX_RETURN` case, are left to the next plan; with them every test instance changes, and seven
   tests that rely on the present ones fail on Windows as well.
 - **Runtime.** In `gcc-release` `AgainstFrontierReference` 1.3 s, `NeverSilentlyWrong` 0.8 s, `MaxReturnFuzz.LeverageFuzz`
