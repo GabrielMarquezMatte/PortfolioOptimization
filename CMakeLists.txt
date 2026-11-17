@@ -97,7 +97,14 @@ if(MINGW)
         -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
 elseif(NOT WIN32 AND NOT APPLE)
     # libstdc++.so.6 and libgcc_s.so.1 are not on every distribution (musl, minimal images).
-    target_link_options(portopt PRIVATE -static-libstdc++ -static-libgcc)
+    # --exclude-libs keeps the symbols of the static libstdc++ out of the export table: the library exports the C
+    # interface (po_*) and nothing else, so it cannot interpose on the libstdc++ of the program that loads it, and the
+    # ABI dump lists only the interface.
+    target_link_options(portopt PRIVATE -static-libstdc++ -static-libgcc -Wl,--exclude-libs,ALL)
+elseif(APPLE)
+    # libc++ marks the typeinfo of its templates visible whatever -fvisibility says, and they end up in the export
+    # table; only the C interface is exported.
+    target_link_options(portopt PRIVATE "LINKER:-exported_symbol,_po_*")
 endif()
 
 # The header-only C++ wrapper (cpp/include/portopt/portopt.hpp) over the shared library.

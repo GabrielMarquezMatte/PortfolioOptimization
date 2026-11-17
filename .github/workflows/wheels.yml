@@ -1,0 +1,122 @@
+name: Wheels
+
+# Builds, checks and tests the seven wheels and the seven native libraries. It runs on every push that touches the
+# build, so a release never compiles a platform for the first time; release.yml calls it with the tag.
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/**'
+      - 'scripts/abi_contract.py'
+      - '.github/workflows/wheels.yml'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release tag (v0.1.0-rc.1); empty builds the version in the repository'
+        type: string
+        default: ''
+
+concurrency:
+  group: wheels-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-latest
+            image: quay.io/pypa/manylinux_2_28_x86_64
+            expected_tag: manylinux_2_28_x86_64
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/manylinux_2_28_aarch64
+            expected_tag: manylinux_2_28_aarch64
+          - name: linux-musl-x64
+            runner: ubuntu-latest
+            image: quay.io/pypa/musllinux_1_2_x86_64
+            expected_tag: musllinux_1_2_x86_64
+          - name: linux-musl-arm64
+            runner: ubuntu-24.04-arm
+            image: quay.io/pypa/musllinux_1_2_aarch64
+            expected_tag: musllinux_1_2_aarch64
+          - name: osx-arm64
+            runner: macos-latest
+            expected_tag: macosx_11_0_arm64
+          - name: osx-x64
+            runner: macos-15-intel
+            expected_tag: macosx_11_0_x86_64
+          - name: win-x64
+            runner: windows-latest
+            expected_tag: win_amd64
+    env:
+      ASSET: ${{ matrix.name }}
+      EXPECTED_TAG: ${{ matrix.expected_tag }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build, check and test (Linux container)
+        if: matrix.image
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            -e ASSET -e EXPECTED_TAG -e VERSION \
+            "${{ matrix.image }}" sh python/scripts/build_in_container.sh
+
+      - name: Install uv
+        if: '!matrix.image'
+        uses: astral-sh/setup-uv@v6
+
+      # 11.0 is the oldest macOS an arm64 binary can declare. It only goes up if libc++ refuses a feature.
+      - name: Build, check and test (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          brew install ninja
+          bash python/scripts/build_wheel.sh
+
+      - name: Install MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Build, check and test (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash python/scripts/build_wheel.sh
+
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - name: Upload the native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
