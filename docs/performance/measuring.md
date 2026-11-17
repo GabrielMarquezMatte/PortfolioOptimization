@@ -20,10 +20,12 @@ v1.9.1. Two executables come out:
 
 | Target | What it is |
 |---|---|
-| `portopt_benchmarks` | Google Benchmark suite: `BM_Solve/*` and `BM_Kernel/*` |
+| `portopt_benchmarks` | Google Benchmark suite: `BM_Solve/*`, `BM_Kernel/*` and `BM_CApi/*` |
 | `portopt_profile` | One pass over every case, with the per-case table and the dump of solutions |
 
-Both link `portopt_core` directly (no C API) and are compiled with `-ffp-contract=off`, like the core: the
+`BM_Solve` and `BM_Kernel` call the core directly; `BM_CApi` and `portopt_profile --via capi` call the C entry points
+(the objects of `portopt_capi`, linked into the executables, not the DLL). Both are compiled with
+`-ffp-contract=off`, like the core: the
 compensated products need every `a * b + c` rounded as written. They also replace the global `operator new` to count
 allocations; no other target does. `ctest --preset gcc-bench` runs the two self-tests: `portopt_benchmarks
 --selftest` (the allocation counter against allocations whose number is known) and `quick.py selftest` (the
@@ -91,6 +93,12 @@ time of the failure.
 The counter is `solver_iterations` and not `iterations`, which is Google Benchmark's own key in the JSON report. Aligned (over-aligned type) allocations keep the library's allocation function and are not
 counted; nothing measured here uses them.
 
+`BM_CApi/<what>/<n>` (`tests/benchmarks/capi/`) measures the C interface against the C++ calls under it: a bare call, a
+call through the guard, the spec handle, `po_data_create`, `po_solve`, the readers of a result and the whole cycle, for
+n in 10, 100, 1000, on `min_variance` `free` and `long_only`. Its results, and those of the Python layer
+(`python/benchmarks/bench_overhead.py`), are in [Python and C layers against the solve](python-vs-arch.md). Run it
+with `--benchmark_enable_random_interleaving=true`: the C and C++ rows differ by less than the spread of the desktop.
+
 `BM_Kernel/<kernel>/<n>` for n in 10, 100, 300, 1000: `cholesky`, `solve_lower`, `qr` (a 2n x n matrix, the shape of the
 `tracking_error` series), `qp_iteration` (a long-only QP over the covariance, solved by `qp::solve`: the time of one
 solve and of one iteration), `compensated_dot`, `covariance_times`, `gauss_newton`, `empty_active_set`. `solve_lower`
@@ -132,12 +140,12 @@ repetitions and a deviation rule are a screen, not a test.
 ## Profile and comparison of solutions
 
 ```
-build/gcc-bench/portopt_profile [--filter TEXT] [--max-n N] [--repeat K] [--json PATH]
+build/gcc-bench/portopt_profile [--filter TEXT] [--max-n N] [--repeat K] [--json PATH] [--via cpp|capi]
 ```
 
 Runs every case once through `po::solve` (`--max-n` limits the size, 100 by default; `--filter` is a substring of the
 case name; `--repeat` takes the best of K timed solves, the first of which also gives the dump, 3 by default; on Git Bash a filter must not start with `/`, which
-the shell turns into a path) and prints, per case, the status, the solver iterations, the time and the allocations.
+the shell turns into a path; `MSYS_NO_PATHCONV=1` turns that off, and then `--json` needs a Windows path) and prints, per case, the status, the solver iterations, the time and the allocations.
 With `--json` it writes the solutions: status, iterations, objective value (computed by `metrics::`; the residual
 for `risk_parity`), weights, the four named multipliers, bound multipliers and residual, all as hex-float (`%a`, exact).
 
@@ -191,6 +199,22 @@ without `-mfma`. Findings go to `docs/performance/`, never into a comment.
 1. `ctest --preset gcc-release` in full (this author runs `gcc-release` only, not `gcc-debug`): the fuzz batteries and
    the `style` test included.
 2. `quick.py compare-solutions ... --require-identical` over the profile dump for a change of risk 0.
-3. No accidental FMA: in a `native-release` build, no `vfm*` instruction in the objects of `portopt_core` outside the
-   functions that call `std::fma` on purpose.
+3. No accidental FMA: in a native build (below), no `vfm*` instruction in the objects of `portopt_core` or in
+   `libportopt.dll` outside the functions that call `std::fma` on purpose (three today: `two_product_error` and its two
+   inlinings). For the library, `objdump -d -C -M intel --no-show-raw-insn build/native-release/libportopt.dll | grep
+   -cE 'vf(n?m)(add|sub)'` prints 3. `portopt_capi` carries `-ffp-contract=off` like the core.
 4. No band of `expect_user_kkt` or `expect_risk_parity_kkt` loosened to accommodate an optimization.
+
+## The native build
+
+The `native-release` preset alone is not native: it names no compiler and sets no `-march`. To get a build with
+`-mfma` and `-mavx2` (where a contraction would show as `vfm*` and the guard above means something):
+
+```
+cmake --preset native-release -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native
+cmake --build --preset native-release
+ctest --preset native-release
+```
+
+On the Ryzen 7 5700X it compiles for `znver3` with `__FMA__` and `__AVX2__` defined. Its solutions are bit for bit those
+of `gcc-bench` (`compare-solutions`); its speed is in [Benchmarks](benchmarks.md#the-builds-other-than-gcc-bench).

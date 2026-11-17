@@ -79,8 +79,32 @@ library whose ABI version differs).
   references computed by another route (a bisection on the frontier, a golden-section search on the ratio, a brute
   force over the sign patterns of the leverage); see [docs/guide/validation.md](docs/guide/validation.md).
 
+- Performance tools: a Google Benchmark suite over every objective, variant and size (`BM_Solve`, `BM_Kernel`, 105
+  cases of 10, 100 and 1000 assets), `portopt_profile` (one pass over the cases and a dump of the solutions in
+  hex-float), `tests/benchmarks/quick.py` (a quick suite, A/B by medians and `compare-solutions`), `BM_CApi` and
+  `python/benchmarks/bench_overhead.py` for the cost of the C and Python layers, all opt-in (`PO_BUILD_BENCHMARKS`);
+  see [docs/performance/measuring.md](docs/performance/measuring.md).
+- Performance reports: [docs/performance/benchmarks.md](docs/performance/benchmarks.md) (the before and after of every
+  case), `baseline.md`, `profile-1.md`, `profile-2.md` and
+  [docs/performance/python-vs-arch.md](docs/performance/python-vs-arch.md) (the C and Python layers against the solve).
+
 ### Changed
 
+- Performance, with every result bit for bit identical (70 cases at 10 and 100 assets and all 35 at 1000 assets,
+  `compare-solutions`): the initial basis of the Goldfarb-Idnani solver by rows (8 times at n = 1000) and kept along
+  the `MAX_RETURN` path, the Cholesky factorization right-looking by column pairs, Householder reflections by rows,
+  unit rows (bounds) read at their one entry, the symmetric block product of `gauss_newton`, Dekker's product in the
+  compensated dot (where `std::fma` is a library call) and the allocations removed from the bound and gross exposure
+  rows. Measured against the commit before them on the same machine and build (generic x86-64, GCC 16.2): the geometric
+  mean of the solve time over the 35 cases is 0.71 at 10 assets, 0.29 at 100 and 0.23 at 1000 (the sum of the 35
+  solves at 1000 assets went from 290 s to 79 s; `risk_parity/box` from 86.8 s to 21.5 s, `max_return/leverage` from
+  32.9 s to 13.2 s). One case is slower, `risk_parity/budget` at 10 assets (5.5 to 5.9 µs). See
+  [docs/performance/benchmarks.md](docs/performance/benchmarks.md#plan-6-final-before-and-after).
+- `qp::solve` takes an optional `qp::BasisCache`; `Path` of `MAX_RETURN` holds one. Internal; no change of the C API.
+- `-ffp-contract=off` on the C API objects as on the core and the tests (no accidental FMA in a `-march=native` build
+  of the library).
+- The test battery builds with MSVC (`/W4 /WX`) and passes there: `_CRT_SECURE_NO_WARNINGS` for the measurement tests,
+  and five oracle self-tests that need an extended `long double` skip where `long double` is `double`.
 - `PO_SOLVE_MAX_ITER` carries no point for every objective: weights, multipliers and `po_result_residual` are NaN (the
   header had left the case of `RISK_PARITY` open). For `RISK_PARITY` it is the status of a target volatility the
   iteration cannot reach, of a target return with no bounds (no minimizer) and of a solution whose gross exposure

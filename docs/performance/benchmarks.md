@@ -47,7 +47,7 @@ against 32.3 s). Re-measure before and after a change instead of comparing again
 - `qp_solves`, `descent_iterations` and `polish_steps`, which need a counter in `src/`
   ([Measuring](measuring.md#counters)). The number of calls of a few functions per solve was counted once with a
   debugger instead ([Plan 6 profile 1](profile-1.md#calls-per-solve)).
-- The C API and the Python layer (`BM_CApi`, `bench_overhead.py`): plan 6 Task 5.
+- Anything but one machine, one compiler and generic code: see [What was left out](#what-was-left-out-and-why).
 
 ## Plan 6 baseline
 
@@ -503,3 +503,191 @@ objects of `portopt_core` has three `vfm*` instructions, each a `vfmsub132sd`: o
 function that calls `std::fma`, and one in each of `compensated_dot` and `covariance_times`, where it is inlined. No
 other function has one: `-ffp-contract=off` holds on every product of the core. `ctest` on that build passed (337
 tests, the benchmark self-tests included).
+
+The C API. `portopt_capi` was compiled without `-ffp-contract=off` until the end of plan 6: it does no arithmetic of
+its own, but it includes core headers, and with LTO (or an inline function) core code compiled in its units would be
+contracted. The flag is now on it (`build: -ffp-contract=off on the C API`). Before the change the 7 objects of
+`portopt_capi` and `libportopt.dll` of the native build had the same three `vfm*`, in `two_product_error`,
+`compensated_dot` and `covariance_times` of the core, and the C interface gave the same bits as the C++ path on 70 of
+70 cases at n ≤ 100 and on the 18 `min_variance` cases of the three sizes; after it, the same three and the same bits
+(`portopt_profile --via capi` against `--via cpp`, `compare-solutions --require-identical`). The guard for the library:
+
+```
+objdump -d -C -M intel --no-show-raw-insn build/native-release/libportopt.dll | grep -cE 'vf(n?m)(add|sub)'
+```
+
+must print 3, and the three must be those functions (`objdump` with the function headers shows which). On a build with
+`-flto` and the flag only on the core it was 25, in `po_solve` and the metrics ([profile 2](profile-2.md#l8-l9-and-l10)).
+
+## Plan 6 final: before and after
+
+The baseline against the end of plan 6, both measured in one session on 2026-11-17, one right after the other on the
+machine of [Machine and run](#machine-and-run). The comparison with the table of [Plan 6 baseline](#plan-6-baseline)
+(2026-11-16) is not made: runs of different days move by more than their spread
+([Measuring](measuring.md#ab)).
+
+| | Before (A) | After (B) |
+| --- | --- | --- |
+| Code | `1297db0`, the last commit before any change of `src/` (its `src/` is that of `4cc0b82`, the baseline; the commits between them are documents), built in a separate worktree | `6419150`, HEAD; its `src/` is that of the last lever (`66ca389`), the commits after it change build files, tests, benchmarks and documents only |
+| Build | `gcc-bench`, generic x86-64, `-O3 -DNDEBUG -ffp-contract=off` | the same |
+| Harness | `portopt_benchmarks` and `portopt_profile` of `1297db0` | those of HEAD; the cases, instances and counters are the same (the diff of `tests/benchmarks` between the two is the C API benchmark and `--via`) |
+
+- n = 10 and 100: 5 repetitions, the median of the wall time of `BM_Solve`; the 7 objectives were run as separate
+  slices, A and B alternating and the order swapped on every slice (about 4 minutes of wall time for each side).
+- n = 1000: one repetition, one timed solve of each of the 35 cases (`portopt_profile --max-n 1000 --repeat 1 --filter
+  /1000`, B and then A), so no spread is measured; the same cases run four at a time were up to 1.4 times slower than
+  alone ([Machine and run](#machine-and-run)). The sum of the 35 solves is 290.1 s before and 78.8 s after (3.7
+  times).
+- Spread at n = 10 and 100: the median relative standard deviation over the 140 runs of 5 repetitions is 4.7%, 65
+  of the 140 are above 5% and the largest is 33%. Ratios between 0.9 and 1.1 are not results.
+
+| Case | n = 10 before | after | ratio | n = 100 before | after | ratio | n = 1000 before | after | ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `min_variance/box` | 6.15 µs | 3.69 µs | 0.60 | 936.57 µs | 231.29 µs | 0.25 | 1.03 s | 193.01 ms | 0.19 |
+| `min_variance/cash` | 3.59 µs | 1.83 µs | 0.51 | 502.72 µs | 74.54 µs | 0.15 | 563.35 ms | 62.12 ms | 0.11 |
+| `min_variance/free` | 2.53 µs | 2.00 µs | 0.79 | 458.82 µs | 79.67 µs | 0.17 | 386.06 ms | 58.35 ms | 0.15 |
+| `min_variance/leverage` | 4.38 µs | 3.68 µs | 0.84 | 445.62 µs | 70.30 µs | 0.16 | 424.71 ms | 57.45 ms | 0.14 |
+| `min_variance/long_only` | 4.90 µs | 3.34 µs | 0.68 | 797.62 µs | 231.13 µs | 0.29 | 854.46 ms | 237.21 ms | 0.28 |
+| `min_variance/target_return` | 5.02 µs | 3.21 µs | 0.64 | 939.43 µs | 280.05 µs | 0.30 | 848.98 ms | 191.06 ms | 0.23 |
+| `max_return/box` | 54.74 µs | 42.31 µs | 0.77 | 11.35 ms | 2.97 ms | 0.26 | 16.23 s | 2.45 s | 0.15 |
+| `max_return/cash` | 47.03 µs | 32.46 µs | 0.69 | 13.51 ms | 2.80 ms | 0.21 | 10.85 s | 2.17 s | 0.20 |
+| `max_return/free` | 7.87 µs | 5.73 µs | 0.73 | 1.80 ms | 149.33 µs | 0.08 | 1.57 s | 72.96 ms | 0.05 |
+| `max_return/leverage` | 57.12 µs | 43.92 µs | 0.77 | 18.79 ms | 7.65 ms | 0.41 | 32.88 s | 13.22 s | 0.40 |
+| `max_return/long_only` | 38.42 µs | 29.98 µs | 0.78 | 9.79 ms | 2.66 ms | 0.27 | 12.10 s | 2.42 s | 0.20 |
+| `max_sharpe/box` | 6.60 µs | 4.16 µs | 0.63 | 1.06 ms | 447.33 µs | 0.42 | 1.04 s | 488.53 ms | 0.47 |
+| `max_sharpe/cash` | 6.48 µs | 3.88 µs | 0.60 | 872.50 µs | 266.55 µs | 0.31 | 904.69 ms | 209.91 ms | 0.23 |
+| `max_sharpe/free` | 5.89 µs | 2.98 µs | 0.51 | 545.38 µs | 109.87 µs | 0.20 | 351.75 ms | 60.94 ms | 0.17 |
+| `max_sharpe/leverage` | 5.68 µs | 4.18 µs | 0.74 | 447.83 µs | 78.22 µs | 0.17 | 378.47 ms | 59.69 ms | 0.16 |
+| `max_sharpe/long_only` | 6.79 µs | 3.77 µs | 0.56 | 913.00 µs | 289.73 µs | 0.32 | 795.83 ms | 183.63 ms | 0.23 |
+| `utility/box` | 6.07 µs | 3.77 µs | 0.62 | 1.61 ms | 430.65 µs | 0.27 | 2.44 s | 427.86 ms | 0.18 |
+| `utility/cash` | 4.97 µs | 2.88 µs | 0.58 | 1.25 ms | 413.19 µs | 0.33 | 1.66 s | 423.95 ms | 0.26 |
+| `utility/free` | 2.63 µs | 2.04 µs | 0.77 | 463.96 µs | 81.55 µs | 0.18 | 366.72 ms | 56.15 ms | 0.15 |
+| `utility/leverage` | 5.44 µs | 3.73 µs | 0.69 | 1.43 ms | 859.48 µs | 0.60 | 1.96 s | 1.37 s | 0.70 |
+| `utility/long_only` | 5.80 µs | 3.56 µs | 0.61 | 1.20 ms | 420.52 µs | 0.35 | 1.88 s | 401.00 ms | 0.21 |
+| `tracking_error/box` | 6.73 µs | 4.58 µs | 0.68 | 2.61 ms | 931.32 µs | 0.36 | 3.60 s | 1.16 s | 0.32 |
+| `tracking_error/cash` | 5.46 µs | 4.08 µs | 0.75 | 2.25 ms | 974.81 µs | 0.43 | 3.06 s | 1.14 s | 0.37 |
+| `tracking_error/free` | 4.81 µs | 3.91 µs | 0.81 | 1.62 ms | 644.82 µs | 0.40 | 1.97 s | 742.97 ms | 0.38 |
+| `tracking_error/leverage` | 4.71 µs | 4.06 µs | 0.86 | 2.03 ms | 1.07 ms | 0.53 | 2.77 s | 1.74 s | 0.63 |
+| `tracking_error/long_only` | 5.90 µs | 4.47 µs | 0.76 | 2.19 ms | 1.00 ms | 0.46 | 3.40 s | 1.17 s | 0.35 |
+| `max_diversification/box` | 7.93 µs | 5.11 µs | 0.64 | 977.13 µs | 435.46 µs | 0.45 | 973.72 ms | 391.46 ms | 0.40 |
+| `max_diversification/cash` | 6.07 µs | 4.17 µs | 0.69 | 832.81 µs | 263.07 µs | 0.32 | 792.86 ms | 183.43 ms | 0.23 |
+| `max_diversification/free` | 4.35 µs | 3.34 µs | 0.77 | 473.99 µs | 115.93 µs | 0.24 | 357.11 ms | 59.65 ms | 0.17 |
+| `max_diversification/leverage` | 5.76 µs | 4.91 µs | 0.85 | 475.37 µs | 80.52 µs | 0.17 | 372.33 ms | 49.80 ms | 0.13 |
+| `max_diversification/long_only` | 5.58 µs | 3.94 µs | 0.71 | 850.79 µs | 241.64 µs | 0.28 | 810.90 ms | 197.79 ms | 0.24 |
+| `risk_parity/box` | 165.66 µs | 132.87 µs | 0.80 | 72.71 ms | 28.86 ms | 0.40 | 86.81 s | 21.52 s | 0.25 |
+| `risk_parity/budget` | 5.55 µs | 6.19 µs | 1.12 | 1.09 ms | 630.90 µs | 0.58 | 1.60 s | 490.70 ms | 0.31 |
+| `risk_parity/target_return` | 99.21 µs | 91.32 µs | 0.92 | 36.24 ms | 15.69 ms | 0.43 | 68.25 s | 18.11 s | 0.27 |
+| `risk_parity/target_volatility` | 259.70 µs | 228.72 µs | 0.88 | 35.87 ms | 14.95 ms | 0.42 | 25.82 s | 6.98 s | 0.27 |
+
+Geometric mean of the ratio B / A by objective over its cases (the range in parentheses):
+
+| Objective | n = 10 | n = 100 | n = 1000 |
+| --- | ---: | ---: | ---: |
+| `min_variance` | 0.67 (0.51 to 0.84) | 0.21 (0.15 to 0.30) | 0.17 (0.11 to 0.28) |
+| `max_return` | 0.75 (0.69 to 0.78) | 0.22 (0.08 to 0.41) | 0.16 (0.05 to 0.40) |
+| `max_sharpe` | 0.60 (0.51 to 0.74) | 0.27 (0.17 to 0.42) | 0.23 (0.16 to 0.47) |
+| `utility` | 0.65 (0.58 to 0.77) | 0.32 (0.18 to 0.60) | 0.25 (0.15 to 0.70) |
+| `tracking_error` | 0.77 (0.68 to 0.86) | 0.43 (0.36 to 0.53) | 0.40 (0.32 to 0.63) |
+| `max_diversification` | 0.73 (0.64 to 0.85) | 0.28 (0.17 to 0.45) | 0.22 (0.13 to 0.40) |
+| `risk_parity` | 0.92 (0.80 to 1.12) | 0.45 (0.40 to 0.58) | 0.27 (0.25 to 0.31) |
+| all cases | 0.71 (0.51 to 1.12) | 0.29 (0.08 to 0.60) | 0.23 (0.05 to 0.70) |
+
+The slowest case of each objective, before and after:
+
+| Objective | n = 10 | n = 100 | n = 1000 |
+| --- | ---: | ---: | ---: |
+| `min_variance` | 6.15 µs to 3.69 µs (`box`) | 939 µs to 280 µs (`target_return`) | 1.03 s (`box`) to 237 ms (`long_only`) |
+| `max_return` | 57.1 µs to 43.9 µs (`leverage`) | 18.8 ms to 7.65 ms (`leverage`) | 32.9 s to 13.2 s (`leverage`) |
+| `max_sharpe` | 6.79 µs (`long_only`) to 4.18 µs (`leverage`) | 1.06 ms to 447 µs (`box`) | 1.04 s to 489 ms (`box`) |
+| `utility` | 6.07 µs to 3.77 µs (`box`) | 1.61 ms (`box`) to 859 µs (`leverage`) | 2.44 s (`box`) to 1.37 s (`leverage`) |
+| `tracking_error` | 6.73 µs to 4.58 µs (`box`) | 2.61 ms (`box`) to 1.07 ms (`leverage`) | 3.60 s (`box`) to 1.74 s (`leverage`) |
+| `max_diversification` | 7.93 µs to 5.11 µs (`box`) | 977 µs to 435 µs (`box`) | 974 ms to 391 ms (`box`) |
+| `risk_parity` | 260 µs to 229 µs (`target_volatility`) | 72.7 ms to 28.9 ms (`box`) | 86.8 s to 21.5 s (`box`) |
+
+What the table says:
+
+- The gain grows with n: all cases 0.71 at n = 10, 0.29 at n = 100, 0.23 at n = 1000. The levers are on the n³ kernels
+  and on the iteration of the active set, which are the time at n ≥ 100; at n = 10 what is left is call overhead and
+  allocation. The best ratios are the cases that were mostly the fixed cost of the base: `max_return/free` 0.05 at
+  n = 1000 (J0 cached along the path), `min_variance/cash` 0.11, `min_variance/{free, leverage}` 0.14 to 0.15.
+- The smallest gains are the cases whose time is not in the kernels the levers touched: `utility/leverage` and
+  `tracking_error/leverage` (0.70 and 0.63 at n = 1000: the gross exposure family, whose dense generated rows are the
+  cost, [profile 2](profile-2.md#hot-functions)), `max_return/leverage` (0.40), `max_sharpe/box` (0.47) and
+  `tracking_error` in general (0.32 to 0.63: the QR of the series, 0.365 s of its 0.98 s at n = 1000).
+- `risk_parity` ends at 0.25 to 0.31 at n = 1000 and 0.40 to 0.58 at n = 100; at n = 10 it is 0.80 to 0.92, the
+  allocator and `compensated_dot` of its small solves.
+- **One case is slower: `risk_parity/budget/10`, 5.55 to 6.19 µs in the table.** Three more pairs of 9 repetitions
+  gave 5.64, 5.47 and 5.41 µs before and 5.93, 5.90 and 5.88 after (1.05 to 1.09): a real loss of about 0.4 µs, the
+  one case of the 105 that the levers did not help. It has no QP and no compensated dot; it factors by Cholesky (L2:
+  the right-looking form with the `memcpy` start is 34 ns slower than the left-looking one at n = 10,
+  [L2](#l2-right-looking-cholesky-two-columns-at-a-time)) and runs the Spinu Newton steps. Not isolated further: 7% of
+  6 µs is under what a caller would see, and the same case is 0.58 at n = 100 and 0.31 at n = 1000.
+
+### What was left out, and why
+
+Everything below has its number in [profile 2](profile-2.md) or in a lever above; none is implemented.
+
+| Left out | Why |
+| --- | --- |
+| L9, a `Moments` cache in the Armijo halvings | At most 2.8% of the samples of `risk_parity` at n ≤ 100, under what the quick suite resolves (3 to 5% between two runs of one binary); not visible at n = 1000 |
+| L10, `-flto` on the core | 0.87 to 1.00 at n = 10 (about 0.93 geometric mean), nothing at n ≥ 100, a serial link of 25 s; it needs `-ffp-contract=off` on every target that includes inline core code (done for `portopt_capi`, below) and a guard. A small separate task for callers of many small problems |
+| ISA multiversioning (AVX2 and FMA chosen at run time) | 0.75 to 0.87 at n = 100 with no numerical risk (70 of 70 bit-identical to the generic build), but it needs a dispatch by hand (MinGW has no `ifunc`; MSVC another mechanism) and keeps the generic binary the shipped one; the native run below repeats the gain |
+| FMA-aware Dekker (the inline `std::fma` under `__FMA__`) | In a native build Dekker's product is 2.5 times slower than the inline `vfmsub132sd`; the shipped binaries are generic, where Dekker is 1.35 times faster than the `call fma` of `ucrtbase`. It needs the dispatch above |
+| Class-B kernels (reassociated reductions: four or eight accumulators) | They change the rounding; 2.8 to 6.4 times on a scratch dot product, about 0.5 ms of the 1.2 ms of an iteration of `max_return/leverage` at n = 1000 by arithmetic, not by experiment. They need the A/B of the weights inside the bands of `expect_user_kkt` and `expect_risk_parity_kkt`, which this plan did not loosen |
+| A warm start of the QP of `risk_parity` | It changes the path of the QP and `iterations`; the iterations are not wasted (one per active row), so it would have to build the active set at once; the ceiling is 43 to 60% of the slow `risk_parity` cases if the iterations were free |
+| A workspace for the descent of `risk_parity` | 25% of 0.22 ms at n = 10, 0.4% at n = 100, about 40 call sites; only for callers of many small `RISK_PARITY` problems |
+| The counters `qp_solves`, `descent_iterations`, `polish_steps` | They need a counter in `src/` ([Measuring](measuring.md#counters)); counted once with a debugger instead |
+| More than one repetition at n = 1000 | Five repetitions of the 35 cases took close to an hour before the levers and would take about 15 minutes now; the single solve is a size of effect, not an interval |
+| Isolated, pinned or fixed-frequency runs; other machines, Linux, macOS, Clang | Not available here; the numbers are of one desktop |
+| A comparison with another library | None is measured, so none is made |
+
+### The builds other than `gcc-bench`
+
+**`msvc-release`** (Visual Studio 18 2026, MSVC 19.51, `cmake --preset msvc-release`; the build takes 1 min 40 s): the
+test battery did not build at `1297db0` and did not at HEAD before the fix, for reasons older than plan 6: the `getenv`
+and `fopen` of the two measurement tests (C4996) and an `int64_t` range converted to `vector<double>` in
+`max_sharpe_test.cpp` (C4244), both errors under `/W4 /WX`; and, once it builds, five self-tests of the reference
+(`RiskParityReference.Kkt*` and `HessianByDifferencesMatchesTheObjective`) that need an extended `long double` and
+failed where `long double` is `double`, the same five at `1297db0`. Fixed in the test code only (`3570570`):
+`_CRT_SECURE_NO_WARNINGS` on `portopt_tests` for MSVC, a loop instead of the range constructor, and the
+`kLongDoubleIsExtended` skip that the sibling tests already use. Nothing in `src/` and nothing of the plan 6 tests
+failed on MSVC: the replaced `operator new` of `goldfarb_idnani_test.cpp` builds and
+`BasisCacheKeepsItsPairWhenAnAllocationFails` passes. Result: **`ctest --preset msvc-release`, 100% of 336 tests
+passed**, 16 of them skipped (the 11 that already skipped for the `long double` and the 5 above), 16 disabled (the
+measurement tests). The speed of the MSVC build was not measured beyond the samples of [profile 2](profile-2.md)
+(1.3 to 1.7 times slower than `gcc-bench` on the slow cases).
+
+**`native-release`.** The preset alone selects no compiler and sets no `-march`, so it is not native. It was configured as
+`cmake --preset native-release -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native`
+(`znver3`; `-mfma` and `-mavx2` enabled, `__FMA__` defined). `ctest` there: 338 tests passed (the 336 and the two
+benchmark self-tests), and its 70 solutions at n ≤ 100 are bit for bit identical to those of `gcc-bench`
+(`compare-solutions --require-identical`). The difference from the generic build, quick suite run twice interleaved
+(the shipped binaries and every official number are generic; this only records the gap):
+
+| Measure | native / generic (two runs) |
+| --- | ---: |
+| solves at n = 100 | 0.71 to 0.94: `max_return`, `max_sharpe`, `utility`, `max_diversification` and `risk_parity/budget` 0.76 to 0.81, `tracking_error` 0.70 to 0.75, `risk_parity/target_volatility` 0.89 to 0.91, `risk_parity/box` 0.86 to 0.94 |
+| solves at n = 10 | 0.90 to 1.02 (`risk_parity/budget` 1.01 and 1.02, `max_return/long_only` 0.92 and 1.00) |
+| `cholesky/100`, `qr/100`, `qp_iteration/100`, `empty_active_set/100` | 0.71 to 0.79, 0.73 to 0.90, 0.80 to 0.82, 0.86 to 0.94 |
+| `gauss_newton/100`, `compensated_dot/100`, `covariance_times/100` | 1.03 to 1.04, 0.94 to 1.03, 0.96 |
+
+That is [proposal 1 of profile 2](profile-2.md#proposals-for-the-author) again: AVX2 and FMA buy 6 to 30% at n = 100 and
+nothing at n = 10; `gauss_newton`, already register-blocked, and the compensated dot, which Dekker's product keeps
+off the hardware fma, do not gain.
+
+### The C interface and Python
+
+The cost of the layers above `po::solve` is in [Python and C layers against the solve](python-vs-arch.md): under 0.3 µs
+per cycle in the C layer; in Python 30 µs per `Spec`, `Data` and `solve` (17.6 µs of it in `solve()`), which is 640% of
+a 4.7 µs solve at n = 10, 16% of a 193 µs one at n = 100 and 0.02% of a 166 ms one at n = 1000.
+
+### Verification at the end of plan 6
+
+- `compare-solutions --require-identical`, `1297db0` against HEAD, both `gcc-bench`: **70 of 70 bit-identical at
+  n ≤ 100 and 35 of 35 at n = 1000**, which is every case of the suite (status, objective, weights, multipliers and
+  residual as hex-float), worst relative differences 0, iteration ratio 1.0000. Every lever of plan 6 is of risk 0.
+- The C interface against the C++ path, `portopt_profile --via capi` against `--via cpp`: 70 of 70 identical at n ≤ 100
+  in the generic build and in the native one, before and after `-ffp-contract=off` on `portopt_capi`, and the 18
+  `min_variance` cases of the three sizes in the native one.
+- `ctest --preset gcc-release`: 336 tests passed; `pytest`: 59 passed; `mypy --strict` of `python/src`,
+  `python/tests` and `python/benchmarks`: clean; `python tests/style/check_style.py .`: clean.

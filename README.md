@@ -109,8 +109,19 @@ cmake --build --preset gcc-release
 ctest --preset gcc-release
 ```
 
-`native-release` uses the default compiler and is what CI uses. The library is `libportopt.dll` (MinGW),
+`native-release` uses the default compiler and sets no `-march` (it is what CI uses; for a `-march=native` build see
+[docs/performance/measuring.md](docs/performance/measuring.md#the-native-build)). The library is `libportopt.dll` (MinGW),
 `Release/portopt.dll` (MSVC), `libportopt.so` or `libportopt.dylib`, under `build/<preset>/`.
+
+## Performance
+
+Measured on one desktop (AMD Ryzen 7 5700X, GCC 16.2, generic x86-64 build), the solve time against the same code before
+the optimizations of version 0.1, same session, results bit for bit identical: the geometric mean over the 35 benchmark
+cases is 0.71 at 10 assets, 0.29 at 100 and 0.23 at 1000. A 1000-asset `RISK_PARITY` with a box takes 21.5 s (86.8 s
+before), a `MIN_VARIANCE` with a box 0.19 s (1.03 s), a 100-asset `MAX_RETURN` with a leverage 7.7 ms (18.8 ms). The C
+interface adds under 0.3 µs to a call; the Python package adds about 30 µs per `Spec`, `Data` and `solve`, which matters
+only for many solves of about 10 assets. Method, tables and what was left out:
+[docs/performance](docs/performance/benchmarks.md). Compare only numbers from the same machine.
 
 ## Python package
 
@@ -129,6 +140,9 @@ Without `PORTOPT_LIB` it looks in `python/src/portopt/_lib`.
 - [docs/guide/math.md](docs/guide/math.md): notation, the QP of each objective, the leverage, the parametric path of
   `MAX_RETURN`, the homogenization of `MAX_SHARPE` and `MAX_DIVERSIFICATION`, `RISK_PARITY` and the multiplier convention
 - [docs/guide/validation.md](docs/guide/validation.md): how results are checked, the tolerances and the fuzz battery
+- [docs/performance/benchmarks.md](docs/performance/benchmarks.md), [measuring.md](docs/performance/measuring.md) and
+  [python-vs-arch.md](docs/performance/python-vs-arch.md): the benchmark results, how to measure and the cost of the C
+  and Python layers
 - [CONTRIBUTING.md](CONTRIBUTING.md) and [STYLEGUIDE.md](STYLEGUIDE.md)
 
 ## License
