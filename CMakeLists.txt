@@ -100,6 +100,15 @@ elseif(NOT WIN32 AND NOT APPLE)
     target_link_options(portopt PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
+# The header-only C++ wrapper (cpp/include/portopt/portopt.hpp) over the shared library.
+add_library(portopt_cpp INTERFACE)
+target_include_directories(portopt_cpp INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/cpp/include>)
+target_compile_features(portopt_cpp INTERFACE cxx_std_23)
+target_link_libraries(portopt_cpp INTERFACE portopt)
+set_target_properties(portopt_cpp PROPERTIES EXPORT_NAME cpp)
+add_library(PortOpt::portopt ALIAS portopt)
+add_library(PortOpt::cpp ALIAS portopt_cpp)
+
 if(PO_BUILD_TESTS)
     enable_testing()
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
@@ -174,6 +183,7 @@ if(PO_BUILD_TESTS)
     add_test(NAME abi_contract_unit
         COMMAND Python3::Interpreter -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/abi)
 
+    add_subdirectory(cpp/tests)
 endif()
 
 if(PO_BUILD_BENCHMARKS)
