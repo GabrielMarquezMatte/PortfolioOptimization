@@ -133,6 +133,8 @@ library whose ABI version differs).
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.
 - Python: `mu` and `cov` of `Data` default to `None`, so the tracking-error data is
   `Data(returns=r, benchmark=b)` (before: `Data(None, None, returns=r, benchmark=b)`, which still works).
+- Python, breaking: an allocation failure in the library (`PO_OUT_OF_MEMORY`) raises `MemoryError` (before:
+  `PortOptError` with `status == 4`).
 
 ### Known limitations
 

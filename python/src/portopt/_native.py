@@ -13,6 +13,7 @@ PO_ABI_VERSION = 0
 PO_OK = 0
 PO_INVALID_ARGUMENT = 1
 PO_UNSUPPORTED = 3
+PO_OUT_OF_MEMORY = 4
 PO_INTERNAL_ERROR = 5
 LIBRARY_ENV = "PORTOPT_LIB"
 LIBRARY_DIRECTORY = Path(__file__).resolve().parent / "_lib"
@@ -144,6 +145,8 @@ def check(status: int) -> None:
         raise ValueError(last_error())
     if status == PO_UNSUPPORTED:
         raise NotImplementedError(last_error())
+    if status == PO_OUT_OF_MEMORY:
+        raise MemoryError(last_error())
     raise PortOptError(status, last_error())
 
 

@@ -26,3 +26,9 @@ def test_missing_symbol_raises_import_error_naming_it() -> None:
     with pytest.raises(ImportError, match=missing) as error:
         _native.declare_prototypes(stale, Path("stale.dll"))
     assert "stale.dll" in str(error.value)
+
+
+def test_out_of_memory_is_memory_error() -> None:
+    with pytest.raises(MemoryError):
+        _native.check(_native.PO_OUT_OF_MEMORY)
+
