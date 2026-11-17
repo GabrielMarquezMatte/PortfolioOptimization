@@ -87,6 +87,14 @@ jobs:
       - name: Test (C++ and style)
         run: ctest --preset ${{ matrix.preset }}
 
+      # The benchmarks are compiled and their two self-tests run, never timed: shared runners give no stable timings.
+      - name: Build benchmarks (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B build/bench -DCMAKE_BUILD_TYPE=Release -DPO_BUILD_BENCHMARKS=ON -DPO_BUILD_TESTS=OFF
+          cmake --build build/bench --parallel
+          ctest --test-dir build/bench --output-on-failure
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
@@ -100,6 +108,12 @@ jobs:
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
         run: uv run --project python --python 3.14 pytest python/tests -q
+
+      - name: Python tests (3.11, the requires-python floor)
+        shell: bash
+        env:
+          PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
+        run: uv run --project python --python 3.11 pytest python/tests -q
 
       - name: mypy
         shell: bash
