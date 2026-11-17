@@ -1,0 +1,185 @@
+name: Release
+
+# A v* tag publishes the native libraries to a GitHub Release and the wheels to PyPI; a tag with a '-' (v0.1.0-rc.1)
+# is a prerelease, and its wheels go to TestPyPI instead. A manual run is a dry run unless dry_run is turned off: it
+# builds and tests everything and skips the two steps that publish.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build everything but publish nothing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  # A tag whose version is not the one of CMakeLists.txt, python/pyproject.toml and a dated CHANGELOG section stops
+  # the release before anything is built.
+  version:
+    name: Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Check the versions
+        run: |
+          tag=""
+          if [ "${{ github.ref_type }}" = tag ]; then tag="${{ github.ref_name }}"; fi
+          uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py check $tag
+
+  wheels:
+    name: Wheels
+    needs: version
+    uses: ./.github/workflows/wheels.yml
+    with:
+      # A manual run builds the version in the repository: the ref is a branch there, not a tag.
+      version: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+
+  # The Windows DLL is built by MinGW; MSVC users link against a .lib made from the export list of the ABI contract. The
+  # .lib and the MinGW .dll.a both record libportopt.dll, so one file name serves both toolchains. The .lib is then
+  # used the way an MSVC user would: cl compiles the C++ consumer of cpp/tests/package against it and runs it.
+  windows-lib:
+    name: Windows import library
+    needs: wheels
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the Windows library
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win-x64
+          path: native
+
+      - name: Set up the MSVC tools
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build the import library
+        shell: cmd
+        working-directory: native
+        run: lib /def:portopt-native-win-x64.def /name:libportopt.dll /machine:x64 /out:portopt-native-win-x64.lib
+
+      - name: Link and run an MSVC program against it
+        shell: cmd
+        run: |
+          mkdir msvc-consumer
+          copy native\portopt-native-win-x64.dll msvc-consumer\libportopt.dll
+          cl /nologo /std:c++latest /EHsc /W4 /WX /I include /I cpp\include cpp\tests\package\main.cpp native\portopt-native-win-x64.lib /Fe:msvc-consumer\main.exe /Fo:msvc-consumer\
+          msvc-consumer\main.exe
+
+      - name: Upload the import library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-win-x64-lib
+          path: native/portopt-native-win-x64.lib
+          if-no-files-found: error
+
+  # The libabigail dump of the Linux x64 library, the baseline of an ABI comparison once the ABI is frozen at 1.0.
+  abi-dump:
+    name: ABI dump
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install the toolchain and libabigail
+        run: bash scripts/install_abi_tools.sh
+
+      - name: Dump the ABI
+        run: bash scripts/abi_dump.sh portopt-abi-linux-x64.xml
+
+      - name: Upload the dump
+        uses: actions/upload-artifact@v4
+        with:
+          name: abi-linux-x64
+          path: portopt-abi-linux-x64.xml
+          if-no-files-found: error
+
+  publish-github:
+    name: GitHub Release
+    needs: [ wheels, windows-lib, abi-dump ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: assets
+          merge-multiple: true
+
+      - name: Download the ABI dump
+        uses: actions/download-artifact@v4
+        with:
+          name: abi-linux-x64
+          path: assets
+
+      # The .def only feeds the .lib; it is not a release asset.
+      - name: Drop the export list
+        run: |
+          rm assets/*.def
+          ls -l assets
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: assets
+          format: spdx-json
+          output-file: portopt.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Publish the GitHub Release
+        if: github.event_name == 'push' || !inputs.dry_run
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            assets/*.dll
+            assets/*.dll.a
+            assets/*.lib
+            assets/*.so
+            assets/*.dylib
+            assets/portopt-abi-linux-x64.xml
+            portopt.spdx.json
+
+  # Trusted publishing: the PyPI and TestPyPI projects name this workflow and these two environments as their
+  # publisher, so no token is stored. A prerelease goes to TestPyPI, a release to PyPI.
+  publish-pypi:
+    name: PyPI
+    needs: publish-github
+    runs-on: ubuntu-latest
+    environment: ${{ contains(github.ref_name, '-') && 'testpypi' || 'pypi' }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Publish to TestPyPI
+        if: (github.event_name == 'push' || !inputs.dry_run) && contains(github.ref_name, '-')
+        run: uv publish --publish-url https://test.pypi.org/legacy/ --trusted-publishing always dist/*
+
+      - name: Publish to PyPI
+        if: (github.event_name == 'push' || !inputs.dry_run) && !contains(github.ref_name, '-')
+        run: uv publish --trusted-publishing always dist/*
