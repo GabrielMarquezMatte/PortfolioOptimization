@@ -19,9 +19,9 @@ Three kinds of measurement, each answering a different question:
   `ignore` on each breakpoint, one solve per case). The library has no counter of `qp::solve` calls (`qp_solves` is
   unavailable, [Measuring](measuring.md#counters)).
 - **Seconds per call**: the `BM_Kernel` medians of [Plan 6 baseline](baseline.md#kernels) (`gcc-bench`). Calls ×
-  seconds per call gives the `gcc-bench` time of a kernel inside a case. The kernels run on the covariance of the same
-  n (`qr` on a 2n × n matrix), so the product is exact for `empty_active_set` and `cholesky` and an estimate for
-  `gauss_newton`, whose Jacobian changes from call to call but not its size.
+  seconds per call gives the `gcc-bench` time of a kernel inside a case. It is an estimate (isolated kernel median ×
+  call count): the kernels run on the covariance of the same n (`qr` on a 2n × n matrix), but in a loop with warm
+  caches, and the Jacobian of `gauss_newton` changes from call to call (not its size).
 
 ```
 "C:/Program Files/AMD/AMDuProf/bin/AMDuProfCLI.exe" collect --config tbp --call-graph-mode fpo --call-graph-type user -o build/uprof/<name> build/msvc-profile/Release/portopt_profile.exe --filter <case> --max-n <n> --repeat <k>
@@ -64,10 +64,12 @@ Share of the samples, self time (`deep` where marked: the function and everythin
 | `append_active` (Givens rotations) | - | 8.4% | 6.8% | 11.5% | 5.0% | 6.0% | 7.6% | - |
 | `compensated_dot` (deep, with `fma`) | - | - | - | - | - | 10.3% | 6.3% | 12.1% |
 | `reflect` (Householder) | - | 0.6% | - | - | 20.8% | 1.3% | 2.5% | 1.1% |
-| `append_generated` (deep) | - | - | - | 3.3% | - | - | - | - |
+| `discard_inactive_generated` (deep) | - | - | - | 3.3% | - | - | - | - |
 | operator new (`_Allocate`, deep) | - | - | - | 0.2% | - | - | - | 15.7% |
 
-`-`: not among the 40 hottest functions of the session.
+`-`: not among the 40 hottest functions of the session. `discard_inactive_generated` rebuilds the list of generated
+rows through `append_generated` (98% of the samples of the latter); 72% of it is the copy of the rows
+(`vector::insert`).
 
 By source line (`--detail`): 98% of `solve_lower_transposed` is the strided `sum -= l[k * n + i] * b[k]`
 (`cholesky.cpp:72`); 99% of `gauss_newton` the update `curvature[j * n + k] += scaled * jacobian[i * n + k]`
@@ -91,7 +93,11 @@ one `qp::solve` in `minimum_volatility` for `max_return` and `target_volatility`
 | `risk_parity/box/1000` | 62 | 71 | 74 | 7 | 208 |
 | `risk_parity/target_return/1000` | 67 | 76 | 79 | 7 | 223 |
 | `max_return/leverage/1000` | 56 | 0 | 0 | 2 | 0 |
-| `tracking_error/box/1000` | 1 | 0 | 0 | 1 | 0 |
+| `max_return/free/1000` | 4 | 0 | 0 | 1 | 0 |
+| `max_return/long_only/1000`, `box`, `cash` | 11 | 0 | 0 (`cash`: 1) | 2 | 0 |
+| `risk_parity/budget/1000` | 0 | 0 | 14 | 0 | 0 |
+| `tracking_error/box/1000`, `leverage` | 1 | 0 | 0 | 1 | 0 |
+| `max_sharpe/box`, `max_diversification/box`, `utility/leverage`, `min_variance/target_return` (1000) | 1 | 0 | 0 | 0 | 0 |
 | `risk_parity/target_volatility/100` | 31 | 48 | 42 | 7 | 158 |
 | `risk_parity/box/100` | 44 | 53 | 55 | 7 | 154 |
 | `risk_parity/target_return/100` | 25 | 34 | 36 | 7 | 97 |
@@ -156,34 +162,62 @@ TE box session, one call), while the rest of the GCC code is faster.
 
 ## Levers for Tasks 2 to 4
 
-Ordered by the gain on the suite, which the n = 1000 cases dominate. The expected factors are the exploratory
-experiments of the research (L1 8.4 times, L2 2.0, L3 4.0, Dekker 1.9 times): **hypotheses to measure, not results**.
-Each lever is measured A/B when it is made, and the profile is taken again after the first ones (the bottleneck
-moves).
+Ordered by the estimated seconds each one saves on one pass of the n = 1000 cases (287.5 s of timed solves, which
+dominate the suite). The factors are the exploratory experiments of the research (L1 8.4 times, L2 2.0, L3 4.0, Dekker
+1.9 times) and the halving of `gauss_newton` by symmetry: **hypotheses to measure, not results**. Each lever is
+measured A/B when it is made, and the profile is taken again after the first ones (the bottleneck moves).
 
-1. **L1, base of the GI by rows** (Task 2). Removes most of H1: 26 to 62% of the slow RISK_PARITY and MAX_RETURN
-   cases at n = 1000, 24 to 54% at n = 100, and 90% of a one-iteration QP. The largest lever by a wide margin.
-2. **L5, unit-row fast path for bounds** (Task 3). `slack` over bound rows plus the projection of a unit row in
-   `compute_directions`: in RP box 1000 `slack` is 20.9% and `compute_directions` 18.3%, part of which projects unit
-   rows; in RP target return 1000, 8.4% and 14.0%; in the TE box 1000 solve, 24% and 19%. Every case with bounds
-   (`long_only`, `box`) gains.
-3. **L4, `gauss_newton` by symmetry** (Task 3). Half of 16 to 33% of RISK_PARITY at n = 1000 and of 11 to 21% at
-   n = 100.
-4. **L2, right-looking Cholesky** (Task 2). Half of 9 to 17% of RISK_PARITY at n = 1000, 5 to 9% at n = 100.
-5. **L3, Householder reflection by rows** (Task 2). About three quarters of 30% of each TRACKING_ERROR solve at
-   n = 1000 (1.20 s of 4.06 s); nothing measurable elsewhere.
-6. **L7, J₀ cached along the MAX_RETURN path** (Task 3). The base is 62% of MR leverage 1000 over 56 solves with the
-   same factor; after L1, L7 removes what L1 leaves of the 55 repeated bases (at the research's factor, about 2.3 s
-   of 32.3 s, 7%).
-7. **L6a, Dekker TwoProduct in the compensated dot** (Task 3). About half of `covariance_times`: 4 to 9% of RISK_PARITY
-   at n = 100 and 6% of the samples at n = 10; under 1.2% at n = 1000.
-8. **L8, allocation hygiene** (Task 4). Only at n = 10, where operator new is 15.7% of the samples; the rebuild of the
-   generated rows (3.3% of MR leverage 1000) is a copy, not an allocation, and goes with it. Not visible at n = 100.
+The estimate is `time × savable fraction × (1 − 1 / factor)`, with the time from one of two bases:
+- **(a)** gcc calls × kernel time ([Calls per solve](#calls-per-solve)), for the base, `gauss_newton`, `cholesky`,
+  `qr` and `covariance_times`. Calls were counted on every case where they are not obvious: 10 more n = 1000 cases
+  (`max_return` `free`, `long_only`, `box`, `cash`: 4, 11, 11 and 11 `qp::solve` calls; `risk_parity/budget`: 14
+  `cholesky`, no `qp::solve` and no `gauss_newton`; one `qp::solve` in `max_sharpe/box`, `max_diversification/box`,
+  `utility/leverage`, `min_variance/target_return` and `tracking_error/leverage`). The other QP objectives are taken as
+  one `qp::solve` per case, like the five counted.
+- **(b)** MSVC seconds of the function × (gcc solve time / MSVC solve time) of the case, for the GI iteration
+  (`slack`, `compute_directions`), which has no kernel. **Rough.**
+
+| Lever | Basis | Time it acts on (n = 1000) | Savable, factor | Saved (s) | n ≤ 100 |
+| --- | --- | --- | --- | ---: | --- |
+| L1 | (a) | base: 277 `qp::solve` × 0.356 s = 98.6 s (RP 158, MR 93, 26 QP cases × 1) | all, 8.4 | **86.9** | base 24 to 54% of the slow cases at n = 100 |
+| L5 | (b), rough | RP box: `slack` 17.9 s + `compute_directions` 15.6 s; RP target return: 5.8 + 9.7 s; TE box: 0.96 + 0.74 s | `slack` 1, `compute_directions` 0.5 (its dot half), factor ≈ n | **37.6** profiled; **+24.4** extrapolated, very rough | `slack` 9.2% of RP ≤ 100 |
+| L4 | (a) | 193 `gauss_newton` × 0.191 s = 36.9 s (RP only) | all, 2 | **18.4** | `gauss_newton` 11 to 21% of RP at n = 100 |
+| L2 | (a) | 208 `cholesky` × 0.107 s = 22.3 s (RP, budget included) | all, 2.0 | **11.1** | Cholesky 5 to 9% of RP at n = 100 |
+| L3 | (a) | 5 `qr` (2000 × 1000) × 1.20 s = 6.0 s (TE only) | all, 4.0 | **4.5** | `reflect` 2.5% of all ≤ 100 |
+| L7 | (a), after L1, conditional | 88 repeated bases of the MR path × 0.356 s / 8.4 = 3.7 s | all, ∞ (not recomputed) | **3.7** (31.3 before L1) | MR leverage 100: 21 repeated bases |
+| L6a | (a) | 587 `covariance_times` × 3.94 ms = 2.3 s (RP only) | all, 1.9 | **1.1** | `covariance_times` 8 to 18% of RP at n = 100; 12% of n = 10 |
+| L8 | (b), rough | rebuild of the generated rows of MR leverage: 3.3% × 32.3 s × 0.85 = 0.9 s | at most all | **≤ 0.9** | operator new 15.7% of the n = 10 samples (0.84 ms of solves per pass) |
+
+Notes on the rough entries:
+- L5 profiled: `slack` over a box or long-only problem reads bound rows almost only, so all of it is taken as savable;
+  `compute_directions` computes n dots and n − q axpys over the basis, and only the dots shrink for a unit row, so
+  half of it is taken (between half and all, depending on q). The extrapolation applies the savable share of the GI
+  iteration of TE box (64% of `slack` + `compute_directions` + `append_active` + the rest of
+  `most_violated_inequality`) to the GI-iteration time of the bounded cases that were not profiled: `max_return`
+  `long_only`, `box`, `cash` (case time − base: 25.5 s, so 16.3 s) and the `long_only`, `box`, `cash` cases of the
+  five QP objectives (case time − base − `qr`: 12.6 s, so 8.1 s). Even without the extrapolation L5 ranks second.
+- L7 assumes that every `qp::solve` of the MAX_RETURN path has the same Hessian factor, so the same J₀. Checked by
+  reading the code, not numerically: `make_path` builds the one `Path` of a solve (`max_return.cpp:290`) with the
+  factor of `mean_variance_problem`, and `solve_with`, `hold_face` and `release_face`, the only writers of the path's
+  `qp::Problem`, change its linear term and its rows, never `hessian` or `hessian_factor`; in the MR leverage 1000
+  samples 99.1% of the `qp::solve` time comes from `solve_with` (the rest is the harness). The gain is conditional on
+  that, and on what L1 leaves.
+- L8: the n = 10 gain is a share of a fraction of a millisecond per pass, nothing in seconds; it matters only for
+  callers that solve many small problems.
+
+Order: **L1, L5, L4, L2, L3, L7, L6a, L8**. L5 is the least certain of the large ones (basis (b)); L4 comes first for
+`risk_parity/target_volatility`, which has no active bound rows (no `slack` in its samples).
 
 Dropped:
 - **L9, cache of `Moments` in the Armijo halvings.** `value_change` is 4.5% of the RP ≤ 100 samples and the cache
   would save at most the recomputation of one of its two `moments_of`, about 2%: below what the quick A/B resolves.
   Not visible at n = 1000.
+
+Deferred, not measured here (Task 4 decides with its own profile):
+- **L10, `-flto` on the core.** Needs `-ffp-contract=off` to hold at link time, not yet verified; the profile cannot
+  price it (cross-TU calls are not separable in the samples).
+- **L6b, ISA dispatch (`target("avx2,fma")`).** Hardware FMA in the compensated dot after L6a; it acts on the same
+  `covariance_times` time as L6a (2.3 s at n = 1000, 8 to 18% of RP at n = 100) and needs a manual dispatch on MinGW.
 
 Not a lever of Tasks 2 to 4 but shown by the profile: after L1 and L5, the rest of the GI iteration (H5,
 `compute_directions` on general rows and the Givens rotations of `append_active`: 39% of MR leverage 1000) is the next
