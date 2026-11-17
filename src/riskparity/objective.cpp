@@ -31,9 +31,62 @@ double dot(std::span<const double> a, std::span<const double> b)
 
 } // namespace
 
+namespace
+{
+
+// 2^27 + 1: Veltkamp's split of a double into two halves of 26 bits.
+constexpr double kSplitter = 134217729.0;
+// Within these magnitudes (or at zero) the split cannot overflow and the error of a product, whose last bit
+// is ulp(a) ulp(b), is not below the smallest subnormal: Dekker's product is then exact.
+constexpr double kDekkerSmallest = 0x1p-485;
+constexpr double kDekkerLargest = 0x1p500;
+
+bool in_dekker_range(double value)
+{
+    double magnitude = std::fabs(value);
+    return value == 0.0 || (magnitude >= kDekkerSmallest && magnitude <= kDekkerLargest);
+}
+
+struct Halves
+{
+    double high;
+    double low;
+};
+
+Halves split(double value)
+{
+    double scaled = kSplitter * value;
+    double high = scaled - (scaled - value);
+    return Halves{high, value - high};
+}
+
+// Dekker (1971): a b - product as the sum of the four products of the halves, each exact, added from the
+// largest; every partial sum is exact, and an error of zero is +0.
+double dekker_error(double a, double b, double product)
+{
+    Halves left = split(a);
+    Halves right = split(b);
+    double error = left.high * right.high - product;
+    error += left.high * right.low;
+    error += left.low * right.high;
+    error += left.low * right.low;
+    return error;
+}
+
+} // namespace
+
+double two_product_error(double a, double b, double product)
+{
+    if (!in_dekker_range(a) || !in_dekker_range(b))
+    {
+        return std::fma(a, b, -product);
+    }
+    return dekker_error(a, b, product);
+}
+
 // Dot2 of Ogita, Rump and Oishi (2005): each product and each partial sum is split exactly into its rounded
-// value and its error (TwoProduct by fma, TwoSum), and the errors are added back once, so the result is as
-// accurate as if summed in twice the working precision and then rounded. The splits are exact only when every
+// value and its error (TwoProduct, TwoSum), and the errors are added back once, so the result is as accurate
+// as if summed in twice the working precision and then rounded. The splits are exact only when every
 // operation is rounded as written: no contraction into fma and no reassociation.
 double compensated_dot(std::span<const double> a, std::span<const double> b)
 {
@@ -42,7 +95,7 @@ double compensated_dot(std::span<const double> a, std::span<const double> b)
     for (std::size_t i = 0; i < a.size(); ++i)
     {
         double product = a[i] * b[i];
-        double product_error = std::fma(a[i], b[i], -product);
+        double product_error = two_product_error(a[i], b[i], product);
         double total = sum + product;
         double carried = total - sum;
         double sum_error = (sum - (total - carried)) + (product - carried);

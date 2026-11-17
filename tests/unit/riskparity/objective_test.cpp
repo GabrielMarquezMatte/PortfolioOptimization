@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <span>
 #include <vector>
 
@@ -261,6 +262,125 @@ TEST(GaussNewton, SymmetricIsBitIdenticalOnEdgeEntries)
         jacobian[n * n / 2] = 0.75 * kLargest;
         reference = reference_gauss_newton(jacobian, n);
         EXPECT_TRUE(same_bits(po::riskparity::gauss_newton(jacobian, n), reference));
+    }
+}
+
+// The compensated dot product as it was computed before Dekker's product: TwoProduct by std::fma.
+double reference_compensated_dot(std::span<const double> a, std::span<const double> b)
+{
+    double sum = 0.0;
+    double correction = 0.0;
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        double product = a[i] * b[i];
+        double product_error = std::fma(a[i], b[i], -product);
+        double total = sum + product;
+        double carried = total - sum;
+        double sum_error = (sum - (total - carried)) + (product - carried);
+        sum = total;
+        correction += sum_error + product_error;
+    }
+    return sum + correction;
+}
+
+bool same_bits(double a, double b)
+{
+    return std::memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+void expect_error_matches_fma(double a, double b)
+{
+    double product = a * b;
+    double error = po::riskparity::two_product_error(a, b, product);
+    double reference = std::fma(a, b, -product);
+    EXPECT_TRUE(same_bits(error, reference))
+        << std::hexfloat << a << " * " << b << ": " << error << " against " << reference;
+}
+
+// sign (1 + u) 2^e for u uniform in [0, 1) and e uniform in [low, high]; below 2^-1022 a subnormal.
+double random_double(std::mt19937_64& engine, int low, int high)
+{
+    std::uniform_int_distribution<int> exponent(low, high);
+    double sign = (engine() & 1U) == 0U ? 1.0 : -1.0;
+    return sign * std::ldexp(1.0 + po::testing::uniform_open(engine), exponent(engine));
+}
+
+// Each side of the range of Dekker's product: its ends 2^-485 and 2^500, the doubles next to them, products
+// whose error reaches the smallest subnormal, splits that overflow (above 2^996), subnormals, signed zeros,
+// infinities; then 2000 random pairs over the exponents of the range's ends and 2000 over every exponent.
+TEST(CompensatedDot, DekkerMatchesFmaOnEdgeCases)
+{
+    constexpr double kLargest = std::numeric_limits<double>::max();
+    constexpr double kInfinity = std::numeric_limits<double>::infinity();
+    constexpr double kSubnormal = std::numeric_limits<double>::denorm_min();
+    std::vector<double> edges = {0.0,
+                                 -0.0,
+                                 1.0,
+                                 -1.0,
+                                 0x1p-485,
+                                 0x1.fffffffffffffp-486,
+                                 0x1.0000000000001p-485,
+                                 0x1.fffffffffffffp-485,
+                                 0x1p500,
+                                 0x1.fffffffffffffp499,
+                                 0x1.0000000000001p500,
+                                 0x1.fffffffffffffp500,
+                                 0x1p996,
+                                 0x1p997,
+                                 0x1.8p1000,
+                                 kLargest,
+                                 0x1p-1022,
+                                 0x1p-1000,
+                                 kSubnormal,
+                                 3.0 * kSubnormal,
+                                 0x1.8p-1060,
+                                 kInfinity,
+                                 0x1.5555555555555p0,
+                                 0x1.aaaaaaaaaaaabp-300,
+                                 0x1.fffffffffffffp200,
+                                 134217729.0};
+    for (double a : edges)
+    {
+        for (double b : edges)
+        {
+            expect_error_matches_fma(a, b);
+            expect_error_matches_fma(-a, b);
+        }
+    }
+    std::mt19937_64 engine(2026);
+    for (int k = 0; k < 2000; ++k)
+    {
+        expect_error_matches_fma(random_double(engine, -490, -480), random_double(engine, -490, -480));
+        expect_error_matches_fma(random_double(engine, 495, 505), random_double(engine, -10, 10));
+        expect_error_matches_fma(random_double(engine, -1074, 1023), random_double(engine, -1074, 1023));
+    }
+}
+
+TEST(CompensatedDot, IsBitIdenticalToTheFmaDot)
+{
+    std::mt19937_64 engine(7);
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        for (double condition : {1e2, 1e8})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", condition = " << condition);
+            std::vector<double> covariance = random_covariance(n, n + 9, condition);
+            std::vector<double> weights = random_vector(n, n + 10, -1.0, 1.0);
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                std::span<const double> row = std::span<const double>(covariance).subspan(i * n, n);
+                EXPECT_TRUE(same_bits(po::riskparity::compensated_dot(row, weights),
+                                      reference_compensated_dot(row, weights)));
+            }
+            std::vector<double> wide(n);
+            for (double& entry : wide)
+            {
+                entry = random_double(engine, -600, 600);
+            }
+            wide[0] = -0.0;
+            EXPECT_TRUE(same_bits(po::riskparity::compensated_dot(wide, weights),
+                                  reference_compensated_dot(wide, weights)));
+        }
     }
 }
 

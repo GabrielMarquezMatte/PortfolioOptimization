@@ -9,6 +9,10 @@
 namespace po::riskparity
 {
 
+// a b - product for product = fl(a b), exactly: the value of std::fma(a, b, -product), by Dekker's product
+// where it is exact (a and b of magnitude in [2^-485, 2^500], or zero) and by std::fma elsewhere.
+double two_product_error(double a, double b, double product);
+
 // a'b accurate to its rounding even when its terms cancel.
 double compensated_dot(std::span<const double> a, std::span<const double> b);
 

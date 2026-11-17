@@ -543,9 +543,12 @@ would have measured truncation, not rounding.
 
 **`Sigma w` by a compensated product.** Each entry of `p = Sigma w` (and of `Sigma s`) is the Dot2 of Ogita, Rump
 and Oishi (2005, "Accurate sum and dot product", SIAM J. Sci. Comput. 26(6)): every product and partial sum is
-split exactly into its rounded value and its error (TwoProduct by `std::fma`, TwoSum), and the errors are added
+split exactly into its rounded value and its error (TwoProduct, TwoSum), and the errors are added
 back once, so the result is as accurate as a sum in twice the working precision, rounded once. Plain `double`,
 portable to every compiler; the accuracy does not come from an extended type (`long double` is `double` on MSVC).
+TwoProduct is Dekker's product (Veltkamp's split and four exact products) where it is exact, both factors of
+magnitude in `[2^-485, 2^500]` or zero, and `std::fma(a, b, -fl(a b))` elsewhere: the two give the same bits,
+and the first needs no call into `libm` in a build without FMA instructions.
 The entries of `Sigma w` cancel by up to `cond(Sigma)`, and an error of `eps cond(Sigma)` in `p` reaches
 `grad f` at the same relative size: summed plainly in `double`, converged descents at `cond(Sigma) = 1e6` and
 `1e8` (LongOnly, uneven budgets, `n = 10`) failed the stationarity of `expect_risk_parity_kkt` by `1.4e-8` and

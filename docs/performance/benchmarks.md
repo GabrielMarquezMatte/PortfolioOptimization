@@ -357,3 +357,77 @@ under the 3.7 s of the profile's estimate (88 reused bases × 45 ms): each point
 single solves are not repeated. All 70 cases at n ≤ 100 and the 15 `max_return` cases of the three sizes are bit for
 bit identical. In the assembly (`goldfarb_idnani.cpp.obj`) the check is one `call memcmp` and the copy a `memcpy`;
 both overloads of `qp::solve` call the same out-of-line `solve_factored`.
+
+### L6a: Dekker's product in the compensated dot
+
+`compensated_dot` took each product's error from `std::fma(a, b, -p)`, which a generic x86-64 build compiles into a
+call of the `fma` of `ucrtbase.dll` per term. `two_product_error` now computes it by Dekker's product (Dekker 1971):
+Veltkamp's split of each factor into two halves of 26 bits (`c = (2^27 + 1) a`, `a_hi = c - (c - a)`,
+`a_lo = a - a_hi`) and `(((a_hi b_hi - p) + a_hi b_lo) + a_lo b_hi) + a_lo b_lo`, every product and every partial sum
+exact. It is exact, so it equals what `std::fma` returns, the exact error, when the split cannot overflow and the error
+is not below the smallest subnormal (its last bit is ulp(a) ulp(b)): both factors of magnitude in [2^-485, 2^500], or
+zero (an error of zero is +0 both ways, since no partial sum is -0). Outside that range (subnormals, |x| < 2^-485,
+|x| > 2^500, inf, NaN) it calls `std::fma` as before; the check is per term. A scratch probe of the raw Dekker
+product against `std::fma` over random exponents found its first differences at an exponent sum of -998 and at
+|a| ≥ 2^997 (where the split overflows), outside the range used. `-ffp-contract=off` keeps every operation rounded as
+written.
+
+`CompensatedDot.DekkerMatchesFmaOnEdgeCases` compares `two_product_error(a, b, a b)` with `std::fma(a, b, -(a b))`
+by `memcmp`: every pair (both signs) of 26 edge values (±0, the ends of the range and the doubles next to them, 2^996,
+2^997, max, 2^-1022, 2^-1000, subnormals, inf, 2^27 + 1 and a few mantissas), then 2000 random pairs near each end of
+the range and 2000 over every exponent. Using Dekker's product at every finite magnitude makes it fail (815
+mismatches). `CompensatedDot.IsBitIdenticalToTheFmaDot` compares `compensated_dot` with the old loop, kept verbatim, on
+covariance rows (n and condition as above) and on vectors of magnitudes 2^-600 to 2^600.
+
+Generic build (`gcc-bench`), three interleaved A/B pairs, 5 repetitions:
+
+| Measure | A (`std::fma`) | B (Dekker) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/compensated_dot/10` | 0.042 and 0.043 µs | 0.031 and 0.032 µs | 0.74 |
+| `BM_Kernel/compensated_dot/100` | 0.403 to 0.443 µs | 0.302 to 0.339 µs | 0.75 |
+| `BM_Kernel/compensated_dot/1000` | 3.92 to 4.41 µs | 2.91 to 3.59 µs | 0.74 to 0.81 |
+| `BM_Kernel/covariance_times/10` | 0.439 and 0.445 µs | 0.337 and 0.339 µs | 0.77 |
+| `BM_Kernel/covariance_times/100` | 40.2 to 41.3 µs | 29.6 to 32.9 µs | 0.74 to 0.80 |
+| `BM_Kernel/covariance_times/1000` | 3.92 to 4.39 ms | 2.91 to 2.99 ms | 0.68 to 0.76 |
+
+3.9 ns a term with the call against 2.9 ns, under the exploratory 1.9 times of the research (2.20 ns), whose Dekker
+loop had no range check. A version that checked both vectors once before a branch-free Dekker loop was slower than
+the per-term check (3.61 µs at n = 1000). On the solves, 9 repetitions, two interleaved pairs:
+
+| Case | B / A | Case | B / A |
+| --- | ---: | --- | ---: |
+| `risk_parity/target_volatility/10` | 0.91 and 0.93 | `risk_parity/target_volatility/100` | 0.89 and 0.90 |
+| `risk_parity/target_return/10` | 0.94 and 0.93 | `risk_parity/target_return/100` | 0.94 and 0.95 |
+| `risk_parity/box/10` | 0.94 and 0.96 | `risk_parity/box/100` | 0.96 and 0.96 |
+| `risk_parity/budget/10` (no compensated dot) | 0.99 and 1.00 | `risk_parity/budget/100` | 0.98 and 1.00 |
+
+At n = 1000, where `covariance_times` is about 2% of `risk_parity`, one solve each: `target_volatility` 6.79 and
+6.66 s, `box` 18.9 and 18.6 s, `target_return` 16.4 and 16.6 s, inside the spread of single runs. All 70 cases at
+n ≤ 100 and these three are bit for bit identical. In the assembly (`objective.cpp.obj`, inlined in
+`compensated_dot` and `covariance_times`) the term is the range check (`andpd`, `comisd` and a branch for each
+factor, taken to the `call fma` only out of range), the two splits (`mulsd`, `subsd`, `subsd`, `subsd`), the four
+products and the three additions in the order written, then the TwoSum.
+
+The same A/B in a native build (`native-release` configured with GCC, Ninja and `-march=native`, which turns on
+`-mfma` and `-mavx2` on this Zen 3; `std::fma` is then one `vfmsub132sd`), three interleaved pairs:
+
+| Measure | A (`std::fma`, inline) | B (Dekker) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/compensated_dot/10` | 0.011 to 0.015 µs | 0.029 to 0.037 µs | 2.5 |
+| `BM_Kernel/compensated_dot/100` | 0.114 to 0.130 µs | 0.288 to 0.292 µs | 2.3 |
+| `BM_Kernel/compensated_dot/1000` | 1.07 to 1.20 µs | 2.77 to 3.25 µs | 2.6 |
+| `BM_Kernel/covariance_times/100` | 11.8 to 12.4 µs | 28.9 to 36.9 µs | 2.6 |
+| `BM_Kernel/covariance_times/1000` | 1.16 to 1.44 ms | 2.94 to 4.86 ms | 2.5 |
+
+With hardware FMA the call disappears and the fma is 1.1 ns a term, so Dekker's product (2.8 ns) is 2.5 times
+slower there. The shipped binaries and the official numbers are generic, where it is 1.35 times faster; a native
+build that wants the inline fma back needs the dispatch of L6b (or a compile-time choice of `std::fma` under
+`__FMA__`), not done here.
+
+### No accidental FMA (guard 3)
+
+On the native build above (`-march=native`: `-mfma` enabled, `g++ -Q --help=target`), `objdump -d` of the 20
+objects of `portopt_core` has three `vfm*` instructions, each a `vfmsub132sd`: one in `two_product_error`, the only
+function that calls `std::fma`, and one in each of `compensated_dot` and `covariance_times`, where it is inlined. No
+other function has one: `-ffp-contract=off` holds on every product of the core. `ctest` on that build passed (337
+tests, the benchmark self-tests included).
