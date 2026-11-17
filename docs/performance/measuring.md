@@ -211,7 +211,7 @@ The `native-release` preset alone is not native: it names no compiler and sets n
 `-mfma` and `-mavx2` (where a contraction would show as `vfm*` and the guard above means something):
 
 ```
-cmake --preset native-release -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native
+cmake --preset native-release -G Ninja -DPO_BUILD_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native
 cmake --build --preset native-release
 ctest --preset native-release
 ```

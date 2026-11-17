@@ -144,7 +144,7 @@ interval).
 ## L8, L9 and L10
 
 **L8, allocation hygiene.** Done where the counter showed it, see [Benchmarks](benchmarks.md#l8-allocation-hygiene-where-the-counter-shows-it):
-29 054 to 13 348 allocations per pass of the 70 cases at n ≤ 100, 0.63 to 0.87 on the small cases with bounds, 0.5 to 0.9
+29 054 to 13 348 allocations per pass of the 70 cases at n ≤ 100, 0.60 to 0.87 on the small cases with bounds, 0.44 to 0.93
 on the gross exposure cases at n = 1000, bit for bit identical. The allocator is
 still 14.1% of the MSVC samples at n = 10 (15.7% before), mostly RISK_PARITY, whose 1600 allocations per solve are
 spread over about 40 sites: a proposal below.

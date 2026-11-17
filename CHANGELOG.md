@@ -98,7 +98,7 @@ library whose ABI version differs).
   rows. Measured against the commit before them on the same machine and build (generic x86-64, GCC 16.2): the geometric
   mean of the solve time over the 35 cases is 0.71 at 10 assets, 0.29 at 100 and 0.23 at 1000 (the sum of the 35
   solves at 1000 assets went from 290 s to 79 s; `risk_parity/box` from 86.8 s to 21.5 s, `max_return/leverage` from
-  32.9 s to 13.2 s). One case is slower, `risk_parity/budget` at 10 assets (5.5 to 5.9 µs). See
+  32.9 s to 13.2 s). One case is slower, `risk_parity/budget` at 10 assets (about 7% slower in repeated interleaved pairs; 1.12, 5.55 to 6.19 µs, in the single table run). See
   [docs/performance/benchmarks.md](docs/performance/benchmarks.md#plan-6-final-before-and-after).
 - `qp::solve` takes an optional `qp::BasisCache`; `Path` of `MAX_RETURN` holds one. Internal; no change of the C API.
 - `-ffp-contract=off` on the C API objects as on the core and the tests (no accidental FMA in a `-march=native` build

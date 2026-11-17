@@ -480,8 +480,8 @@ target_return}`, `max_return/{leverage, cash}`, `utility/leverage`, `tracking_er
 `max_sharpe/{box, cash, long_only}`, `max_diversification/box`, `risk_parity/target_volatility`) are bit for bit identical (`compare-solutions
 --require-identical`); the fuzz batteries of the gross exposure family and `ctest --preset gcc-release` pass.
 
-Not done, with the number that decides it: `risk_parity` still allocates 1600 times per solve at n = 10 (1627 before the
-`qp::solve` reserves) in about 40 call sites of `riskparity/` and `problems/` that return vectors (`linearize`,
+Not done, with the number that decides it: `risk_parity` still allocates 1600 times per solve at n = 10 (1606 in the table above, which the
+`qp::solve` reserves leave unchanged) in about 40 call sites of `riskparity/` and `problems/` that return vectors (`linearize`,
 `moments_of`, `value_change`, `step_at`, `record`, the KKT and the polish), which is at most 25% of the 0.22 ms of
 `target_volatility/10` and 0.4% of its n = 100 time. Removing them needs a workspace passed through the descent, a
 change of its interfaces for a gain only at n ≈ 10 that the quick suite cannot resolve above its noise at that size
@@ -528,7 +528,7 @@ machine of [Machine and run](#machine-and-run). The comparison with the table of
 
 | | Before (A) | After (B) |
 | --- | --- | --- |
-| Code | `1297db0`, the last commit before any change of `src/` (its `src/` is that of `4cc0b82`, the baseline; the commits between them are documents), built in a separate worktree | `6419150`, HEAD; its `src/` is that of the last lever (`66ca389`), the commits after it change build files, tests, benchmarks and documents only |
+| Code | `1297db0`, the last commit before any change of `src/` (its `src/` is that of `4cc0b82`, the baseline; the commits between them are documents), built in a separate worktree | `6419150`, HEAD at measurement (`bd6f127` changes only documents); its `src/` is that of the last lever (`66ca389`), the commits after it change build files, tests, benchmarks and documents only |
 | Build | `gcc-bench`, generic x86-64, `-O3 -DNDEBUG -ffp-contract=off` | the same |
 | Harness | `portopt_benchmarks` and `portopt_profile` of `1297db0` | those of HEAD; the cases, instances and counters are the same (the diff of `tests/benchmarks` between the two is the C API benchmark and `--via`) |
 
@@ -658,7 +658,7 @@ measurement tests). The speed of the MSVC build was not measured beyond the samp
 (1.3 to 1.7 times slower than `gcc-bench` on the slow cases).
 
 **`native-release`.** The preset alone selects no compiler and sets no `-march`, so it is not native. It was configured as
-`cmake --preset native-release -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native`
+`cmake --preset native-release -G Ninja -DPO_BUILD_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_FLAGS=-march=native`
 (`znver3`; `-mfma` and `-mavx2` enabled, `__FMA__` defined). `ctest` there: 338 tests passed (the 336 and the two
 benchmark self-tests), and its 70 solutions at n ≤ 100 are bit for bit identical to those of `gcc-bench`
 (`compare-solutions --require-identical`). The difference from the generic build, quick suite run twice interleaved

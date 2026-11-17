@@ -654,6 +654,7 @@ TEST(GoldfarbIdnani, BasisCacheKeepsItsPairWhenAnAllocationFails)
     po::qp::BasisCache after_other;
     po::qp::solve(other, after_other);
     int failures = 0;
+    bool succeeded = false;
     for (long countdown = 0; countdown < 200; ++countdown)
     {
         SCOPED_TRACE(testing::Message() << "countdown = " << countdown);
@@ -673,6 +674,7 @@ TEST(GoldfarbIdnani, BasisCacheKeepsItsPairWhenAnAllocationFails)
         {
             EXPECT_TRUE(same_bits(cache.factor, after_other.factor));
             EXPECT_TRUE(same_bits(cache.basis, after_other.basis));
+            succeeded = true;
             break;
         }
         ++failures;
@@ -682,6 +684,7 @@ TEST(GoldfarbIdnani, BasisCacheKeepsItsPairWhenAnAllocationFails)
         expect_same_solution(po::qp::solve(other, cache), po::qp::solve(other));
     }
     EXPECT_GT(failures, 0);
+    EXPECT_TRUE(succeeded);
 }
 
 } // namespace
