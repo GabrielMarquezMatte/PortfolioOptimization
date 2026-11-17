@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <expected>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include "core/data.hpp"
@@ -366,9 +367,9 @@ po::riskparity::PolishResult polish_of(const Spec& spec, const Data& data, const
     po::riskparity::PolishResult polished =
         po::riskparity::newton_polish(problem, kkt_point_of(spec, result));
     EXPECT_EQ(polished.steps, 0);
-    expect_near_multipliers(polished.correction.point.equality_multipliers,
+    expect_near_multipliers(polished.correction.reported_point.equality_multipliers,
                             kkt_point_of(spec, result).equality_multipliers);
-    expect_near_multipliers(polished.correction.point.bound_multipliers, result.bound_multipliers);
+    expect_near_multipliers(polished.correction.reported_point.bound_multipliers, result.bound_multipliers);
     return polished;
 }
 
@@ -376,7 +377,8 @@ po::riskparity::PolishResult polish_of(const Spec& spec, const Data& data, const
 // the budget and of the volatility turn parallel: the Newton correction of the multipliers is returned only
 // where the safeguard accepts it. Every result is OPTIMAL and a KKT point at the band, whose returned
 // multipliers expect_risk_parity_kkt finds no farther from the refined KKT point than the least-squares ones.
-// How many results kept the least-squares multipliers is recorded (docs/guide/validation.md).
+// The safeguard keeps the least-squares multipliers at delta = 1e-10 in both boxes and nowhere else
+// (docs/guide/validation.md).
 TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
 {
     Data data = sample_data(5, 13);
@@ -392,9 +394,16 @@ TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
             expect_stationary(spec, data, result);
             po::riskparity::PolishResult polished = polish_of(spec, data, result);
             kept += polished.correction.accepted ? 0 : 1;
+            // Where the correction, though it contracts, would leave a stationarity far above its noise
+            // (docs/guide/validation.md): the safeguard keeps the least-squares multipliers.
+            if (delta == 1e-10)
+            {
+                EXPECT_FALSE(polished.correction.accepted);
+            }
         }
     }
     RecordProperty("kept_least_squares", kept);
+    EXPECT_EQ(kept, 2);
 }
 
 // The path with a target return and no target volatility, at cond(Sigma) = 1e8: its least-squares
@@ -423,9 +432,10 @@ TEST(RiskParity, TargetReturnOnlyMultipliersUnchanged)
                 ASSERT_EQ(result.status, SolveStatus::Optimal);
                 po::riskparity::PolishResult polished = polish_of(generated.spec, generated.data, result);
                 Result least_squares = result;
-                least_squares.budget_multiplier = polished.point.equality_multipliers.front();
-                least_squares.target_return_multiplier = polished.point.equality_multipliers.back();
-                least_squares.bound_multipliers = polished.point.bound_multipliers;
+                const po::riskparity::KktPoint& fitted = polished.least_squares_point;
+                least_squares.budget_multiplier = fitted.equality_multipliers.front();
+                least_squares.target_return_multiplier = fitted.equality_multipliers.back();
+                least_squares.bound_multipliers = fitted.bound_multipliers;
                 bool same = least_squares.budget_multiplier == result.budget_multiplier &&
                             least_squares.target_return_multiplier == result.target_return_multiplier &&
                             least_squares.bound_multipliers == result.bound_multipliers;
@@ -584,29 +594,38 @@ TEST(RiskParity, ActiveBoundsKkt)
 }
 
 // The contributions are homogeneous of degree 0, so w'grad f = 0, which at a KKT point reads
-// budget = -target_return r - volatility s - sum_i beta_i w_i.
+// budget = -target_return r - volatility s - sum_i beta_i w_i. At cond(Sigma) 1e4 and 1e6, with the
+// multipliers the Newton correction of the polish returns.
 TEST(RiskParity, HomogeneityIdentity)
 {
     std::size_t n = 6;
-    Data data = sample_data(n, 17);
-    Spec spec = risk_parity_spec();
-    spec.lower = 0.0;
-    spec.upper = 0.3;
-    spec.risk_budget = {0.4, 0.2, 0.15, 0.1, 0.1, 0.05};
-    Result capped = solved(spec, data);
-    ASSERT_EQ(capped.status, SolveStatus::Optimal);
-    spec.target_return = po::testing::portfolio_return(data, capped.weights) + 0.003;
-    spec.target_volatility = 1.1 * minimum_volatility(spec, data);
-    Result result = solved(spec, data);
-    expect_stationary(spec, data, result);
-    double return_term = result.target_return_multiplier * *spec.target_return;
-    double volatility_term = result.volatility_multiplier * *spec.target_volatility;
-    double bound_term = po::testing::dot(result.bound_multipliers, result.weights);
-    double scale = std::fmax(std::fabs(result.budget_multiplier), std::fabs(return_term));
-    scale = std::fmax(scale, std::fmax(std::fabs(volatility_term), std::fabs(bound_term)));
-    ASSERT_GT(scale, 0.0);
-    EXPECT_NE(bound_term, 0.0);
-    EXPECT_NEAR(result.budget_multiplier, -return_term - volatility_term - bound_term, 1e-9 * scale);
+    for (double condition : {1e4, 1e6})
+    {
+        SCOPED_TRACE(condition);
+        Data data =
+            Data::create(n, random_vector(n, 517, 0.03, 0.15), random_covariance(n, 17, condition)).value();
+        Spec spec = risk_parity_spec();
+        spec.lower = 0.0;
+        spec.upper = 0.3;
+        spec.risk_budget = {0.4, 0.2, 0.15, 0.1, 0.1, 0.05};
+        Result capped = solved(spec, data);
+        ASSERT_EQ(capped.status, SolveStatus::Optimal);
+        spec.target_return = po::testing::portfolio_return(data, capped.weights) + 0.003;
+        spec.target_volatility = 1.1 * minimum_volatility(spec, data);
+        Result result = solved(spec, data);
+        expect_stationary(spec, data, result);
+        double return_term = result.target_return_multiplier * *spec.target_return;
+        double volatility_term = result.volatility_multiplier * *spec.target_volatility;
+        double bound_term = po::testing::dot(result.bound_multipliers, result.weights);
+        double scale = std::fmax(std::fabs(result.budget_multiplier), std::fabs(return_term));
+        scale = std::fmax(scale, std::fmax(std::fabs(volatility_term), std::fabs(bound_term)));
+        ASSERT_GT(scale, 0.0);
+        EXPECT_NE(bound_term, 0.0);
+        double gap = result.budget_multiplier + return_term + volatility_term + bound_term;
+        RecordProperty("relative_gap_" + std::to_string(static_cast<int>(std::log10(condition))),
+                       ::testing::PrintToString(std::fabs(gap) / scale));
+        EXPECT_NEAR(result.budget_multiplier, -return_term - volatility_term - bound_term, 1e-9 * scale);
+    }
 }
 
 // Sigma -> t Sigma with s -> sqrt(t) s is a change of units: the same weights, and a volatility multiplier

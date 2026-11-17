@@ -475,12 +475,15 @@ MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktP
     }
     result.second_change = norm_of(second->multipliers);
     bool contracts = result.second_change <= 0.5 * result.change;
+    // The factor of the KKT gate, measured, not derived: near sigma_min a correction that contracts can still
+    // leave 958 times the noise, while every one that improved the multipliers left at most 0.50
+    // (docs/guide/validation.md, "The Newton polish").
     bool stationary = residual_of(problem, corrected, again).stationarity <= kKktNoiseFactor;
     if (!contracts || !stationary || !keeps_sides(corrected.bound_multipliers, sides))
     {
         return result;
     }
-    result.point = std::move(corrected);
+    result.reported_point = std::move(corrected);
     result.accepted = true;
     return result;
 }
@@ -497,12 +500,12 @@ PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
         {
             break;
         }
-        result.point = candidate->position.point;
+        result.least_squares_point = candidate->position.point;
         result.residual = candidate->residual;
         result.steps = step;
     }
     result.improved = improves_on(result.residual, start_residual);
-    result.correction = corrected_multipliers(problem, result.point);
+    result.correction = corrected_multipliers(problem, result.least_squares_point);
     return result;
 }
 

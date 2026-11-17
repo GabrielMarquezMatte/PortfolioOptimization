@@ -18,6 +18,7 @@
 #include "fuzz/frontier_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
 #include "fuzz/risk_parity/risk_parity_refinement.hpp"
+#include "random_covariance.hpp"
 #include "riskparity/kkt.hpp"
 #include "riskparity/newton_polish.hpp"
 #include "solve/solve.hpp"
@@ -138,7 +139,7 @@ struct Point
 // The corrected multipliers when the safeguard kept them, NaN otherwise.
 po::riskparity::KktPoint newton_point(const Point& point)
 {
-    po::riskparity::KktPoint newton = point.correction.point;
+    po::riskparity::KktPoint newton = point.correction.reported_point;
     if (!point.correction.accepted)
     {
         newton.equality_multipliers.assign(newton.equality_multipliers.size(), kNaN);
@@ -154,8 +155,8 @@ Point point_of(const po::testing::GeneratedRiskParity& generated, const Result& 
                                    result.bound_multipliers};
     po::riskparity::PolishResult polished = po::riskparity::newton_polish(problem, start);
     EXPECT_EQ(polished.steps, 0);
-    Result least_squares = with_multipliers(result, polished.point.equality_multipliers);
-    return Point{std::move(polished.point), std::move(polished.correction),
+    Result least_squares = with_multipliers(result, polished.least_squares_point.equality_multipliers);
+    return Point{std::move(polished.least_squares_point), std::move(polished.correction),
                  refined(generated.spec, generated.data, least_squares).multipliers};
 }
 
@@ -288,6 +289,183 @@ TEST(RiskParityMultiplierMeasure, DISABLED_MeasureNewtonMultipliers)
             {
                 Shape shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None, false, true, seed};
                 measure_case("grid", shape, po::testing::generate(shape));
+            }
+        }
+    }
+}
+
+// The KKT point of MIN_VARIANCE with a target return on the active set of a result, in long double: the
+// weights whose bound multiplier is not 0 stay where the result has them, and the free weights w_F and the
+// multipliers (budget, target return) solve
+//   (2 Sigma w)_F = lambda_budget 1 + lambda_return mu_F,   1'w = 1,   mu'w = r,
+// a linear system, by Newton steps (iterative refinement) from the result; beta of a held weight is what its
+// row leaves. last_step is the largest change of a multiplier in the last step, relative to the multipliers.
+struct QpReference
+{
+    std::vector<long double> weights;
+    std::vector<long double> multipliers;
+    std::vector<long double> bounds;
+    long double last_step = 0.0L;
+};
+
+std::vector<long double> qp_stationarity(const po::Data& data, const QpReference& point)
+{
+    std::vector<long double> residual = po::testing::wide_covariance_times(data, point.weights);
+    for (std::size_t j = 0; j < residual.size(); ++j)
+    {
+        residual[j] = 2.0L * residual[j] - point.multipliers[0] - point.multipliers[1] * data.mu()[j];
+    }
+    return residual;
+}
+
+// One Newton step on the free weights and the two multipliers; false when the system is singular.
+bool qp_newton_step(const po::Data& data, double target, const std::vector<std::size_t>& free,
+                    QpReference& point)
+{
+    std::size_t size = free.size() + 2;
+    std::size_t n = point.weights.size();
+    std::vector<long double> matrix(size * size, 0.0L);
+    std::vector<long double> rhs(size, 0.0L);
+    std::vector<long double> stationarity = qp_stationarity(data, point);
+    std::vector<long double> mu = po::testing::widened(data.mu());
+    for (std::size_t a = 0; a < free.size(); ++a)
+    {
+        for (std::size_t b = 0; b < free.size(); ++b)
+        {
+            matrix[a * size + b] = 2.0L * data.covariance()[free[a] * n + free[b]];
+        }
+        matrix[a * size + free.size()] = -1.0L;
+        matrix[a * size + free.size() + 1] = -mu[free[a]];
+        matrix[free.size() * size + a] = 1.0L;
+        matrix[(free.size() + 1) * size + a] = mu[free[a]];
+        rhs[a] = -stationarity[free[a]];
+    }
+    long double total = -1.0L;
+    for (long double weight : point.weights)
+    {
+        total += weight;
+    }
+    rhs[free.size()] = -total;
+    rhs[free.size() + 1] = -(po::testing::wide_dot(mu, point.weights) - target);
+    if (!po::testing::solve_wide(matrix, rhs))
+    {
+        return false;
+    }
+    for (std::size_t a = 0; a < free.size(); ++a)
+    {
+        point.weights[free[a]] += rhs[a];
+    }
+    long double scale = std::fmax(std::fabs(point.multipliers[0]), std::fabs(point.multipliers[1]));
+    point.multipliers[0] += rhs[free.size()];
+    point.multipliers[1] += rhs[free.size() + 1];
+    point.last_step = std::fmax(std::fabs(rhs[free.size()]), std::fabs(rhs[free.size() + 1])) / scale;
+    return true;
+}
+
+std::optional<QpReference> qp_reference(const po::Spec& spec, const po::Data& data, const Result& result)
+{
+    constexpr int kSteps = 4;
+    QpReference point{po::testing::widened(result.weights),
+                      {result.budget_multiplier, result.target_return_multiplier},
+                      {},
+                      0.0L};
+    std::vector<std::size_t> free;
+    for (std::size_t j = 0; j < result.weights.size(); ++j)
+    {
+        if (result.bound_multipliers[j] == 0.0)
+        {
+            free.push_back(j);
+        }
+    }
+    for (int step = 0; step < kSteps; ++step)
+    {
+        if (!qp_newton_step(data, *spec.target_return, free, point))
+        {
+            return std::nullopt;
+        }
+    }
+    point.bounds = qp_stationarity(data, point);
+    return point;
+}
+
+// One result of the QP path against qp_reference: weights relative to max |w|, the multipliers of the
+// equalities by the metric of forward_error (max_k |lambda_k - lambda*_k| / max_k |lambda*_k|), and beta of
+// the held weights over max(|lambda_budget*|, |lambda_return*| max |mu|, max |beta*|), the size of a term of
+// the stationarity.
+void measure_qp_case(double condition, std::size_t n, std::uint64_t seed, double lower)
+{
+    po::Data data = po::Data::create(n, po::testing::random_vector(n, seed + 500, 0.03, 0.15),
+                                     po::testing::random_covariance(n, seed, condition))
+                        .value();
+    po::Spec spec;
+    spec.lower = lower;
+    Result minimum = po::testing::frontier_point(spec, data, std::nullopt);
+    double largest_mean = po::testing::largest_magnitude(data.mu());
+    spec.target_return = 0.5 * (po::testing::portfolio_return(data, minimum.weights) + largest_mean);
+    Result result = po::solve(spec, data).value();
+    std::optional<QpReference> reference;
+    if (result.status == SolveStatus::Optimal)
+    {
+        reference = qp_reference(spec, data, result);
+    }
+    if (!reference.has_value())
+    {
+        std::printf("| %.0e | %zu | %llu | %g | status %d or singular |\n", condition, n,
+                    static_cast<unsigned long long>(seed), lower, static_cast<int>(result.status));
+        return;
+    }
+    long double largest = 0.0L;
+    long double weights = 0.0L;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        largest = std::fmax(largest, std::fabs(static_cast<long double>(result.weights[j])));
+        weights = std::fmax(weights, std::fabs(result.weights[j] - reference->weights[j]));
+    }
+    long double multiplier_scale =
+        std::fmax(std::fabs(reference->multipliers[0]), std::fabs(reference->multipliers[1]));
+    long double budget = std::fabs(result.budget_multiplier - reference->multipliers[0]);
+    long double multipliers =
+        std::fmax(budget, std::fabs(result.target_return_multiplier - reference->multipliers[1]));
+    long double bound_scale =
+        std::fmax(std::fabs(reference->multipliers[0]), std::fabs(reference->multipliers[1]) * largest_mean);
+    long double bounds = 0.0L;
+    int held = 0;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        if (result.bound_multipliers[j] != 0.0)
+        {
+            ++held;
+            bound_scale = std::fmax(bound_scale, std::fabs(reference->bounds[j]));
+            bounds = std::fmax(bounds, std::fabs(result.bound_multipliers[j] - reference->bounds[j]));
+        }
+    }
+    std::printf("| %.0e | %zu | %llu | %g | %d | %.1e | %.1e | %.1e | %.1Le |\n", condition, n,
+                static_cast<unsigned long long>(seed), lower, held, static_cast<double>(weights / largest),
+                static_cast<double>(multipliers / multiplier_scale),
+                static_cast<double>(bounds / bound_scale), reference->last_step);
+}
+
+// The multipliers of the QP path (Goldfarb-Idnani, MIN_VARIANCE with a target return) against the KKT point
+// of the result's active set solved in long double, by cond(Sigma) up to 1e8, no box and long only: the
+// measurement of item 5 of docs/research/2026-11-16-multiplier-accuracy.md, recorded in
+// docs/guide/validation.md. Run with --gtest_also_run_disabled_tests.
+TEST(RiskParityMultiplierMeasure, DISABLED_MeasureQpMultipliers)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the reference has no extra precision";
+    }
+    std::printf("| cond | n | seed | lower | held | w error | lambda error | beta error | last step |\n");
+    for (double condition : {1e4, 1e6, 1e8})
+    {
+        for (double lower : {-std::numeric_limits<double>::infinity(), 0.0})
+        {
+            for (std::size_t n : {5u, 8u, 20u})
+            {
+                for (std::uint64_t seed = 1; seed <= 4; ++seed)
+                {
+                    measure_qp_case(condition, n, seed, lower);
+                }
             }
         }
     }

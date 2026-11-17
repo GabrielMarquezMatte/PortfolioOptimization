@@ -443,7 +443,7 @@ void count_augmented(const Shape& shape, const po::riskparity::AugmentedOptions&
         po::riskparity::augmented_lagrangian(problem, solver_start(generated), options);
     po::riskparity::PolishResult polish = po::riskparity::newton_polish(problem, result.point);
     ++tally.runs;
-    tally.polished += po::riskparity::is_kkt_point(problem, polish.point);
+    tally.polished += po::riskparity::is_kkt_point(problem, polish.least_squares_point);
     tally.most_steps = std::max(tally.most_steps, polish.steps);
     if (!result.converged)
     {

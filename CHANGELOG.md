@@ -92,6 +92,14 @@ library whose ABI version differs).
   than by comparing weights between two points of the path. The QP solver checks every row again at the final point.
   Ill-conditioned problems that returned `MAX_ITER` or a wrong point now solve; what is left is documented in
   [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery).
+- `RISK_PARITY` reports the multipliers of one more Newton solve of the KKT system at the returned weights (the
+  budget, target-return and volatility multipliers and the bound multipliers of the held weights), kept when a
+  safeguard accepts it, instead of the least-squares ones at the rounded weights. The weights, the status and the KKT
+  gate do not change. With a target volatility the measured relative error of the multipliers went from 4.8e-10,
+  3.3e-7 and 3.7e-2 to 2.0e-14, 5.2e-11 and 5.3e-10 at `cond(Sigma)` 1e4, 1e6 and 1e8 (bound multipliers within
+  1.5e-10 at 1e8); measured, not derived, and pinned by ceilings 10 times above. At `cond(Sigma) >= 1e10` an
+  `OPTIMAL` result is still not validated. See
+  [docs/guide/validation.md](docs/guide/validation.md#the-kkt-residual-and-its-noise).
 
 - Python: `Spec` is no longer a plain class; it compares by value and cannot be assigned to after construction.
 

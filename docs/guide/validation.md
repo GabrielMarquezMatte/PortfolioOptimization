@@ -753,8 +753,12 @@ computed in the test in `long double` and without `src/riskparity/kkt.cpp`:
   Hessian is the central difference of the reference gradient (step `1e-12` of the largest weight), which
   agrees with the analytic Hessian of the library within `1e-6` at `cond(Sigma)` up to `1e6`
   (`RiskParityReference.HessianByDifferencesMatchesTheObjective`) and within `3.6e-8` of its largest entry at
-  `1e8` (three seeds, `n = 6`; the test asks `1e-3`, since the analytic one is itself rounded by about
-  `eps cond(Sigma)`: `RiskParityReference.HessianByDifferencesMatchesTheObjectiveAtCondition1e8`).
+  `1e8` (three seeds, `n = 6`; the test asks `1e-3`:
+  `RiskParityReference.HessianByDifferencesMatchesTheObjectiveAtCondition1e8`). The gap is not the analytic
+  Hessian being rounded by `eps cond(Sigma)`, as this section once said: against 80 digits the analytic one is
+  right to `1.3e-15` of its largest entry at every `cond(Sigma)` up to `1e10` at the points of the measurement
+  of the Newton multipliers below (eta there), so the gap is that of the central differences. At the random
+  weights of this test the two Hessians were not measured apart.
 
 The multipliers in `r` are not always those of the result. Where the free weights (those whose `beta` is 0)
 determine the equality multipliers (at least as many free weights as equalities, their gradients over the free
@@ -856,35 +860,81 @@ componentwise absolute values lose the cancellation that makes the true error sm
 `3.7e-5`); the band of the weights is not applied to a result at its floor. It also checks the weight error
 within 4 times the residual bound, a sanity bound only, since that bound is 3.7e3 to 3e4 times loose.
 
-**The multipliers of the target-volatility path are less accurate than the weights.** The weights and the value
-above are what the floor bounds; the multipliers are not. With a target volatility the polish settles the
-multipliers by least squares at the rounded weights, and that fit loses the correction `H dw` that the Newton step
-would have put in them. Against the multipliers of the KKT point refined in `long double` from the result
-(`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`; no box, equal budget, `n` in {5, 8}, 4 seeds,
-`s` between `sigma_min` and `1.5 sigma_min`; `RiskParityFuzz.TargetVolatilityMultipliersByCondition`, 0.5 s):
+**The multipliers of the target-volatility path (measured, not derived).** The weights and the value above are
+what the floor bounds; the multipliers are not. With a target volatility the least-squares multipliers at the
+rounded weights lose the correction `H dw` that the Newton step would have put in them, and that error was the
+one reported until the polish kept the Newton correction of the multipliers at its last point (the section on
+the polish; the measurement below). Against the multipliers of the KKT point refined in `long double` from the
+result (`max_k abs(lambda_k - lambda_ref_k) / max_k abs(lambda_ref_k)`; no box, equal budget, `n` in {5, 8},
+4 seeds, `s` between `sigma_min` and `1.5 sigma_min`; `RiskParityFuzz.TargetVolatilityMultipliersByCondition`,
+0.3 s; one run, Windows, GCC 16.2, MSYS2 UCRT64):
 
-| cond(Sigma) | largest multiplier error | band | ceiling pinned by the test |
-|---|---|---|---|
-| 1e4 | 4.8e-10 | 1e-10 | 1e-9 |
-| 1e6 | 3.3e-7 | 1e-9 | 1e-6 |
-| 1e8 | 3.7e-2 | 1e-7 | 1e-1 |
+| cond(Sigma) | least squares (before) | largest multiplier error | band | ceiling pinned by the test |
+|---|---|---|---|---|
+| 1e4 | 4.8e-10 | 2.0e-14 | 1e-10 | 2e-13 |
+| 1e6 | 3.3e-7 | 5.2e-11 | 1e-9 | 5.2e-10 |
+| 1e8 | 3.7e-2 | 5.3e-10 | 1e-7 | 5.3e-9 |
 
-The ceilings are the measured largest rounded up to the next power of 10: they pin the present accuracy and are
-not derived. The weights of the same results are right to `1e-12` or better. An independent refinement in 80-digit
-arithmetic of the returned `(w, lambda)` (no box, `s = 1.2 sigma_min`, equal budget, `n` = 5 or 8) agrees in
-order of magnitude: `lambda_vol` off by 8e-12 to 9.5e-11 at 1e4, 3.5e-8 to 8.4e-8 at 1e6, 3.1e-5 to 7.4e-4 at 1e8 and
-0.3 to 2.1 at `1e10`, and `lambda_budget` by 6e-12 to 8e-11, 8.8e-8 to 2.1e-7, 1.4e-4 to 3.6e-3 and 2.4 to 17.
-Above `cond(Sigma) = 1e8` an `OPTIMAL` result's multipliers can be wrong by `O(1)`; `Data` accepts
-`cond(Sigma) >= 1e10`, and an `OPTIMAL` there is not validated. The path with a target return alone is not
-affected (multipliers within `1e-14` at 1e8). The KKT gate and `expect_risk_parity_kkt` accept these results
-through the rounding floor, which the settled multipliers satisfy at the rounded weights;
-`RiskParity.MultipliersAreDerivatives` runs on well-conditioned data only.
+With a box (`RiskParityFuzz.TargetVolatilityBoundMultipliersByCondition`, 0.3 s: LongOnly and Capped, equal and
+uneven budgets, `n` in {5, 8}, 4 seeds, 32 results per `cond(Sigma)` with 66 to 69 weights held), the bound
+multipliers of the held weights are compared by value with those of the refined point, `beta_ref_j` the entry of
+`grad f - A'lambda` there, over `max(abs(lambda_budget*), abs(lambda_vol*) s, max abs(beta_ref))`, and their
+sign and complementarity are checked by `expect_risk_parity_kkt`:
 
-**Future work (a hypothesis, not measured).** Keep the `dlambda` of the last Newton solve of the polish instead
-of re-estimating `lambda` by least squares at the rounded weights, so that the `H dw` correction survives in
-`lambda`. The re-estimation was introduced because the Newton `dlambda` refused steps near `s = sigma_min` (the
-section on the polish); the measurement below, at the returned point, says that keeping it at the last step
-fixes the multipliers; whether it does so without that failure near `sigma_min` is not measured yet.
+| cond(Sigma) | equalities | ceiling | held `beta` | ceiling | held `beta` of the least-squares fit |
+|---|---|---|---|---|---|
+| 1e4 | 1.9e-14 | 1.9e-13 | 1.8e-14 | 1.8e-13 | 2.4e-10 |
+| 1e6 | 2.6e-12 | 2.6e-11 | 3.5e-13 | 3.6e-12 | 8.1e-10 |
+| 1e8 | 1.4e-10 | 1.4e-9 | 1.5e-10 | 1.5e-9 | 1.2e-7 |
+
+The last column is the `beta` of the least-squares fit at the same weights (`least_squares_fit`, without the
+`H dw` term of `beta_j = (grad f - A'lambda_new)_j + (H dw)_j`): the test requires it more than 10 times above
+the ceiling, so a `beta` without that term fails. Capped results hold most weights and leave few free ones: there
+the least-squares and the corrected multipliers agree to `1e-15`; the difference is in the LongOnly shapes, which
+hold one to four weights at 0.
+
+Every ceiling is the measured largest times 10: measured, not derived. The research note proposed targets of
+`1e-12` up to `1e6` and `1e-9` at `1e8`; the measurement, not that model, sets the ceilings, which are above both
+targets (`5.2e-10` and `5.3e-9`). The weights of the same results are right to `1e-12` or better.
+`RiskParity.HomogeneityIdentity` (`budget = -target_return r - volatility s - sum_i beta_i w_i`) holds with the
+corrected multipliers at `cond(Sigma)` `1e4` and `1e6` (relative gap `1.9e-16` and `5.2e-17`; box `[0, 0.3]`, both
+targets). Above `cond(Sigma) = 1e8` an `OPTIMAL` result is not validated: at `1e10` the correction reaches
+`2.3e-6` where it is accepted, and where the KKT matrix fails the rank test (the four grid shapes with `n = 8` of
+the measurement below) the least-squares multipliers are kept, wrong by `O(1)`. `Data` accepts `cond(Sigma) >= 1e10`. The path with a target return alone
+is not affected (multipliers within `1e-14` at 1e8). `RiskParity.MultipliersAreDerivatives` runs on
+well-conditioned data only.
+
+**The QP path, for comparison (measured once).** `RiskParityMultiplierMeasure.DISABLED_MeasureQpMultipliers`
+(`tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp`, run with
+`--gtest_also_run_disabled_tests`) solves `MIN_VARIANCE` with a target return half way between the return of the
+minimum-variance portfolio and the largest mean, no box and long only, `n` in {5, 8, 20}, seeds 1 to 4, and
+compares the multipliers of Goldfarb-Idnani with the KKT point of the result's active set solved in `long
+double` (`2 Sigma w_F = lambda_budget 1 + lambda_return mu_F`, `1'w = 1`, `mu'w = r`, four Newton steps from
+the result, the last changing the multipliers by at most `1.9e-18`; `beta` of a held weight is what its row
+leaves, over `max(abs(lambda_budget*), abs(lambda_return*) max abs(mu), max abs(beta*))`). Item 5 of the
+research note asked for it. Largest errors, one run:
+
+| cond(Sigma) | no box: weights | multipliers | long only: weights | multipliers | held `beta` |
+|---|---|---|---|---|---|
+| 1e4 | 8.0e-14 | 1.1e-13 | 3.3e-15 | 2.1e-15 | 3.3e-15 |
+| 1e6 | 1.6e-12 | 1.0e-11 | 2.2e-14 | 8.7e-15 | 5.7e-15 |
+| 1e8 | 6.6e-11 | 4.4e-10 | 1.3e-14 | 1.3e-14 | 1.8e-14 |
+
+The QP multipliers come out of the same factorization as the weights and are of the same order as the corrected
+ones of `RISK_PARITY` (`4.4e-10` and `5.3e-10` at `1e8`), below `eps cond(Sigma)`, as the research note expected.
+Nothing in the QP path changes; no test pins these numbers.
+
+**Future work: phase 2 (a plan, not implemented).** The correction above is one Newton solve in `double`: what
+limits it is the KKT residual evaluated in `double`, amplified by the KKT system (eta, in the measurement below,
+shows the Hessian is not the limit). A second phase would evaluate that residual in double-double, with the weights carried as a pair
+`w_ext = (w_hi, w_lo)` inside the polish (`Sigma w` and the compensated dot products of `objective.cpp` and
+`kkt.cpp` over the pair), take two or three steps reusing the factorization of the last one, stop by the rule of
+Demmel et al. (a correction at most `eps` of the multipliers, or a ratio of successive corrections at least
+1/2), and still report `w_hi`; no `long double`, so that MSVC keeps it. It would be activated if a use needs
+multipliers validated at `cond(Sigma)` around `1e10` (now `2.3e-6` where accepted and `O(1)` where the rank test
+refuses), or if a measurement at `1e8` exceeds the ceilings above (a regression of the one solve, or a class of
+problems not covered by these cases); until then the ceilings above are the documented accuracy and `1e10` stays
+not validated.
 
 **The Newton multipliers at the returned point (measured, not derived).**
 `RiskParityMultiplierMeasure.DISABLED_MeasureNewtonMultipliers`
@@ -931,8 +981,8 @@ shapes with `n = 8` give no correction: the scaled KKT matrix fails the rank tes
 - **The Newton correction recovers the multipliers.** One solve at the returned point, all in `double`, brings
   them to at most `2.7e-14` at 1e4, `1.1e-10` at 1e6 (`3.2e-12` on the probe cases), `7.6e-10` at 1e8 and
   `2.3e-6` at 1e10, from `6.6e-10`, `1.3e-6`, `1.4e-1` and `O(100)` (at 1e8 by 6 to 9 orders of magnitude in
-  every case), with the weights untouched. That is the prediction of the research note at 1e8 (its model put
-  it at `1e-10` to `5e-10` on its own cases).
+  every case), with the weights untouched. That is the same order as the research note's prediction at 1e8
+  (its model put it at `1e-10` to `5e-10` on its own cases; `7.6e-10` exceeds that).
 - **The 80-digit check.** An independent refinement of the dumped cases (`PORTOPT_MULTIPLIER_DUMP=path` writes
   each problem, the point and the analytic Hessian in `%.17g`; a script outside the repository refines
   `(w, lambda_LS)` by 12 Newton steps in 80-digit decimal arithmetic, Jacobian by forward differences of step
@@ -990,10 +1040,12 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
   above) of the noise. A cap on `abs(dlambda) / abs(lambda)` cannot tell them apart: the good corrections at
   `cond(Sigma) = 1e8` reach `4.3e-2`. On the 18 results of the table below (9 values of `delta` from `1e-2` to
   `1e-10`, no box and long only) the safeguard kept the least-squares multipliers twice, at `delta = 1e-10`
-  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`); on the 44 cases of the measurement above
+  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`, which requires exactly that); on the 44 cases of the measurement above
   it refused only where the QR has no full rank (`cond(Sigma) = 1e10`, `n = 8`). A point far from its KKT
   point (`s = 1.1 sigma_min` solved, `s = sigma_min (1 + 1e-4)` asked) has a contraction of 0.71 and is
-  refused (`NewtonPolish.RejectsACorrectionThatDoesNotContract`). With a target return alone (`cond(Sigma) =
+  refused (`NewtonPolish.RejectsACorrectionThatDoesNotContract`), and so is a correction that gives a held
+  weight the sign of the other side of its bound (`NewtonPolish.RejectsACorrectionThatChangesTheSideOfABound`:
+  a weight held at 0 named at an upper bound). With a target return alone (`cond(Sigma) =
   1e8`, `n = 8`, LongOnly and Capped, both budgets, 4 seeds) the multipliers stay within `5.1e-15` of the
   refined ones, as with least squares (`RiskParity.TargetReturnOnlyMultipliersUnchanged`).
 - **The settling is done at the start too**, whether or not a step follows: the weights the start names at a
@@ -1204,8 +1256,9 @@ cover:
   by `RiskParitySolveSweep.OptimalRunsAreKkt` on 576 shapes and by both tests here.
 - **Forward error, the thinnest class**: the weights at `cond(Sigma) = 1e8` with a target volatility are a
   conditioning limit, measured and pinned in the section on the noise above
-  (`RiskParityFuzz.WeightsAtCondition1e8BelowTheirMeasuredCeiling`); the multipliers, which are worse, in the
-  same section (`RiskParityFuzz.TargetVolatilityMultipliersByCondition`).
+  (`RiskParityFuzz.WeightsAtCondition1e8BelowTheirMeasuredCeiling`); the multipliers, with and without a box, in
+  the same section (`RiskParityFuzz.TargetVolatilityMultipliersByCondition`,
+  `RiskParityFuzz.TargetVolatilityBoundMultipliersByCondition`).
 
 ## Fuzz battery
 
@@ -1376,11 +1429,11 @@ Verified means the text was read for the claim it supports. The full list, with 
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
 | `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
 | `tests/unit/riskparity/spinu_test.cpp` | Spinu against the diagonal and the two-asset closed forms (1e-12), the contributions against an equal budget (n up to 100, `cond(Sigma)` 1e2 to 1e6, 20 seeds) and an uneven one (`b_i` from 1e-6 to 1, `cond(Sigma)` up to 1e8, both scales), in the bands of the table above |
-| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s`; `s = sigma_min (1 + delta)` for `delta` from `1e-2` to `1e-10` with the safeguard of the multiplier correction; the multipliers of the target-return path unchanged at `1e8` |
-| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point; the Newton correction of the multipliers against the refined KKT point at `cond(Sigma)` 1e6 and 1e8, and a correction that does not contract refused |
+| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers at `cond(Sigma)` 1e4 and 1e6; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s`; `s = sigma_min (1 + delta)` for `delta` from `1e-2` to `1e-10` with the safeguard of the multiplier correction; the multipliers of the target-return path unchanged at `1e8` |
+| `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point; the Newton correction of the multipliers against the refined KKT point at `cond(Sigma)` 1e6 and 1e8, and a correction that does not contract or that changes the side of a held bound refused |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
-| `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit) |
-| `tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp` | Disabled measurement only: the multipliers of the target-volatility path at the point `po::solve` returns, least squares and after one Newton-KKT solve, against the refined KKT point, with an optional dump for the 80-digit reference |
+| `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (6 other local minima of 91, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit); the multipliers of the target-volatility path against the refined point by `cond(Sigma)` (1e4 to 1e8), without a box and with LongOnly and Capped, the bound multipliers of the held weights by value, within measured ceilings |
+| `tests/unit/fuzz/risk_parity/risk_parity_multiplier_measure_test.cpp` | Disabled measurement only: the multipliers of the target-volatility path at the point `po::solve` returns, least squares and after one Newton-KKT solve, against the refined KKT point, with an optional dump for the 80-digit reference; the multipliers of the QP path (`MIN_VARIANCE` with a target return) against its active-set KKT point in `long double` |
 | `tests/unit/fuzz/risk_parity/risk_parity_solve_sweep_test.cpp` | `po::solve` over 576 shapes: no status other than `OPTIMAL` carries a point, every `OPTIMAL` passes `expect_risk_parity_kkt` at the band of its `cond(Sigma)` (the stationarity at the band or within twice its rounding floor), and every one above the band agrees in weights and in `f` with the KKT point of its active set refined in `long double` |
 | `tests/unit/solve/requirements_test.cpp` | The objective x setter matrix (leverage accepted by the eight objectives that take it, `MAX_RETURN`, `MAX_SHARPE` and `MAX_DIVERSIFICATION` among them; `MAX_DIVERSIFICATION` needs no `mu`; `RISK_PARITY` takes `target_return`, `target_volatility` and `risk_budget` and no cash), its messages and the order of the checks |
 | `tests/unit/solve/solve_test.cpp` | Argument checks of `po::solve` and their messages |

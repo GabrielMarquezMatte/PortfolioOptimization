@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -316,24 +317,24 @@ TEST(RiskParityFuzz, WeightsAtCondition1e8BelowTheirMeasuredCeiling)
     }
 }
 
-// The multipliers of the target-volatility path against those of the KKT point refined in long double from
-// the result, by cond(Sigma): no box, equal budget, n = 5 and 8. The weights are right to 1e-12 or better
-// here, but the multipliers are settled by least squares at the rounded weights and lose what the Newton
-// correction H dw would have put in them. These ceilings are measured (the largest of the grid, rounded up to
-// the next power of 10), not derived: they pin the present accuracy, which is outside the band from cond 1e6
-// up (docs/guide/validation.md). Measured largest: 4.8e-10 at 1e4, 3.3e-7 at 1e6, 3.7e-2 at 1e8.
-double multiplier_ceiling(double condition)
+// The ceilings of the multiplier errors of the target-volatility path at one cond(Sigma): the largest
+// measured on the cases of the test that uses them times 10, measured, not derived
+// (docs/guide/validation.md).
+struct MultiplierCeiling
 {
-    if (condition <= 1e4)
-    {
-        return 1e-9;
-    }
-    if (condition <= 1e6)
-    {
-        return 1e-6;
-    }
-    return 1e-1;
-}
+    double condition;
+    // forward_error(...).multipliers: max_k |lambda_k - lambda_ref_k| / max_k |lambda_ref_k|.
+    double equalities;
+    // bound_multiplier_error; 0 where the test has no bound multiplier.
+    double bounds;
+};
+
+// The multipliers of the target-volatility path against those of the KKT point refined in long double from
+// the result, by cond(Sigma): no box, equal budget, n = 5 and 8. The polish keeps the Newton correction of
+// the multipliers at the weights it returns. Measured largest: 2.0e-14 at 1e4, 5.2e-11 at 1e6, 5.3e-10 at
+// 1e8 (4.8e-10, 3.3e-7 and 3.7e-2 with the least-squares multipliers the polish returned before).
+constexpr MultiplierCeiling kMultiplierCeilings[] = {
+    {1e4, 2e-13, 0.0}, {1e6, 5.2e-10, 0.0}, {1e8, 5.3e-9, 0.0}};
 
 TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
 {
@@ -341,15 +342,15 @@ TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
     {
         GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
     }
-    for (double condition : {1e4, 1e6, 1e8})
+    for (MultiplierCeiling ceiling : kMultiplierCeilings)
     {
         double worst = 0.0;
         for (std::size_t n : {5u, 8u})
         {
             for (std::uint64_t seed = 1; seed <= 4; ++seed)
             {
-                Shape shape{n, condition, 1.0, Shape::Budget::Equal, Shape::Box::None,
-                            false,     true,      401 + seed};
+                Shape shape{n, ceiling.condition, 1.0, Shape::Budget::Equal, Shape::Box::None,
+                            false, true, 401 + seed};
                 SCOPED_TRACE(po::testing::describe(shape));
                 po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
                 Result result = po::solve(generated.spec, generated.data).value();
@@ -357,12 +358,115 @@ TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
                 po::testing::ForwardError forward =
                     po::testing::forward_error(generated.spec, generated.data, result);
                 EXPECT_LE(forward.reference_over_floor, 1e-2);
-                EXPECT_LE(forward.multipliers, multiplier_ceiling(condition));
+                EXPECT_LE(forward.multipliers, ceiling.equalities);
                 worst = std::fmax(worst, forward.multipliers);
             }
         }
-        RecordProperty("worst_" + std::to_string(static_cast<int>(std::log10(condition))),
+        RecordProperty("worst_" + std::to_string(static_cast<int>(std::log10(ceiling.condition))),
                        ::testing::PrintToString(worst));
+    }
+}
+
+// The bound multipliers of the held weights of a result (beta != 0) against those of the KKT point refined in
+// long double from it, where beta_ref_j = (grad f - sum_k lambda_k grad h_k)_j is what row j leaves:
+// max_j abs(beta_j - beta_ref_j) over max(abs(lambda_budget*), abs(lambda_vol*) s, max_j abs(beta_ref_j)),
+// the size of a term of the stationarity. NaN where a Newton system of the refinement is singular, 0 with no
+// weight held.
+double bound_multiplier_error(const po::Spec& spec, const po::Data& data, const Result& result)
+{
+    constexpr int kSteps = 6;
+    std::vector<double> budget = po::testing::budget_of(spec, data.asset_count());
+    po::testing::WideKkt kkt = po::testing::wide_kkt_of(spec, result);
+    for (int step = 0; step < kSteps; ++step)
+    {
+        if (!po::testing::wide_newton_step(spec, data, budget, kkt))
+        {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+    }
+    po::testing::WideEqualities equalities = po::testing::wide_equalities(spec, data, kkt.weights);
+    std::vector<long double> reference = po::testing::wide_stationarity(data, budget, kkt, equalities);
+    long double scale = std::fmax(std::fabs(kkt.multipliers.front()),
+                                  std::fabs(kkt.multipliers.back()) * *spec.target_volatility);
+    long double distance = 0.0L;
+    for (std::size_t j = 0; j < result.weights.size(); ++j)
+    {
+        if (result.bound_multipliers[j] != 0.0)
+        {
+            scale = std::fmax(scale, std::fabs(reference[j]));
+            distance = std::fmax(distance, std::fabs(result.bound_multipliers[j] - reference[j]));
+        }
+    }
+    return static_cast<double>(distance / scale);
+}
+
+// The largest errors over the cases of one cond(Sigma), and those of the least-squares fit at the same
+// weights (least_squares_fit, which leaves out the H dw term of beta), where the free weights determine it.
+struct BoundTally
+{
+    int held = 0;
+    double equalities = 0.0;
+    double bounds = 0.0;
+    double fitted_bounds = 0.0;
+};
+
+void tally_bound_case(const Shape& shape, const MultiplierCeiling& ceiling, BoundTally& tally)
+{
+    SCOPED_TRACE(po::testing::describe(shape));
+    po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
+    const po::Spec& spec = generated.spec;
+    Result result = po::solve(spec, generated.data).value();
+    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    po::testing::expect_risk_parity_kkt(spec, generated.data, result, band_of(shape.condition));
+    po::testing::ForwardError forward = po::testing::forward_error(spec, generated.data, result);
+    EXPECT_LE(forward.reference_over_floor, 1e-2);
+    double bounds = bound_multiplier_error(spec, generated.data, result);
+    EXPECT_LE(forward.multipliers, ceiling.equalities);
+    EXPECT_LE(bounds, ceiling.bounds);
+    tally.held += static_cast<int>(
+        std::ranges::count_if(result.bound_multipliers, [](double beta) { return beta != 0.0; }));
+    tally.equalities = std::fmax(tally.equalities, forward.multipliers);
+    tally.bounds = std::fmax(tally.bounds, bounds);
+    std::optional<Result> fit = po::testing::least_squares_fit(spec, generated.data, result);
+    if (fit.has_value())
+    {
+        double fitted = bound_multiplier_error(spec, generated.data, *fit);
+        tally.fitted_bounds = std::fmax(tally.fitted_bounds, fitted);
+    }
+}
+
+// The same with a box, LongOnly or Capped (lower 0, upper 1.2 / n), both budgets, n = 5 and 8, 4 seeds: the
+// held weights and their beta, sign and complementarity included (expect_risk_parity_kkt), and beta by value
+// against the refined KKT point. Measured largest (equalities / beta): 1.9e-14 / 1.8e-14 at 1e4,
+// 2.6e-12 / 3.6e-13 at 1e6, 1.4e-10 / 1.5e-10 at 1e8; the beta of the least-squares fit at the same weights,
+// without the H dw term, reach 2.4e-10, 8.1e-10 and 1.2e-7.
+constexpr MultiplierCeiling kBoxMultiplierCeilings[] = {
+    {1e4, 1.9e-13, 1.8e-13}, {1e6, 2.6e-11, 3.6e-12}, {1e8, 1.4e-9, 1.5e-9}};
+
+TEST(RiskParityFuzz, TargetVolatilityBoundMultipliersByCondition)
+{
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the refinement has no extra precision";
+    }
+    for (MultiplierCeiling ceiling : kBoxMultiplierCeilings)
+    {
+        BoundTally tally;
+        for (std::size_t k = 0; k < 2 * 2 * 2 * 4; ++k)
+        {
+            Shape::Box box = k / 16 == 0 ? Shape::Box::LongOnly : Shape::Box::Capped;
+            Shape::Budget budget = k / 8 % 2 == 0 ? Shape::Budget::Equal : Shape::Budget::Uneven;
+            std::size_t n = k / 4 % 2 == 0 ? 5 : 8;
+            tally_bound_case(Shape{n, ceiling.condition, 1.0, budget, box, false, true, 402 + k % 4}, ceiling,
+                             tally);
+        }
+        std::string exponent = std::to_string(static_cast<int>(std::log10(ceiling.condition)));
+        RecordProperty("held_" + exponent, tally.held);
+        RecordProperty("equalities_" + exponent, ::testing::PrintToString(tally.equalities));
+        RecordProperty("bounds_" + exponent, ::testing::PrintToString(tally.bounds));
+        RecordProperty("fitted_bounds_" + exponent, ::testing::PrintToString(tally.fitted_bounds));
+        EXPECT_GE(tally.held, 20);
+        EXPECT_GT(tally.fitted_bounds, 10.0 * ceiling.bounds);
     }
 }
 

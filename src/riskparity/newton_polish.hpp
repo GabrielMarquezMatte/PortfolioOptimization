@@ -10,11 +10,11 @@ namespace po::riskparity
 // over the free weights are independent.
 struct MultiplierCorrection
 {
-    // The weights of the point. When accepted, its multipliers plus the correction: lambda + dlambda for the
-    // equalities solved for, and for a held weight beta_j = (grad f - sum_k lambda_k grad h_k)_j + (H dw)_j
-    // at the new lambda, H the Hessian of the Lagrangian and dw the step of the free weights. Otherwise the
-    // multipliers of the point.
-    KktPoint point;
+    // The point to report: the weights of the point and, when accepted, its multipliers plus the correction:
+    // lambda + dlambda for the equalities solved for, and for a held weight
+    // beta_j = (grad f - sum_k lambda_k grad h_k)_j + (H dw)_j at the new lambda, H the Hessian of the
+    // Lagrangian and dw the step of the free weights. Otherwise the multipliers of the point.
+    KktPoint reported_point;
     // |dlambda|, and |dlambda_2| of a second solve from the corrected multipliers; NaN where that solve was
     // not made.
     double change;
@@ -32,15 +32,16 @@ struct PolishResult
 {
     // The weights of the start when no step was taken, those it names at a bound held there exactly. Its
     // multipliers are always the settled ones: least squares over the free weights for the equalities, the
-    // stationarity rows for the bounds. The KKT gate checks this point.
-    KktPoint point;
-    // corrected_multipliers at point: the multipliers to report with its weights.
+    // stationarity rows for the bounds. The KKT gate checks this point; its multipliers are not the ones to
+    // report.
+    KktPoint least_squares_point;
+    // corrected_multipliers at least_squares_point: correction.reported_point is what to report.
     MultiplierCorrection correction;
-    // largest(residual_of(point)): the KKT residual in units of its noise.
+    // largest(residual_of(least_squares_point)): the KKT residual in units of its noise.
     double residual;
-    // Newton steps taken to reach point.
+    // Newton steps taken to reach least_squares_point.
     int steps;
-    // The residual of point is below that of the start as it was given.
+    // The residual of least_squares_point is below that of the start as it was given.
     bool improved;
 };
 

@@ -296,7 +296,7 @@ TEST(RiskParityDescentFuzz, DISABLED_MeasurePolishOfUnconverged)
         po::riskparity::KktPoint point{run.result.weights, run.result.equality_multipliers,
                                        run.result.bound_multipliers};
         po::riskparity::PolishResult polished = po::riskparity::newton_polish(problem, point);
-        bool kkt = po::riskparity::is_kkt_point(problem, polished.point);
+        bool kkt = po::riskparity::is_kkt_point(problem, polished.least_squares_point);
         repaired += kkt;
         std::printf("%s | stop %d | polish steps %d | KKT %d\n",
                     po::testing::describe(run.shape).GetString().c_str(),

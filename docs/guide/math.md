@@ -430,11 +430,16 @@ for a weight with no finite bound. Each is the derivative of the optimal `f` wit
 **What the weights are good to.** With a target volatility and few or no active bounds at `cond(Sigma)` around 1e8, the
 weights are determined only to the rounding of the KKT residual amplified by the conditioning of the problem: an `OPTIMAL`
 result can be up to about 1e-4 relative from the exact KKT point (measured up to 3.7e-5 over 229 results), while its
-objective value is right to its band. This covers the weights and the value, **not the multipliers**: with a target
-volatility the multipliers are settled by least squares at the rounded weights, and their measured relative error is up
-to 4.8e-10 at `cond(Sigma) = 1e4`, 3.3e-7 at 1e6 and 3.7e-2 at 1e8 (bands 1e-10, 1e-9, 1e-7); an independent 80-digit
-refinement found 0.3 to 2.1 (`lambda_vol`) and 2.4 to 17 (`lambda_budget`) at 1e10, where an `OPTIMAL` result is not
-validated. `RiskParity.MultipliersAreDerivatives` runs on well-conditioned data only. A solve with a target volatility, no box and `N = 50` at `cond(Sigma) = 1e8` can take
+objective value is right to its band. **The multipliers** are not settled by least squares at the rounded weights
+alone, which loses the `H dw` term of the Newton step (relative errors of 3.7e-2 at `cond(Sigma) = 1e8` were measured
+that way): one more Newton solve at the returned weights corrects them, `lambda + dlambda` for the equalities and
+`beta_j = (grad f - A'lambda)_j + (H dw)_j` for a held weight, kept only when a safeguard accepts it (full rank, a
+second solve that contracts, a stationarity within the noise of the gate and the signs of the held bounds). With a
+target volatility their measured relative error is then up to 2.0e-14 at `cond(Sigma) = 1e4`, 5.2e-11 at 1e6 and
+5.3e-10 at 1e8 (bands 1e-10, 1e-9, 1e-7), bound multipliers included; measured, not derived. At 1e10 an `OPTIMAL`
+result is not validated: the correction reaches about 2e-6 where it is accepted and is refused (rank) on some shapes,
+which then keep least-squares multipliers wrong by `O(1)`. `RiskParity.MultipliersAreDerivatives` runs on
+well-conditioned data only. A solve with a target volatility, no box and `N = 50` at `cond(Sigma) = 1e8` can take
 about 10 s; at `N <= 20` it takes at most about 0.15 s. See
 [validation.md](validation.md#numerical-decisions-of-risk_parity).
 
