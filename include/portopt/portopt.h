@@ -227,6 +227,7 @@ PO_API po_status po_data_set_risk_free(po_data* d, double rate);
    po_last_error(), and the earlier series is kept. */
 PO_API po_status po_data_set_returns(po_data* d, const double* returns, const double* benchmark, size_t t);
 
+/* The number of assets n given to po_data_create (cash not counted). */
 PO_API po_status po_data_asset_count(const po_data* d, size_t* out);
 
 /* The asset count, plus one when a risk-free rate was set. */
