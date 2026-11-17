@@ -306,10 +306,26 @@ LinearSystem newton_system(const KktEvaluation& evaluation, const Unknowns& unkn
     return system;
 }
 
-// The solution of the Newton system by a Householder QR of its matrix; none when there are no free weights or
-// the matrix is rank deficient to working precision: the active gradients are dependent or the Hessian is
-// singular along the constraints.
-std::optional<std::vector<double>> solution_of(LinearSystem system, const Unknowns& unknowns)
+// What solution_of does with a matrix that fails the rank test of the QR (linalg::has_full_column_rank).
+enum class RankTest
+{
+    // No solution: the step of the weights.
+    Required,
+    // The solution all the same, when finite: the correction of the multipliers, which has its own tests.
+    Ignored
+};
+
+bool all_finite(std::span<const double> values)
+{
+    return std::ranges::all_of(values, [](double value) { return std::isfinite(value); });
+}
+
+// The solution of the Newton system by a Householder QR of its matrix; none when there are no free weights,
+// when an entry of the solution is not finite, or, under RankTest::Required, when the matrix is rank
+// deficient to working precision: the active gradients are dependent or the Hessian is singular along the
+// constraints.
+std::optional<std::vector<double>> solution_of(LinearSystem system, const Unknowns& unknowns,
+                                               RankTest rank_test)
 {
     std::optional<std::vector<double>> solution;
     double scale = largest_magnitude(system.matrix);
@@ -318,11 +334,16 @@ std::optional<std::vector<double>> solution_of(LinearSystem system, const Unknow
         return solution;
     }
     linalg::Qr qr = linalg::householder_qr(system.matrix, system.size, system.size);
-    if (!linalg::has_full_column_rank(qr))
+    if (rank_test == RankTest::Required && !linalg::has_full_column_rank(qr))
     {
         return solution;
     }
-    solution.emplace(linalg::least_squares(qr, std::move(system.rhs)));
+    std::vector<double> values = linalg::least_squares(qr, std::move(system.rhs));
+    if (!all_finite(values))
+    {
+        return solution;
+    }
+    solution.emplace(std::move(values));
     return solution;
 }
 
@@ -357,7 +378,7 @@ std::optional<Candidate> newton_step(const KktProblem& problem, const Candidate&
     std::optional<Candidate> next;
     Unknowns unknowns = unknowns_of(candidate.position.sides, candidate.evaluation);
     std::optional<std::vector<double>> step =
-        solution_of(newton_system(candidate.evaluation, unknowns), unknowns);
+        solution_of(newton_system(candidate.evaluation, unknowns), unknowns, RankTest::Required);
     if (!step.has_value())
     {
         return next;
@@ -367,7 +388,10 @@ std::optional<Candidate> newton_step(const KktProblem& problem, const Candidate&
 }
 
 // The step of the free weights and the change of the multipliers of the kept equalities that the Newton
-// system at a point gives.
+// system at a point gives. The rank test of the QR does not veto it: at cond(Sigma) = 1e8 with n >= 12 the
+// scaled KKT matrix fails it on about half the shapes measured, while the solution corrects the multipliers
+// to 3.8e-10 or better there (docs/guide/validation.md); contraction, stationarity and sides decide
+// (corrected_multipliers).
 struct NewtonCorrection
 {
     std::vector<double> weights;
@@ -379,7 +403,8 @@ std::optional<NewtonCorrection> newton_correction(const KktEvaluation& evaluatio
     std::optional<NewtonCorrection> correction;
     LinearSystem system = newton_system(evaluation, unknowns);
     std::vector<double> scales = system.scales;
-    std::optional<std::vector<double>> solution = solution_of(std::move(system), unknowns);
+    std::optional<std::vector<double>> solution =
+        solution_of(std::move(system), unknowns, RankTest::Ignored);
     if (!solution.has_value())
     {
         return correction;
@@ -476,8 +501,9 @@ MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktP
     result.second_change = norm_of(second->multipliers);
     bool contracts = result.second_change <= 0.5 * result.change;
     // The factor of the KKT gate, measured, not derived: near sigma_min a correction that contracts can still
-    // leave 958 times the noise, while every one that improved the multipliers left at most 0.50
-    // (docs/guide/validation.md, "The Newton polish").
+    // leave 958 times the noise and multipliers ten times worse than least squares, while away from it every
+    // correction measured left at most 0.38 (docs/guide/validation.md, "The Newton polish"). Near sigma_min
+    // the factor does not separate good corrections from bad ones; it only refuses the worst.
     bool stationary = residual_of(problem, corrected, again).stationarity <= kKktNoiseFactor;
     if (!contracts || !stationary || !keeps_sides(corrected.bound_multipliers, sides))
     {
@@ -492,7 +518,7 @@ PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
 {
     double start_residual = largest(residual_of(problem, start, evaluate_kkt(problem, start)));
     std::optional<Candidate> candidate(std::in_place, held_start(problem, start));
-    PolishResult result{candidate->position.point, {}, candidate->residual, 0, false};
+    PolishResult result{candidate->position.point, candidate->residual, 0, false};
     for (int step = 1; step <= kMaxSteps && !(result.residual <= kNoiseFloor); ++step)
     {
         candidate = newton_step(problem, *candidate);
@@ -505,7 +531,6 @@ PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
         result.steps = step;
     }
     result.improved = improves_on(result.residual, start_residual);
-    result.correction = corrected_multipliers(problem, result.least_squares_point);
     return result;
 }
 

@@ -222,7 +222,8 @@ Result stationary_point(const KktProblem& problem, std::vector<double> start, in
         iterations += polished.steps;
         if (is_kkt_point(problem, polished.least_squares_point))
         {
-            return kkt_point(problem, std::move(polished.correction.reported_point), iterations);
+            MultiplierCorrection correction = corrected_multipliers(problem, polished.least_squares_point);
+            return kkt_point(problem, std::move(correction.reported_point), iterations);
         }
         start = std::move(stage.point.weights);
     }

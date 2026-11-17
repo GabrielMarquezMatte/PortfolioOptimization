@@ -335,8 +335,10 @@ MultiplierErrors multiplier_errors(const po::testing::GeneratedRiskParity& gener
     KktProblem problem{spec, generated.data, spec.risk_budget};
     PolishResult polished = po::riskparity::newton_polish(problem, point_of(spec, solved));
     EXPECT_EQ(polished.steps, 0);
-    EXPECT_TRUE(polished.correction.accepted);
-    EXPECT_EQ(polished.correction.reported_point.weights, solved.weights);
+    po::riskparity::MultiplierCorrection correction =
+        po::riskparity::corrected_multipliers(problem, polished.least_squares_point);
+    EXPECT_TRUE(correction.accepted);
+    EXPECT_EQ(correction.reported_point.weights, solved.weights);
     Result least_squares = as_result(spec, polished.least_squares_point);
     return MultiplierErrors{po::testing::forward_error(spec, generated.data, least_squares).multipliers,
                             po::testing::forward_error(spec, generated.data, solved).multipliers};
@@ -424,7 +426,7 @@ TEST(NewtonPolish, RejectsACorrectionThatChangesTheSideOfABound)
     KktProblem problem{spec, generated.data, spec.risk_budget};
     PolishResult polished = po::riskparity::newton_polish(problem, point_of(spec, solved));
     ASSERT_EQ(polished.steps, 0);
-    ASSERT_TRUE(polished.correction.accepted);
+    ASSERT_TRUE(po::riskparity::corrected_multipliers(problem, polished.least_squares_point).accepted);
     KktPoint point = polished.least_squares_point;
     std::size_t k = 0;
     while (k < point.weights.size() && point.bound_multipliers[k] <= 0.0)

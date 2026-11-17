@@ -330,9 +330,12 @@ struct MultiplierCeiling
 };
 
 // The multipliers of the target-volatility path against those of the KKT point refined in long double from
-// the result, by cond(Sigma): no box, equal budget, n = 5 and 8. The polish keeps the Newton correction of
-// the multipliers at the weights it returns. Measured largest: 2.0e-14 at 1e4, 5.2e-11 at 1e6, 5.3e-10 at
-// 1e8 (4.8e-10, 3.3e-7 and 3.7e-2 with the least-squares multipliers the polish returned before).
+// the result, by cond(Sigma): no box, equal budget, n = 5, 8, 12 and 20. The polish keeps the Newton
+// correction of the multipliers at the weights it returns. Measured largest: 2.0e-14 at 1e4, 5.2e-11 at 1e6,
+// 5.3e-10 at 1e8, all at n = 5 (4.8e-10, 3.3e-7 and 3.7e-2 with the least-squares multipliers the polish
+// returned before). At 1e8 the scaled KKT matrix of n = 12 (seed 404) and n = 20 (seeds 403 to 405) fails
+// the rank test of the QR; with that test as a veto they kept least-squares multipliers wrong by up to
+// 4.1e-2, corrected they are within 2.9e-11.
 constexpr MultiplierCeiling kMultiplierCeilings[] = {
     {1e4, 2e-13, 0.0}, {1e6, 5.2e-10, 0.0}, {1e8, 5.3e-9, 0.0}};
 
@@ -345,7 +348,7 @@ TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
     for (MultiplierCeiling ceiling : kMultiplierCeilings)
     {
         double worst = 0.0;
-        for (std::size_t n : {5u, 8u})
+        for (std::size_t n : {5u, 8u, 12u, 20u})
         {
             for (std::uint64_t seed = 1; seed <= 4; ++seed)
             {
@@ -438,7 +441,7 @@ void tally_bound_case(const Shape& shape, const MultiplierCeiling& ceiling, Boun
 // The same with a box, LongOnly or Capped (lower 0, upper 1.2 / n), both budgets, n = 5 and 8, 4 seeds: the
 // held weights and their beta, sign and complementarity included (expect_risk_parity_kkt), and beta by value
 // against the refined KKT point. Measured largest (equalities / beta): 1.9e-14 / 1.8e-14 at 1e4,
-// 2.6e-12 / 3.6e-13 at 1e6, 1.4e-10 / 1.5e-10 at 1e8; the beta of the least-squares fit at the same weights,
+// 2.6e-12 / 3.5e-13 at 1e6, 1.4e-10 / 1.5e-10 at 1e8; the beta of the least-squares fit at the same weights,
 // without the H dw term, reach 2.4e-10, 8.1e-10 and 1.2e-7.
 constexpr MultiplierCeiling kBoxMultiplierCeilings[] = {
     {1e4, 1.9e-13, 1.8e-13}, {1e6, 2.6e-11, 3.6e-12}, {1e8, 1.4e-9, 1.5e-9}};

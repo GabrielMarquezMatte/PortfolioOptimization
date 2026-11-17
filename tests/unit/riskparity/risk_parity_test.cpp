@@ -357,20 +357,29 @@ void expect_near_multipliers(const std::vector<double>& actual, const std::vecto
     }
 }
 
+// The least-squares point of a polish of a result and the correction of its multipliers there.
+struct Polished
+{
+    po::riskparity::KktPoint least_squares;
+    po::riskparity::MultiplierCorrection correction;
+};
+
 // The polish of a result settles the same weights again (no step): its least-squares multipliers are those
 // the KKT gate checked, and its correction the multipliers po::solve returned, both to the rounding of the
 // least-squares fit, which depends on the multipliers it starts from.
-po::riskparity::PolishResult polish_of(const Spec& spec, const Data& data, const Result& result)
+Polished polish_of(const Spec& spec, const Data& data, const Result& result)
 {
     std::vector<double> budget = po::riskparity::risk_budget_of(spec, data);
     po::riskparity::KktProblem problem{spec, data, budget};
     po::riskparity::PolishResult polished =
         po::riskparity::newton_polish(problem, kkt_point_of(spec, result));
     EXPECT_EQ(polished.steps, 0);
-    expect_near_multipliers(polished.correction.reported_point.equality_multipliers,
+    Polished settled{polished.least_squares_point,
+                     po::riskparity::corrected_multipliers(problem, polished.least_squares_point)};
+    expect_near_multipliers(settled.correction.reported_point.equality_multipliers,
                             kkt_point_of(spec, result).equality_multipliers);
-    expect_near_multipliers(polished.correction.reported_point.bound_multipliers, result.bound_multipliers);
-    return polished;
+    expect_near_multipliers(settled.correction.reported_point.bound_multipliers, result.bound_multipliers);
+    return settled;
 }
 
 // s = sigma_min (1 + delta), where the volatility multiplier grows like 1 / sqrt(delta) and the gradients of
@@ -392,7 +401,7 @@ TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
             spec.target_volatility = sigma_min * (1.0 + delta);
             Result result = solved(spec, data);
             expect_stationary(spec, data, result);
-            po::riskparity::PolishResult polished = polish_of(spec, data, result);
+            Polished polished = polish_of(spec, data, result);
             kept += polished.correction.accepted ? 0 : 1;
             // Where the correction, though it contracts, would leave a stationarity far above its noise
             // (docs/guide/validation.md): the safeguard keeps the least-squares multipliers.
@@ -430,9 +439,9 @@ TEST(RiskParity, TargetReturnOnlyMultipliersUnchanged)
                 po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
                 Result result = solved(generated.spec, generated.data);
                 ASSERT_EQ(result.status, SolveStatus::Optimal);
-                po::riskparity::PolishResult polished = polish_of(generated.spec, generated.data, result);
+                Polished polished = polish_of(generated.spec, generated.data, result);
                 Result least_squares = result;
-                const po::riskparity::KktPoint& fitted = polished.least_squares_point;
+                const po::riskparity::KktPoint& fitted = polished.least_squares;
                 least_squares.budget_multiplier = fitted.equality_multipliers.front();
                 least_squares.target_return_multiplier = fitted.equality_multipliers.back();
                 least_squares.bound_multipliers = fitted.bound_multipliers;

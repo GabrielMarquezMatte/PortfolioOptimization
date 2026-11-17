@@ -156,7 +156,9 @@ Point point_of(const po::testing::GeneratedRiskParity& generated, const Result& 
     po::riskparity::PolishResult polished = po::riskparity::newton_polish(problem, start);
     EXPECT_EQ(polished.steps, 0);
     Result least_squares = with_multipliers(result, polished.least_squares_point.equality_multipliers);
-    return Point{std::move(polished.least_squares_point), std::move(polished.correction),
+    po::riskparity::MultiplierCorrection correction =
+        po::riskparity::corrected_multipliers(problem, polished.least_squares_point);
+    return Point{std::move(polished.least_squares_point), std::move(correction),
                  refined(generated.spec, generated.data, least_squares).multipliers};
 }
 

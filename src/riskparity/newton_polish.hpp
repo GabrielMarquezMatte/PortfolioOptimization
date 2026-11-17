@@ -19,10 +19,12 @@ struct MultiplierCorrection
     // not made.
     double change;
     double second_change;
-    // Both systems have full rank to working precision, the second correction is at most half the first (the
-    // solve is in its region of convergence), the corrected multipliers leave a stationarity within
-    // kKktNoiseFactor of its noise (where the system is so ill-conditioned that the correction is rounding,
-    // it is not), and every held beta keeps the sign of its bound.
+    // Both systems have a finite solution, the second correction is at most half the first (the solve is in
+    // its region of convergence), the corrected multipliers leave a stationarity within kKktNoiseFactor of
+    // its noise (where the system is so ill-conditioned that the correction is rounding, it is not), and
+    // every held beta keeps the sign of its bound. The rank test of the QR, which a step of the polish
+    // requires, is not one of the conditions: the scaled KKT matrix fails it on shapes where the correction
+    // is right.
     bool accepted;
 };
 
@@ -32,11 +34,9 @@ struct PolishResult
 {
     // The weights of the start when no step was taken, those it names at a bound held there exactly. Its
     // multipliers are always the settled ones: least squares over the free weights for the equalities, the
-    // stationarity rows for the bounds. The KKT gate checks this point; its multipliers are not the ones to
-    // report.
+    // stationarity rows for the bounds. The KKT gate checks this point; the multipliers to report are those
+    // of corrected_multipliers at it.
     KktPoint least_squares_point;
-    // corrected_multipliers at least_squares_point: correction.reported_point is what to report.
-    MultiplierCorrection correction;
     // largest(residual_of(least_squares_point)): the KKT residual in units of its noise.
     double residual;
     // Newton steps taken to reach least_squares_point.
@@ -53,8 +53,9 @@ struct PolishResult
 // sign is released. That settling is done at the start too, whether or not a step follows. A step is
 // accepted only when it decreases the KKT residual, feasibility included, measured in units of its noise; the
 // first step that does not ends the polish, and so does a residual within its noise. A local method that
-// converges to any stationary point: the start decides which. At the point it ends at, the multipliers are
-// corrected once more by corrected_multipliers, which neither moves the weights nor decides any step.
+// converges to any stationary point: the start decides which. The multipliers of the point it ends at are
+// corrected by corrected_multipliers, which the solver calls once that point passes the KKT gate; the
+// correction neither moves the weights nor decides any step.
 PolishResult newton_polish(const KktProblem& problem, const KktPoint& start);
 
 } // namespace po::riskparity
