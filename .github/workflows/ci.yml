@@ -90,6 +90,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
+      # One version in CMakeLists.txt and python/pyproject.toml; release.yml also checks the tag and the CHANGELOG.
+      - name: Version check (Linux)
+        if: runner.os == 'Linux'
+        run: uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py check
+
       - name: Python tests
         shell: bash
         env:

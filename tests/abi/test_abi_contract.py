@@ -32,9 +32,9 @@ class ContractLines(unittest.TestCase):
         )
 
     def test_typedefs_and_platform_macros(self) -> None:
-        header = "#define PO_API __declspec(dllexport)\ntypedef int32_t po_status;\ntypedef struct po_context po_context;"
+        header = "#define PO_API __declspec(dllexport)\ntypedef int32_t po_status;\ntypedef struct po_spec po_spec;"
         self.assertEqual(
-            abi_contract.contract_lines(header), ["typedef int32_t po_status", "typedef struct po_context po_context"]
+            abi_contract.contract_lines(header), ["typedef int32_t po_status", "typedef struct po_spec po_spec"]
         )
 
     def test_parameter_names_do_not_matter(self) -> None:
