@@ -314,3 +314,46 @@ and 1.43 (`cholesky/100`, `qr/100`): noise of the desktop. All 70 cases at n ≤
 n = 1000 are bit for bit identical. In the assembly (`objective.cpp.obj`, everything inlined in `gauss_newton`) the
 block loop is four `movupd` loads, the broadcasts and lane swaps of the two pairs (`unpcklpd`, `unpckhpd`,
 `shufpd`), then 8 `mulpd` and 8 `addpd` into 8 registers that hold the 16 sums; they are stored once, after the loop.
+
+### L7: J0 kept along the MAX_RETURN path
+
+Every `qp::solve` built J0 = L^-T from its factor (`empty_active_set`, n³/6 multiply-subtracts after L1), and every
+point of the MAX_RETURN path solves Q(t) with the same factor, that of `Data`: only the linear term and the rows
+change. `qp::solve(problem, cache)` takes a `qp::BasisCache` (the factor it was built from and its J0): it starts
+from a copy of the cached J0 when `problem.hessian_factor` has the same bits as the cached factor (one `memcmp` of n²
+doubles), and builds J0 and replaces the cache otherwise. The `Path` of a solve holds one cache. The key is the bits
+of the factor, so a problem with another factor (even one that compares equal, as -0 and +0 do) never starts from
+the wrong J0, and J0 is the output of the same code on the same input whether it is cached or not. `empty_active_set`
+is now `active_set_from(initial_basis(factor, n), n)`, the same operations. Two more allocations per path (the cached
+factor and J0); each solve still copies J0 into its own basis.
+
+`GoldfarbIdnani.BasisCacheIsBitIdenticalToAFreshBasis` solves, for n and condition as above, six points of a
+long-only path (linear term `-t mu`, a row held as an equality and released again), each twice with the cache, and
+between them a problem with the factor 2 L, comparing every field of the solution by `memcmp` with `qp::solve`
+without the cache, and checking that the cache holds the factor of the last problem. Building J0 only once whatever
+the factor makes it fail. `MaxReturn.PathBasisCacheIsBitIdenticalToAFreshBasis` runs `solve_at` on two paths of the
+same spec (free, long-only, box, leverage, cash; n = 12) at t = 0 and 1e-4 doubling to 40, emptying the second path's
+cache before each point: the points (solution, volatility, shift) are the same bits, and after each point the problem's
+factor and the cached factor still have the bits of `Data`'s. On the benchmark instances a temporary count in
+`qp::solve` (not committed) gave one rebuild per path and a reuse at every other point: 2, 6, 7, 6, 7 reuses for
+`free`, `long_only`, `box`, `leverage`, `cash` at n = 10; 3, 9, 9, 21, 10 at n = 100; 3, 10, 10, 55, 10 at n = 1000.
+
+| Measure | A (+ L4) | B (+ L7) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Solve/max_return/free/100` (9 repetitions, two interleaved pairs) | 283 and 261 µs | 167 and 149 µs | 0.59 and 0.57 |
+| `BM_Solve/max_return/long_only/100` | 3.04 and 3.16 ms | 2.79 and 3.04 ms | 0.92 and 0.96 |
+| `BM_Solve/max_return/box/100` | 3.63 and 3.83 ms | 3.37 and 3.12 ms | 0.93 and 0.81 |
+| `BM_Solve/max_return/leverage/100` | 11.4 and 9.80 ms | 10.5 and 8.54 ms | 0.92 and 0.87 |
+| `BM_Solve/max_return/cash/100` | 3.32 and 3.45 ms | 2.82 and 2.91 ms | 0.85 and 0.84 |
+| `max_return/free/1000` (one solve, `portopt_profile`) | 189 ms | 91.7 ms | 0.49 |
+| `max_return/long_only/1000` | 2.41 s | 2.18 s | 0.90 |
+| `max_return/box/1000` | 2.46 s | 1.98 s | 0.80 |
+| `max_return/leverage/1000` | 15.9 s | 14.4 s | 0.91 |
+| `max_return/cash/1000` | 2.26 s | 2.16 s | 0.96 |
+
+The n = 10 cases moved by 0.84 to 1.10 in both directions (J0 costs 0.5 µs there), and the cases of the quick suite
+that do not follow a path by 0.95 to 1.47: noise of the desktop. The saving at n = 1000, 2.4 s over the five cases, is
+under the 3.7 s of the profile's estimate (88 reused bases × 45 ms): each point still copies the 8 MB of J0, and the
+single solves are not repeated. All 70 cases at n ≤ 100 and the 15 `max_return` cases of the three sizes are bit for
+bit identical. In the assembly (`goldfarb_idnani.cpp.obj`) the check is one `call memcmp` and the copy a `memcpy`;
+both overloads of `qp::solve` call the same out-of-line `solve_factored`.

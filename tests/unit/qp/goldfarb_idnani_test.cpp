@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -508,6 +509,79 @@ TEST(GoldfarbIdnani, FamilyRowHeldAsEquality)
     problem.equality_rhs.push_back(-*shape.leverage);
     problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(n, 0.0), -*shape.leverage};
     po::testing::expect_kkt(problem, po::qp::solve(problem), 1e-9);
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+void expect_same_solution(const Solution& cached, const Solution& fresh)
+{
+    EXPECT_EQ(cached.status, fresh.status);
+    EXPECT_EQ(cached.iterations, fresh.iterations);
+    EXPECT_TRUE(same_bits(cached.x, fresh.x));
+    EXPECT_TRUE(same_bits(cached.equality_multipliers, fresh.equality_multipliers));
+    EXPECT_TRUE(same_bits(cached.inequality_multipliers, fresh.inequality_multipliers));
+    EXPECT_EQ(cached.active_inequalities, fresh.active_inequalities);
+    EXPECT_TRUE(same_bits(cached.gross_exposure_signs, fresh.gross_exposure_signs));
+    EXPECT_TRUE(same_bits(cached.gross_exposure_multipliers, fresh.gross_exposure_multipliers));
+}
+
+// x >= 0 and 1'x = 1 over G = Sigma with its factor, the shape of a MAX_RETURN path.
+Problem path_problem(std::size_t n, double condition)
+{
+    Problem problem;
+    problem.n = n;
+    problem.hessian = po::testing::random_covariance(n, n + 3, condition);
+    problem.hessian_factor = po::linalg::cholesky(problem.hessian, n).value();
+    problem.linear.assign(n, 0.0);
+    problem.equality_rows.assign(n, 1.0);
+    problem.equality_rhs = {1.0};
+    problem.inequality_rows.assign(n * n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        problem.inequality_rows[i * n + i] = 1.0;
+    }
+    problem.inequality_rhs.assign(n, 0.0);
+    return problem;
+}
+
+// The points of a path share one factor: the linear term moves with t and a row is held as an equality and
+// released again. A second problem with another factor (2 L) between them must not reuse the first one's
+// basis.
+TEST(GoldfarbIdnani, BasisCacheIsBitIdenticalToAFreshBasis)
+{
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        for (double condition : {1e2, 1e8})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", condition = " << condition);
+            Problem problem = path_problem(n, condition);
+            Problem other = problem;
+            for (double& entry : other.hessian_factor)
+            {
+                entry *= 2.0;
+            }
+            std::vector<double> excess = po::testing::random_vector(n, n + 5, 0.02, 0.12);
+            po::qp::BasisCache cache;
+            for (int point = 0; point < 6; ++point)
+            {
+                double t = 0.05 * point;
+                for (std::size_t i = 0; i < n; ++i)
+                {
+                    problem.linear[i] = -t * excess[i];
+                }
+                problem.equality_rows.resize(n * (1 + point % 2), 1.0);
+                problem.equality_rhs.resize(1 + point % 2, 1.0);
+                expect_same_solution(po::qp::solve(problem, cache), po::qp::solve(problem));
+                EXPECT_TRUE(same_bits(cache.factor, problem.hessian_factor));
+                expect_same_solution(po::qp::solve(problem, cache), po::qp::solve(problem));
+                expect_same_solution(po::qp::solve(other, cache), po::qp::solve(other));
+                EXPECT_TRUE(same_bits(cache.factor, other.hessian_factor));
+            }
+        }
+    }
 }
 
 } // namespace

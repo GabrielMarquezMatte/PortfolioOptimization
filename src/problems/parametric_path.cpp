@@ -274,7 +274,7 @@ PathPoint solve_with(Path& path, const Shift& shift, double t)
     {
         hold_face(problem, shift.face);
     }
-    PathPoint point{t, qp::solve(problem), kNaN, shift};
+    PathPoint point{t, qp::solve(problem, path.basis), kNaN, shift};
     if (held_as_equality(shift.face))
     {
         release_face(problem, shift.face, point.solution);
@@ -602,7 +602,7 @@ Path make_path(const Spec& spec, const Data& data)
     std::vector<double> excess = excess_of(data);
     Shift base = base_shift(translation, excess);
     return Path{std::move(translation), std::move(excess), data.covariance_factor(), *spec.max_volatility,
-                std::move(base), Shift{}, 0};
+                std::move(base), Shift{}, 0, qp::BasisCache{}};
 }
 
 // Without a budget, the common mean of mu~ falls on the inequality face that holds the portfolio once it is

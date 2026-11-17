@@ -98,20 +98,32 @@ inline void transpose_in_place(std::span<double> square, std::size_t n)
     }
 }
 
-// The entries below the diagonal of J0 stay +0, which is 0 / L_ii for the positive diagonal of a Cholesky
-// factor.
-inline ActiveSet empty_active_set(std::span<const double> factor, std::size_t n)
+// J0 = L^{-T} by columns. The entries below its diagonal stay +0, which is 0 / L_ii for the positive diagonal
+// of a Cholesky factor.
+inline std::vector<double> initial_basis(std::span<const double> factor, std::size_t n)
+{
+    std::vector<double> basis(n * n, 0.0);
+    inverse_transposed_by_rows(factor, n, basis);
+    transpose_in_place(basis, n);
+    return basis;
+}
+
+// No active constraint, with the basis J0 of initial_basis.
+inline ActiveSet active_set_from(std::vector<double> basis, std::size_t n)
 {
     ActiveSet set;
     set.n = n;
-    set.basis.assign(n * n, 0.0);
-    inverse_transposed_by_rows(factor, n, set.basis);
-    transpose_in_place(set.basis, n);
+    set.basis = std::move(basis);
     set.triangle.assign(n * n, 0.0);
     set.projection.assign(n, 0.0);
     set.primal_direction.assign(n, 0.0);
     set.dual_direction.assign(n, 0.0);
     return set;
+}
+
+inline ActiveSet empty_active_set(std::span<const double> factor, std::size_t n)
+{
+    return active_set_from(initial_basis(factor, n), n);
 }
 
 inline Givens make_givens(double first, double second)

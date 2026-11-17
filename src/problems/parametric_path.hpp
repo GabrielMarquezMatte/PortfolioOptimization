@@ -8,6 +8,7 @@
 #include "core/data.hpp"
 #include "core/spec.hpp"
 #include "problems/constraints.hpp"
+#include "qp/goldfarb_idnani.hpp"
 #include "qp/problem.hpp"
 
 namespace po::problems
@@ -65,6 +66,8 @@ struct Path
     Shift base;
     Shift face;
     int iterations = 0;
+    // Every point is solved with the factor of Data, so J0 is built once.
+    qp::BasisCache basis;
 };
 
 // solution holds the multipliers of Q(t) whatever the shift it was solved with; shift is that shift.

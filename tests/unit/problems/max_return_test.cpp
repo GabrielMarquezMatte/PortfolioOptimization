@@ -6,12 +6,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <vector>
 
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
+#include "problems/parametric_path.hpp"
+#include "qp/goldfarb_idnani.hpp"
 #include "random_covariance.hpp"
 #include "solve/solve.hpp"
 #include "user_kkt.hpp"
@@ -673,6 +676,63 @@ TEST(MaxReturn, FaceShiftCashMultiplier)
         EXPECT_GT(crossing.bound_multipliers[n], 0.0);
     }
     EXPECT_EQ(on_face, 5);
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
+}
+
+void expect_same_point(const po::problems::PathPoint& cached, const po::problems::PathPoint& fresh)
+{
+    const po::qp::Solution& a = cached.solution;
+    const po::qp::Solution& b = fresh.solution;
+    EXPECT_EQ(a.status, b.status);
+    EXPECT_EQ(a.iterations, b.iterations);
+    EXPECT_TRUE(same_bits(a.x, b.x));
+    EXPECT_TRUE(same_bits(a.equality_multipliers, b.equality_multipliers));
+    EXPECT_TRUE(same_bits(a.inequality_multipliers, b.inequality_multipliers));
+    EXPECT_EQ(a.active_inequalities, b.active_inequalities);
+    EXPECT_TRUE(same_bits(a.gross_exposure_signs, b.gross_exposure_signs));
+    EXPECT_TRUE(same_bits(a.gross_exposure_multipliers, b.gross_exposure_multipliers));
+    EXPECT_EQ(std::memcmp(&cached.volatility, &fresh.volatility, sizeof(double)), 0);
+    EXPECT_TRUE(same_bits(cached.shift.excess, fresh.shift.excess));
+}
+
+// Every point of the path is solved with the factor of Data, held unchanged by the path's problem, so the
+// basis of the first point is reused at every later one: the points equal those of a path whose cache is
+// emptied before each of them.
+TEST(MaxReturn, PathBasisCacheIsBitIdenticalToAFreshBasis)
+{
+    constexpr std::size_t n = 12;
+    Data data = random_data(n, 41);
+    Data with_cash = random_data(n, 41);
+    with_cash.set_risk_free(kRiskFree);
+    Spec box = long_only();
+    box.upper = 0.3;
+    struct Case
+    {
+        Spec bounds;
+        const Data* data;
+    };
+    for (const Case& shape : {Case{Spec{}, &data}, Case{long_only(), &data}, Case{box, &data},
+                              Case{leveraged(1.5), &data}, Case{long_only(), &with_cash}})
+    {
+        Spec spec = max_return(shape.bounds, 1.0);
+        po::problems::Path cached = po::problems::make_path(spec, *shape.data);
+        po::problems::Path fresh = po::problems::make_path(spec, *shape.data);
+        std::vector<double> factor = cached.translation.problem.hessian_factor;
+        for (double t = 0.0; t < 40.0; t = std::max(2.0 * t, 1e-4))
+        {
+            SCOPED_TRACE(testing::Message() << "leverage " << spec.leverage.has_value() << ", t = " << t);
+            po::problems::PathPoint point = po::problems::solve_at(cached, t);
+            fresh.basis = po::qp::BasisCache{};
+            expect_same_point(point, po::problems::solve_at(fresh, t));
+            EXPECT_TRUE(same_bits(cached.translation.problem.hessian_factor, factor));
+            EXPECT_TRUE(same_bits(cached.basis.factor, factor));
+        }
+        EXPECT_EQ(cached.iterations, fresh.iterations);
+    }
 }
 
 } // namespace

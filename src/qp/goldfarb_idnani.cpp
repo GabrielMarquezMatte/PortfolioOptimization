@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <span>
@@ -199,7 +200,7 @@ Constraints gather_constraints(const Problem& problem)
     return constraints;
 }
 
-State initial_state(const Problem& problem, std::span<const double> factor)
+State initial_state(const Problem& problem, std::span<const double> factor, ActiveSet set)
 {
     std::size_t n = problem.n;
     State state;
@@ -210,7 +211,7 @@ State initial_state(const Problem& problem, std::span<const double> factor)
     }
     linalg::solve_lower(factor, n, state.x);
     linalg::solve_lower_transposed(factor, n, state.x);
-    state.set = empty_active_set(factor, n);
+    state.set = std::move(set);
     std::size_t constraint_count = problem.equality_rhs.size() + problem.inequality_rhs.size();
     if (problem.gross_exposure.has_value())
     {
@@ -557,10 +558,10 @@ Solution failed_solution(const Problem& problem, Progress progress, int iteratio
     return solution;
 }
 
-Solution solve_factored(const Problem& problem, std::span<const double> factor)
+Solution solve_factored(const Problem& problem, std::span<const double> factor, ActiveSet set)
 {
     Constraints constraints = gather_constraints(problem);
-    State state = initial_state(problem, factor);
+    State state = initial_state(problem, factor, std::move(set));
     Progress progress = Progress::Added;
     while (progress == Progress::Added)
     {
@@ -614,16 +615,35 @@ double feasibility_tolerance(double rhs, double row_norm, double x_scale)
 Solution solve(const Problem& problem)
 {
     validate_sizes(problem);
+    std::size_t n = problem.n;
     if (!problem.hessian_factor.empty())
     {
-        return solve_factored(problem, problem.hessian_factor);
+        return solve_factored(problem, problem.hessian_factor, empty_active_set(problem.hessian_factor, n));
     }
-    std::optional<std::vector<double>> factor = linalg::cholesky(problem.hessian, problem.n);
+    std::optional<std::vector<double>> factor = linalg::cholesky(problem.hessian, n);
     if (!factor)
     {
         throw std::invalid_argument("qp: the hessian is not positive definite");
     }
-    return solve_factored(problem, *factor);
+    return solve_factored(problem, *factor, empty_active_set(*factor, n));
+}
+
+Solution solve(const Problem& problem, BasisCache& cache)
+{
+    if (problem.hessian_factor.empty())
+    {
+        return solve(problem);
+    }
+    validate_sizes(problem);
+    std::span<const double> factor = problem.hessian_factor;
+    bool same_factor = cache.factor.size() == factor.size() &&
+                       std::memcmp(cache.factor.data(), factor.data(), factor.size_bytes()) == 0;
+    if (!same_factor)
+    {
+        cache.factor.assign(factor.begin(), factor.end());
+        cache.basis = initial_basis(factor, problem.n);
+    }
+    return solve_factored(problem, factor, active_set_from(cache.basis, problem.n));
 }
 
 } // namespace po::qp
