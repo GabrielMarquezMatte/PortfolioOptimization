@@ -303,6 +303,16 @@ std::vector<std::int64_t> zero_sum_direction(std::size_t n, std::uint64_t seed, 
     return direction;
 }
 
+std::vector<double> as_doubles(const std::vector<std::int64_t>& values)
+{
+    std::vector<double> converted(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i)
+    {
+        converted[i] = static_cast<double>(values[i]);
+    }
+    return converted;
+}
+
 // Sigma as integers times 2^exponent.
 struct DyadicCovariance
 {
@@ -343,8 +353,7 @@ Boundary boundary_problem(std::size_t n, std::uint64_t seed, double condition, b
         EXPECT_LT(std::llabs(mean), kExact);
         mu[i] = std::ldexp(static_cast<double>(mean), dyadic.exponent);
     }
-    Boundary boundary{Data::create(n, mu, covariance).value(),
-                      std::vector<double>(direction.begin(), direction.end())};
+    Boundary boundary{Data::create(n, mu, covariance).value(), as_doubles(direction)};
     boundary.data.set_risk_free(rate);
     return boundary;
 }
@@ -514,7 +523,7 @@ PartialBoundary partial_boundary_problem(std::size_t nf, std::uint64_t seed, dou
     }
     Data data = Data::create(n, mu, covariance).value();
     data.set_risk_free(rate);
-    return PartialBoundary{data, free_block(data, nf), std::vector<double>(direction.begin(), direction.end())};
+    return PartialBoundary{data, free_block(data, nf), as_doubles(direction)};
 }
 
 // The free weights unbounded, those of B in [0, 1], cash unbounded.

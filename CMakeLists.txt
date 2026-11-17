@@ -153,6 +153,10 @@ if(PO_BUILD_TESTS)
     if(NOT MSVC)
         target_compile_options(portopt_tests PRIVATE -ffp-contract=off)
     endif()
+    if(MSVC)
+        # The measurement tests read PORTOPT_* variables with getenv and write files with fopen.
+        target_compile_definitions(portopt_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    endif()
     if(MINGW)
         # An older libstdc++-6.dll earlier on PATH crashes std::format in the test executable.
         target_link_options(portopt_tests PRIVATE -static-libgcc -static-libstdc++)

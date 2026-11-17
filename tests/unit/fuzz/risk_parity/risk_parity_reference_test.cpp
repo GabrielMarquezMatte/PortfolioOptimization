@@ -273,6 +273,10 @@ TEST(RiskParityReference, KktAcceptsAPinnedStationaryPoint)
 // tolerance. A scale of the whole problem (1 / gap larger) would hide it.
 TEST(RiskParityReference, KktRejectsAStationarityErrorAwayFromTheFloor)
 {
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the oracle has no extra precision";
+    }
     std::size_t n = 6;
     Data data = covariance_data(n, random_vector(n, 7, 0.03, 0.15), random_covariance(n, 3, 100.0));
     std::vector<double> budget(n, 1.0 / static_cast<double>(n));
@@ -369,6 +373,10 @@ double stationarity_scale(const LowerBoundPoint& point)
 // An error of 1e-8 of the scale of the check in one multiplier, 100 times the tolerance.
 TEST(RiskParityReference, KktRejectsAPerturbedBudgetMultiplier)
 {
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the oracle has no extra precision";
+    }
     LowerBoundPoint point = lower_bound_point(false);
     po::testing::expect_risk_parity_kkt(point.spec, point.data, point.result, 1e-10);
     point.result.budget_multiplier += 1e-8 * stationarity_scale(point);
@@ -377,6 +385,10 @@ TEST(RiskParityReference, KktRejectsAPerturbedBudgetMultiplier)
 
 TEST(RiskParityReference, KktRejectsAPerturbedTargetReturnMultiplier)
 {
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the oracle has no extra precision";
+    }
     LowerBoundPoint point = lower_bound_point(true);
     po::testing::expect_risk_parity_kkt(point.spec, point.data, point.result, 1e-10);
     double largest_mean = po::testing::largest_magnitude(point.data.mu());
@@ -481,6 +493,10 @@ TEST(RiskParityReference, KktRejectsAPositiveInfiniteVolatilityMultiplier)
 
 TEST(RiskParityReference, HessianByDifferencesMatchesTheObjective)
 {
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the oracle has no extra precision";
+    }
     std::size_t n = 6;
     for (double condition : {1e2, 1e6})
     {
@@ -593,6 +609,10 @@ TEST(RiskParityReference, KktAcceptsAStationarityAtItsRoundingFloor)
 // band.
 TEST(RiskParityReference, KktRejectsAStationarityAboveItsRoundingFloor)
 {
+    if (!po::testing::kLongDoubleIsExtended)
+    {
+        GTEST_SKIP() << "long double is double here: the oracle has no extra precision";
+    }
     FloorLimitedPoint point = floor_limited_point();
     ASSERT_EQ(point.result.status, SolveStatus::Optimal);
     move_weights(point.result.weights, kSixtyFourUlps);
