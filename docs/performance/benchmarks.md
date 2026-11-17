@@ -424,6 +424,78 @@ slower there. The shipped binaries and the official numbers are generic, where i
 build that wants the inline fma back needs the dispatch of L6b (or a compile-time choice of `std::fma` under
 `__FMA__`), not done here.
 
+### L8: allocation hygiene, where the counter shows it
+
+The counter ([Measuring](measuring.md#counters)) said where allocations are before anything was changed: 29 054 per
+pass of the 70 cases at n ≤ 100 (6369 at n = 10, 22 685 at n = 100). At about 35 ns a `malloc`/`free` pair on this
+machine (a scratch loop, 29 to 32 ns for blocks of 80 B to 8 kB), 6369 allocations are about 0.22 ms of a 0.78 ms
+pass at n = 10: allocation was a quarter of the time of the small cases, and nothing at n ≥ 100 (about 1% of the
+cases there), except in the gross exposure cases, where the generated rows were rebuilt on every iteration. Four
+changes, all of data movement, so every solution is bit for bit the same:
+
+- **Bound rows in place** (`problems/constraints.cpp`, `problems/homogeneous.cpp`): each bound was a temporary vector
+  of n doubles inserted into a row vector that grew by doubling, and a push into `bounds`: n allocations plus the growth
+  per solve. The rows are now written at the end of rows reserved for the number of finite bounds.
+- **Family buffers** (`qp/goldfarb_idnani.cpp`): the sign vector and the normal of the most violated row of the gross
+  exposure family are two vectors kept in `Constraints` and refilled, and `discard_inactive_generated`, which moved the
+  generated rows out and copied the active ones back into three fresh vectors on every loop, copies them into a kept
+  `GeneratedRows` and swaps.
+- **Reserves** (`qp/active_set.hpp`, `qp/goldfarb_idnani.cpp`): the active list (n entries), the gathered rows and
+  right-hand sides (one allocation instead of a copy and a growth) and the list of active inequalities.
+
+| Case | n = 10 before, after | n = 100 before, after | n = 1000 before, after |
+| --- | ---: | ---: | ---: |
+| `min_variance/long_only` | 53, 26 | 159, 26 | 1073, 26 |
+| `min_variance/box` | 67, 26 | 262, 26 | 2076, 26 |
+| `max_sharpe/box` | 69, 28 | 264, 28 | 2078, 28 |
+| `max_return/long_only` | 276, 203 | 471, 216 | 1466, 233 |
+| `max_return/leverage` | 722, 402 | 9010, 1493 | 183 750, 4919 |
+| `utility/leverage` | 53, 42 | 1017, 87 | 17 569, 114 |
+| `tracking_error/leverage` | 31, 29 | 600, 83 | 11 708, 120 |
+| `risk_parity/target_return` | 720, 626 | 2046, 1386 | 2922 after |
+| `risk_parity/box` | 959, 786 | 3208, 2006 | 2678 after |
+| `risk_parity/target_volatility` | 1606, 1606 | 1700, 1700 | 1669 after |
+| all 70 cases at n ≤ 100 | 6369, 4998 | 22 685, 8350 | - |
+
+Same session, A (before) and B (after) two copies of the executables, quick suite twice interleaved, and a filtered
+A/B of 4 rounds of 5 repetitions at n = 10:
+
+| Measure | B / A |
+| --- | ---: |
+| `min_variance/long_only/10`, `box/10`, `cash/10` | 0.72, 0.67, 0.66 |
+| `utility/long_only/10`, `box/10`, `cash/10` | 0.74, 0.68, 0.72 |
+| `max_sharpe/long_only/10`, `box/10`, `cash/10` (after `homogeneous.cpp`) | 0.73, 0.71, 0.74 |
+| `max_diversification/long_only/10`, `box/10` | 0.74, 0.69 |
+| `tracking_error/long_only/10`, `box/10` | 0.83, 0.73 |
+| `max_return/long_only/10`, `box/10`, `leverage/10` | 0.60 to 0.87, 0.83, 0.77 |
+| `risk_parity/{box, target_volatility}/10` (only the `qp::solve` reserves) | 0.88 to 0.93, 0.91 to 0.94 |
+| n = 100 cases with bounds (quick suite, two pairs) | 0.87 to 1.16, within the noise of the desktop |
+| `utility/leverage/100`, `max_return/leverage/100` (4 rounds) | 0.85, 0.94 |
+| `utility/leverage/1000` (one solve, two pairs) | 2.40 and 2.21 s, 1.06 and 1.22 s |
+| `tracking_error/leverage/1000` | 2.05 and 2.28 s, 1.36 and 1.45 s |
+| `max_return/leverage/1000` | 13.7 and 13.8 s, 12.7 and 11.6 s |
+
+All 70 cases at n ≤ 100 and 12 cases at n = 1000 with bounds, cash or leverage (`min_variance/{box, cash,
+target_return}`, `max_return/{leverage, cash}`, `utility/leverage`, `tracking_error/leverage`,
+`max_sharpe/{box, cash, long_only}`, `max_diversification/box`, `risk_parity/target_volatility`) are bit for bit identical (`compare-solutions
+--require-identical`); the fuzz batteries of the gross exposure family and `ctest --preset gcc-release` pass.
+
+Not done, with the number that decides it: `risk_parity` still allocates 1600 times per solve at n = 10 (1627 before the
+`qp::solve` reserves) in about 40 call sites of `riskparity/` and `problems/` that return vectors (`linearize`,
+`moments_of`, `value_change`, `step_at`, `record`, the KKT and the polish), which is at most 25% of the 0.22 ms of
+`target_volatility/10` and 0.4% of its n = 100 time. Removing them needs a workspace passed through the descent, a
+change of its interfaces for a gain only at n ≈ 10 that the quick suite cannot resolve above its noise at that size
+(14% of standard deviation in the baseline): a proposal in [Plan 6 profile 2](profile-2.md#proposals-for-the-author).
+
+### Exception safety of the L7 cache
+
+`qp::solve(problem, cache)` assigned `cache.factor` before `initial_basis` ran: a `bad_alloc` in the basis left the new
+key over the old basis, and the next solve with that factor would have started from the wrong J0. Both are now built
+into locals and moved in. `GoldfarbIdnani.BasisCacheKeepsItsPairWhenAnAllocationFails` fails the n-th allocation of a
+rebuild for every n (the test executable replaces `operator new` with a countdown that is off outside that test) and
+checks that the cache is the old pair or the new one, and that the next solve equals a fresh one; it fails on the old
+code at the first allocation.
+
 ### No accidental FMA (guard 3)
 
 On the native build above (`-march=native`: `-mfma` enabled, `g++ -Q --help=target`), `objdump -d` of the 20

@@ -215,7 +215,7 @@ Dropped:
 
 Deferred, not measured here (Task 4 decides with its own profile):
 - **L10, `-flto` on the core.** Needs `-ffp-contract=off` to hold at link time, not yet verified; the profile cannot
-  price it (cross-TU calls are not separable in the samples).
+  price it (cross-TU calls are not separable in the samples). Decided in [profile 2](profile-2.md#l8-l9-and-l10): not adopted.
 - **L6b, ISA dispatch (`target("avx2,fma")`).** Hardware FMA in the compensated dot after L6a; it acts on the same
   `covariance_times` time as L6a (2.3 s at n = 1000, 8 to 18% of RP at n = 100) and needs a manual dispatch on MinGW.
 
