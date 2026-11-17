@@ -132,3 +132,43 @@ in `solve_factored`) the inner loop is `movupd`, `movupd`, `mulpd`, `subpd`, `mo
 and no chain between entries, with GCC's scalar copy of the loop for overlapping spans; the division by L_ii is a
 `divpd` loop. The in-place transpose is scalar and strided (n²/2 swaps); its share of the 45.8 ms was not measured
 apart.
+
+### L2: right-looking Cholesky, two columns at a time
+
+`factor_in_place` was left-looking: entry (i, j) was one dot product of rows i and j, a chain of dependent
+subtractions (`mulpd` and then two serial `subsd`). It is now right-looking, two columns at a time: once columns k and
+k + 1 are final, every entry (i, j) with j ≥ k + 2 subtracts `L_ik L_jk` and then `L_i,k+1 L_j,k+1`, entries
+independent of each other. Each entry still starts from a_ij, subtracts its terms in increasing k and is divided by
+L_jj (or square-rooted, after the same pivot test) after its last one. Column k of L is staged in row k above the
+diagonal while it updates the block, so that the update reads it with unit stride; the row is cleared after, so no
+buffer is allocated and the upper triangle is zero at the end, as before. The factor starts as a copy of the whole
+square a (one `memcpy`) instead of zeros and a copy of the lower triangle: the part above the diagonal is overwritten
+by the staging before it is read.
+
+| Measure | A (L1) | B (L1 + L2) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/cholesky/10` | 0.193 µs | 0.227 µs | 1.18 |
+| `BM_Kernel/cholesky/100` | 69.4 µs | 30.9 µs | 0.45 |
+| `BM_Kernel/cholesky/300` | 2.35 ms | 0.764 ms | 0.33 |
+| `BM_Kernel/cholesky/1000` | 108 ms | 27.9 ms | 0.26 |
+| `BM_Solve/risk_parity/budget/100` (two runs) | 1059 and 1181 µs | 638 and 655 µs | 0.60 and 0.55 |
+| `BM_Solve/risk_parity/budget/1000` (one solve, `portopt_profile`) | 1.54 s | 0.497 s | 0.32 |
+
+The other cases of the quick suite do not resolve it: two A/B pairs of the same two executables gave B/A from 0.66 to
+1.35 on cases that do not factor anything inside the solve (`min_variance/long_only/100` 1.03 and then 1.35) and
+kernels that did not change (`qp_iteration/100` 1.33 and then 1.03): the desktop was noisy during these runs.
+Cholesky was 5 to 9% of `risk_parity` at n = 100 ([Plan 6 profile 1](profile-1.md)), so 2.2 times on it is 3 to 5%
+of those cases, under what the quick suite resolves; `risk_parity/target_volatility/100` and `risk_parity/box/100`
+gave 1.01 and 0.93, 1.10 and 0.94.
+
+A plain right-looking loop (one column at a time, with a copy of the lower triangle) gave 2.3 times at n = 1000
+(106.8 to 46.5 ms) and 1.75 times at n = 100 (68.6 to 39.1 µs); pairing the columns halves the passes over the
+trailing block and gave 3.9 and 2.2 times. At n = 10 both are slower than the left-looking form (0.26 µs for the
+plain loop, 0.23 µs for the pairs with the `memcpy` start, against 0.19 µs): the loops are a few entries long and the
+vectorized ones carry their alias checks and remainders; 34 ns a factorization, under the spread of the n = 10 solves.
+
+All 70 cases at n ≤ 100, the 6 `long_only` cases at n = 1000 (whose covariance factor of `Data::create` is now
+computed this way) and `risk_parity/budget/1000` are bit for bit identical. In the assembly (`cholesky.cpp.obj`) the
+update loop is `movupd` × 3, `mulpd`, `subpd`, `mulpd`, `subpd`, `movups`: two entries per instruction, the two
+subtractions of each entry in order; the square root stays an inline `sqrtsd` (the `call sqrt` is the errno path of a
+negative argument, which the pivot test excludes).

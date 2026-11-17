@@ -5,6 +5,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
+#include <limits>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include "random_covariance.hpp"
@@ -33,6 +37,52 @@ std::vector<double> multiply_vector(const std::vector<double>& a, std::size_t n,
         }
     }
     return product;
+}
+
+// The factorization as it was before it became right-looking: each entry is one dot product of two rows,
+// summed in order of k.
+bool left_looking_factor(std::span<const double> a, std::size_t n, std::vector<double>& l)
+{
+    double epsilon = std::numeric_limits<double>::epsilon();
+    double relative_floor = po::linalg::kPivotFactor * static_cast<double>(n) * epsilon;
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        double pivot = a[j * n + j];
+        for (std::size_t k = 0; k < j; ++k)
+        {
+            pivot -= l[j * n + k] * l[j * n + k];
+        }
+        if (!(pivot > relative_floor * a[j * n + j]))
+        {
+            return false;
+        }
+        l[j * n + j] = std::sqrt(pivot);
+        for (std::size_t i = j + 1; i < n; ++i)
+        {
+            double sum = a[i * n + j];
+            for (std::size_t k = 0; k < j; ++k)
+            {
+                sum -= l[i * n + k] * l[j * n + k];
+            }
+            l[i * n + j] = sum / l[j * n + j];
+        }
+    }
+    return true;
+}
+
+std::optional<std::vector<double>> left_looking_cholesky(std::span<const double> a, std::size_t n)
+{
+    std::optional<std::vector<double>> factor(std::in_place, n * n, 0.0);
+    if (!left_looking_factor(a, n, *factor))
+    {
+        factor.reset();
+    }
+    return factor;
+}
+
+bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
+{
+    return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;
 }
 
 TEST(Cholesky, ReconstructsMatrix)
@@ -97,6 +147,23 @@ TEST(RandomCovariance, IsDeterministicAndSymmetric)
         for (std::size_t j = 0; j < n; ++j)
         {
             EXPECT_EQ(first[i * n + j], first[j * n + i]);
+        }
+    }
+}
+
+TEST(Cholesky, RightLookingIsBitIdenticalToTheLeftLooking)
+{
+    for (std::size_t n : {1, 2, 3, 7, 16, 17, 64, 100})
+    {
+        for (double condition : {1e2, 1e8})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", condition = " << condition);
+            std::vector<double> a = po::testing::random_covariance(n, 23 + n, condition);
+            std::optional<std::vector<double>> factor = po::linalg::cholesky(a, n);
+            std::optional<std::vector<double>> reference = left_looking_cholesky(a, n);
+            ASSERT_TRUE(factor.has_value());
+            ASSERT_TRUE(reference.has_value());
+            EXPECT_TRUE(same_bits(*factor, *reference));
         }
     }
 }
