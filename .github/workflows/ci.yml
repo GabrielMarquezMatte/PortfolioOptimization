@@ -55,8 +55,11 @@ jobs:
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             sleep $((attempt * 15))
           done
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y gcc-15 g++-15
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y gcc-15 g++-15 && break
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 30))
+          done
           echo "CC=gcc-15" >> "$GITHUB_ENV"
           echo "CXX=g++-15" >> "$GITHUB_ENV"
 

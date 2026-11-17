@@ -106,8 +106,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The GCC 15 of the toolchain PPA; Launchpad answers 503 at times, so the whole install is retried.
       - name: Install the toolchain and libabigail
-        run: bash scripts/install_abi_tools.sh
+        run: |
+          for attempt in 1 2 3 4 5; do
+            bash scripts/install_abi_tools.sh && break
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 30))
+          done
 
       - name: Dump the ABI
         run: bash scripts/abi_dump.sh portopt-abi-linux-x64.xml
