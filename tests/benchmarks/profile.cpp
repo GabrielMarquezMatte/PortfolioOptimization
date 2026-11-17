@@ -2,7 +2,10 @@
 // the status, the solver iterations, the time and the allocations; with --json it also dumps the solutions in
 // hex-float, for `quick.py compare-solutions`. See docs/performance/measuring.md.
 //
-// portopt_profile [--filter TEXT] [--max-n N] [--repeat K] [--json PATH]
+// portopt_profile [--filter TEXT] [--max-n N] [--repeat K] [--json PATH] [--via cpp|capi]
+//
+// --via capi solves every case through the C interface (handles built from the case, po_solve, every reader), so
+// that its dump can be compared with the one of the C++ path; its time then includes the handles.
 
 #include <algorithm>
 #include <chrono>
@@ -10,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <expected>
 #include <format>
 #include <fstream>
 #include <span>
@@ -20,6 +24,7 @@
 #include <vector>
 
 #include "alloc_counter.hpp"
+#include "capi/capi_case.hpp"
 #include "cases.hpp"
 #include "solve/solve.hpp"
 
@@ -37,6 +42,7 @@ struct Options
     std::size_t max_size = kDefaultMaxSize;
     int repeat = 3;
     std::string json;
+    bool through_c_api = false;
 };
 
 struct Record
@@ -68,6 +74,15 @@ void apply_flag(Options& options, std::string_view flag, const std::string& valu
     if (flag == "--json")
     {
         options.json = value;
+        return;
+    }
+    if (flag == "--via")
+    {
+        if (value != "cpp" && value != "capi")
+        {
+            throw std::invalid_argument("--via is cpp or capi");
+        }
+        options.through_c_api = value == "capi";
         return;
     }
     throw std::invalid_argument("unknown flag: " + std::string(flag));
@@ -117,10 +132,19 @@ double objective_value(const Case& instance, const po::Result& result)
     throw std::logic_error("no objective value for " + instance.name);
 }
 
-double seconds_of(const Case& instance)
+std::expected<po::Result, po::Failure> solve_case(const Case& instance, bool through_c_api)
+{
+    if (through_c_api)
+    {
+        return po::bench::solve_through_c_api(instance.spec, *instance.data);
+    }
+    return po::solve(instance.spec, *instance.data);
+}
+
+double seconds_of(const Case& instance, bool through_c_api)
 {
     auto started = std::chrono::steady_clock::now();
-    auto result = po::solve(instance.spec, *instance.data);
+    auto result = solve_case(instance, through_c_api);
     auto finished = std::chrono::steady_clock::now();
     if (!result.has_value())
     {
@@ -129,13 +153,13 @@ double seconds_of(const Case& instance)
     return std::chrono::duration<double>(finished - started).count();
 }
 
-Record run_case(const Case& instance, int repeat)
+Record run_case(const Case& instance, const Options& options)
 {
     Record record;
     record.name = instance.name;
     std::uint64_t before = po::bench::allocation_count();
     auto started = std::chrono::steady_clock::now();
-    auto first = po::solve(instance.spec, *instance.data);
+    auto first = solve_case(instance, options.through_c_api);
     auto finished = std::chrono::steady_clock::now();
     record.allocations = po::bench::allocation_count() - before;
     if (!first.has_value())
@@ -145,9 +169,9 @@ Record run_case(const Case& instance, int repeat)
     record.result = std::move(*first);
     record.objective = objective_value(instance, record.result);
     record.seconds = std::chrono::duration<double>(finished - started).count();
-    for (int run = 1; run < repeat; ++run)
+    for (int run = 1; run < options.repeat; ++run)
     {
-        record.seconds = std::min(record.seconds, seconds_of(instance));
+        record.seconds = std::min(record.seconds, seconds_of(instance, options.through_c_api));
     }
     return record;
 }
@@ -168,7 +192,7 @@ std::vector<Record> run_all(const Options& options)
             {
                 continue;
             }
-            records.push_back(run_case(po::bench::case_of(family, n), options.repeat));
+            records.push_back(run_case(po::bench::case_of(family, n), options));
             const Record& record = records.back();
             std::printf("%-44s status %d  iterations %6d  %10.3f ms  %8llu allocations\n", record.name.c_str(),
                         static_cast<int>(record.result.status), record.result.iterations, record.seconds * 1e3,

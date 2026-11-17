@@ -172,19 +172,22 @@ if(PO_BUILD_BENCHMARKS)
     FetchContent_MakeAvailable(benchmark)
 
     # Both executables replace the global operator new to count allocations (alloc_counter.cpp); nothing else does.
-    # They call the core directly and compile its headers, so they need the same rounding as the core.
+    # They call the core directly (and the C entry points, objects of portopt_capi, for BM_CApi and `--via capi`)
+    # and compile its headers, so they need the same rounding as the core.
     add_executable(portopt_benchmarks
         tests/benchmarks/alloc_counter.cpp
         tests/benchmarks/bench_main.cpp
         tests/benchmarks/bm_kernel.cpp
+        tests/benchmarks/capi/bm_capi.cpp
         tests/benchmarks/bm_solve.cpp)
     add_executable(portopt_profile
         tests/benchmarks/alloc_counter.cpp
         tests/benchmarks/profile.cpp)
-    target_link_libraries(portopt_benchmarks PRIVATE portopt_core benchmark::benchmark)
-    target_link_libraries(portopt_profile PRIVATE portopt_core)
+    target_link_libraries(portopt_benchmarks PRIVATE portopt_capi benchmark::benchmark)
+    target_link_libraries(portopt_profile PRIVATE portopt_capi)
     foreach(target portopt_benchmarks portopt_profile)
         target_include_directories(${target} PRIVATE tests/unit tests/benchmarks)
+        target_compile_definitions(${target} PRIVATE PO_BUILDING)
         target_compile_options(${target} PRIVATE ${PO_WARNING_FLAGS})
         if(NOT MSVC)
             target_compile_options(${target} PRIVATE -ffp-contract=off)
