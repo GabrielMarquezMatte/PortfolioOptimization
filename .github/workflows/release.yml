@@ -2,7 +2,8 @@ name: Release
 
 # A v* tag publishes the wheels and the native libraries to a GitHub Release and the wheels to PyPI; a prerelease tag
 # (v0.1.0-rc.1, or v0.1.0rc1: decided by the version, not by a '-') is a GitHub prerelease, and its wheels are a
-# PyPI prerelease (0.1.0rc1), which pip installs only with --pre or an explicit version. Only a tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
+# PyPI prerelease (0.1.0rc1): pip prefers a final release to it, but takes it while no final release exists. Only a
+# tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
 # v<version>-rc.0, so the path of a release candidate runs before the first real one, and publishes nothing.
 on:
   push:
