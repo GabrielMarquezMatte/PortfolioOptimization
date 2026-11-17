@@ -1,0 +1,6 @@
+@PACKAGE_INIT@
+
+# PortOpt::portopt is the shared library with the C header; PortOpt::cpp is the header-only C++ wrapper over it.
+include("${CMAKE_CURRENT_LIST_DIR}/PortOptTargets.cmake")
+
+check_required_components(PortOpt)

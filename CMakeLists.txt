@@ -87,7 +87,7 @@ endif()
 target_link_libraries(portopt_capi PUBLIC portopt_core)
 
 add_library(portopt SHARED $<TARGET_OBJECTS:portopt_capi>)
-target_include_directories(portopt PUBLIC include)
+target_include_directories(portopt PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_link_libraries(portopt PRIVATE portopt_core)
 if(MINGW)
     # No --output-def: ld 2.47 fails at random with it and writes an empty file. The export list of the release .lib
@@ -108,6 +108,30 @@ target_link_libraries(portopt_cpp INTERFACE portopt)
 set_target_properties(portopt_cpp PROPERTIES EXPORT_NAME cpp)
 add_library(PortOpt::portopt ALIAS portopt)
 add_library(PortOpt::cpp ALIAS portopt_cpp)
+
+option(PO_INSTALL "Generate the install rules and the find_package(PortOpt) package" ${PO_IS_TOP_LEVEL})
+if(PO_INSTALL)
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+    set(PO_CONFIG_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/PortOpt")
+    install(TARGETS portopt portopt_cpp EXPORT PortOptTargets
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+    install(FILES include/portopt/portopt.h cpp/include/portopt/portopt.hpp
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/portopt")
+    install(EXPORT PortOptTargets NAMESPACE PortOpt:: DESTINATION "${PO_CONFIG_DIR}")
+    configure_package_config_file(cmake/PortOptConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfig.cmake"
+        INSTALL_DESTINATION "${PO_CONFIG_DIR}")
+    # Until 1.0 the ABI may break between minor versions (PO_ABI_VERSION 0): only the same x.y is compatible.
+    write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/PortOptConfigVersion.cmake"
+        VERSION "${PROJECT_VERSION}" COMPATIBILITY SameMinorVersion)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfigVersion.cmake"
+        DESTINATION "${PO_CONFIG_DIR}")
+endif()
 
 if(PO_BUILD_TESTS)
     enable_testing()
