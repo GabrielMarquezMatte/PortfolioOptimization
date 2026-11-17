@@ -48,6 +48,14 @@ inline double dot(std::span<const double> a, std::span<const double> b)
     return sum;
 }
 
+// dot(a, r) for a row r whose only nonzero entry is r_column = entry, with the same bits for a finite a: the
+// terms a_i * 0 that dot() adds are zeros, which leave its sum unchanged, and + 0.0 turns a product of -0
+// into the +0 that dot() returns for it.
+inline double unit_row_dot(std::span<const double> a, std::size_t column, double entry)
+{
+    return a[column] * entry + 0.0;
+}
+
 inline std::span<double> basis_column(ActiveSet& set, std::size_t column)
 {
     return std::span<double>(set.basis).subspan(column * set.n, set.n);
@@ -188,12 +196,8 @@ inline void refine_toward_active(ActiveSet& set, std::span<double> residual, std
     }
 }
 
-inline void compute_directions(ActiveSet& set, std::span<const double> row, double sign)
+inline void directions_from_projection(ActiveSet& set)
 {
-    for (std::size_t column = 0; column < set.n; ++column)
-    {
-        set.projection[column] = sign * dot(basis_column(set, column), row);
-    }
     std::ranges::fill(set.primal_direction, 0.0);
     for (std::size_t column = set.active.size(); column < set.n; ++column)
     {
@@ -204,6 +208,28 @@ inline void compute_directions(ActiveSet& set, std::span<const double> row, doub
         }
     }
     back_substitute(set);
+}
+
+inline void compute_directions(ActiveSet& set, std::span<const double> row, double sign)
+{
+    for (std::size_t column = 0; column < set.n; ++column)
+    {
+        set.projection[column] = sign * dot(basis_column(set, column), row);
+    }
+    directions_from_projection(set);
+}
+
+// compute_directions for a row whose only nonzero entry is r_column = entry, with the same bits while the
+// basis is finite (see unit_row_dot): it reads one entry of each basis column instead of the column.
+inline void compute_unit_directions(ActiveSet& set, std::size_t column, double entry, double sign)
+{
+    std::size_t n = set.n;
+    std::span<const double> basis(set.basis);
+    for (std::size_t k = 0; k < n; ++k)
+    {
+        set.projection[k] = sign * unit_row_dot(basis.subspan(k * n, n), column, entry);
+    }
+    directions_from_projection(set);
 }
 
 inline void append_active(ActiveSet& set, const ActiveConstraint& constraint)

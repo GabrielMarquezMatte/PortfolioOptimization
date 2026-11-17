@@ -41,6 +41,8 @@ struct Constraints
     std::vector<double> rows;
     std::vector<double> rhs;
     std::vector<double> row_norms;
+    // The column of the only nonzero entry of each explicit row (a bound), or n for a row with more than one.
+    std::vector<std::size_t> unit_columns;
     const GrossExposure* family = nullptr;
     GeneratedRows generated;
 };
@@ -129,6 +131,47 @@ double tolerance(const Constraints& constraints, std::size_t index, double x_sca
     return feasibility_tolerance(rhs_of(constraints, index), row_norm_of(constraints, index), x_scale);
 }
 
+bool is_unit(const Constraints& constraints, std::size_t index)
+{
+    return !is_generated(constraints, index) && constraints.unit_columns[index] < constraints.n;
+}
+
+double unit_entry(const Constraints& constraints, std::size_t index)
+{
+    return constraints.rows[index * constraints.n + constraints.unit_columns[index]];
+}
+
+// The slack of an explicit row, read at the one nonzero entry of a unit row when x is finite (unit_row_dot).
+double scanned_slack(const Constraints& constraints, const State& state, std::size_t index, bool finite_point)
+{
+    if (!finite_point || !is_unit(constraints, index))
+    {
+        return slack(constraints, state, index);
+    }
+    std::size_t column = constraints.unit_columns[index];
+    return unit_row_dot(state.x, column, unit_entry(constraints, index)) - constraints.rhs[index];
+}
+
+// The column of the only nonzero entry of normal, 0 for a row of zeros, and n for a row with more than one.
+std::size_t unit_column_of(std::span<const double> normal)
+{
+    std::size_t column = 0;
+    std::size_t nonzeros = 0;
+    for (std::size_t i = 0; i < normal.size(); ++i)
+    {
+        if (normal[i] != 0.0)
+        {
+            column = i;
+            ++nonzeros;
+        }
+    }
+    if (nonzeros > 1)
+    {
+        return normal.size();
+    }
+    return column;
+}
+
 Constraints gather_constraints(const Problem& problem)
 {
     Constraints constraints;
@@ -142,10 +185,12 @@ Constraints gather_constraints(const Problem& problem)
                            problem.inequality_rhs.end());
     constraints.explicit_count = constraints.rhs.size();
     constraints.row_norms.resize(constraints.rhs.size());
+    constraints.unit_columns.resize(constraints.rhs.size());
     for (std::size_t index = 0; index < constraints.rhs.size(); ++index)
     {
         std::span<const double> normal = row(constraints, index);
         constraints.row_norms[index] = std::sqrt(dot(normal, normal));
+        constraints.unit_columns[index] = unit_column_of(normal);
     }
     if (problem.gross_exposure.has_value())
     {
@@ -192,9 +237,10 @@ Violation most_violated_explicit(const Constraints& constraints, const State& st
 {
     Violation worst;
     double x_scale = max_abs(state.x);
+    bool finite_point = std::ranges::all_of(state.x, [](double value) { return std::isfinite(value); });
     for (std::size_t index = constraints.equality_count; index < constraints.explicit_count; ++index)
     {
-        double value = slack(constraints, state, index);
+        double value = scanned_slack(constraints, state, index, finite_point);
         bool within_tolerance = value >= -tolerance(constraints, index, x_scale);
         if (within_tolerance || value >= worst.slack || is_active(state, index))
         {
@@ -346,11 +392,24 @@ bool is_independent_of_active(const ActiveSet& set)
     return outside_norm > kRelativeTolerance * std::sqrt(dot(projection, projection));
 }
 
+// The directions of a unit row read one entry of each basis column (compute_unit_directions).
+void compute_candidate_directions(const Constraints& constraints, State& state,
+                                  const ActiveConstraint& candidate)
+{
+    if (!is_unit(constraints, candidate.index))
+    {
+        compute_directions(state.set, row(constraints, candidate.index), candidate.sign);
+        return;
+    }
+    compute_unit_directions(state.set, constraints.unit_columns[candidate.index],
+                            unit_entry(constraints, candidate.index), candidate.sign);
+}
+
 Progress add_constraint(const Constraints& constraints, State& state, ActiveConstraint candidate)
 {
     while (true)
     {
-        compute_directions(state.set, row(constraints, candidate.index), candidate.sign);
+        compute_candidate_directions(constraints, state, candidate);
         double violation = slack(constraints, state, candidate.index);
         double limit = tolerance(constraints, candidate.index, max_abs(state.x));
         bool moves_primal = is_independent_of_active(state.set);

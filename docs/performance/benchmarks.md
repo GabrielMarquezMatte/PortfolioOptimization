@@ -213,3 +213,65 @@ reflections.
 `1297db0` (before L1) and of L1 + L2 + L3, one right after the other: 25.8 s and 12.7 s (0.49), bit for bit identical
 (status, objective, weights, multipliers and residual), with 7 more allocations (the projections of its 7 QR
 factorizations).
+
+### L5: unit rows (bounds) read at their one entry
+
+A bound row `x_j >= l` or `-x_j >= -u` has one nonzero entry, but the solver read it as a dense row of n doubles: the
+slack of every inequality row in the scan for the most violated one (`dot(row, x)`), and the n projections of the
+basis on the candidate's normal in `compute_directions`. `gather_constraints` now records, for every explicit row,
+the column of its only nonzero entry (or n when it has more than one). The scan reads such a row as
+`r_j x_j + 0.0`, and `compute_unit_directions` projects with `sign * (J_jc r_j + 0.0)`, one entry of each basis
+column; the n − q axpys of the primal direction and the back substitution are unchanged. The skipped terms are
+`a_i * 0`, zeros that leave `dot()`'s sum unchanged when `a_i` is finite (the sum starts at +0, adding a zero to +0 or
+to a nonzero value is exact), and the `+ 0.0` gives the +0 that `dot()` returns when the one product is -0. The scan
+checks that x is finite (one pass over x) and falls back to the dense dot otherwise. The projections assume a finite
+basis, as L1 assumes a finite factor: J J' = G^-1 and the Givens rotations keep it bounded, but a basis entry that
+overflowed would give NaN in the dense projection and not in the unit one. One more allocation per `qp::solve` (the
+column of each row).
+
+`ActiveSet.UnitRowDirectionsAreBitIdenticalToTheDenseRow` compares projection, primal and dual directions by
+`memcmp` against `compute_directions` on the dense row (with -0 in a third of its zeros), for every column, entries
+1, -1 and random, signs ±1, on J0 and on bases rotated by n/2 and n − 1 random rows (n and condition as above);
+`ActiveSet.UnitRowDotIsBitIdenticalToTheDenseDot` does the same for the slack against x with +0 and -0 entries.
+Dropping the `+ 0.0` makes both fail.
+
+| Measure | A (L1 + L2 + L3) | B (+ L5) | B / A |
+| --- | ---: | ---: | ---: |
+| `BM_Kernel/qp_iteration/10` (long-only QP, 5 repetitions) | 2.71 µs | 2.84 µs | 1.05, noise |
+| `BM_Kernel/qp_iteration/100` | 1219 µs | 559 µs | 0.46 |
+| `BM_Kernel/qp_iteration/300` | 38.3 ms | 11.2 ms | 0.29 |
+| `BM_Kernel/qp_iteration/1000` | 1.63 s | 0.381 s | 0.23 |
+| `BM_Solve/min_variance/long_only/100` | 569 µs | 311 µs | 0.55 |
+| `BM_Solve/max_return/long_only/100` | 6.19 ms | 3.04 ms | 0.49 |
+| `BM_Solve/max_sharpe/long_only/100` | 533 µs | 315 µs | 0.59 |
+| `BM_Solve/utility/box/100` | 1186 µs | 478 µs | 0.40 |
+| `BM_Solve/tracking_error/long_only/100` | 1377 µs | 943 µs | 0.68 |
+| `BM_Solve/max_diversification/box/100` | 564 µs | 398 µs | 0.71 |
+| `BM_Solve/risk_parity/box/100` | 50.8 ms | 37.0 ms | 0.73 |
+| `BM_Solve/risk_parity/target_volatility/100` (no active bound) | 21.3 ms | 21.1 ms | 0.99, noise |
+
+The n = 10 cases of the quick suite moved by 0.93 to 1.01 and `risk_parity/budget` (no QP) by 0.96 and 0.98, noise.
+At n = 1000, one solve each with `portopt_profile --max-n 1000 --repeat 1` (one run, no spread):
+
+| Case (n = 1000) | A | B | B / A |
+| --- | ---: | ---: | ---: |
+| `min_variance/long_only` | 447 ms | 153 ms | 0.34 |
+| `max_return/long_only` | 7.92 s | 2.26 s | 0.28 |
+| `max_sharpe/long_only` | 495 ms | 166 ms | 0.34 |
+| `utility/long_only` | 1.34 s | 0.336 s | 0.25 |
+| `tracking_error/long_only` | 1.94 s | 0.915 s | 0.47 |
+| `max_diversification/long_only` | 464 ms | 161 ms | 0.35 |
+| `min_variance/box` | 626 ms | 172 ms | 0.27 |
+| `max_return/box` | 11.3 s | 2.59 s | 0.23 |
+| `max_sharpe/box` | 680 ms | 377 ms | 0.55 |
+| `utility/box` | 1.91 s | 0.383 s | 0.20 |
+| `tracking_error/box` | 2.42 s | 0.977 s | 0.40 |
+| `max_diversification/box` | 632 ms | 344 ms | 0.54 |
+| `risk_parity/box` | 63.3 s | 28.3 s | 0.45 |
+| `risk_parity/target_return` | 42.7 s | 27.4 s | 0.64 |
+
+All 70 cases at n ≤ 100 and the 14 cases at n = 1000 above are bit for bit identical, with the same iterations. In
+the assembly (`goldfarb_idnani.cpp.obj`, inlined in `solve_factored` and `most_violated_inequality`) the projection
+loop is `movsd`/`movhpd` (two basis columns, a stride of n), `mulpd` by the entry, `addpd` of a zero register,
+`mulpd` by the sign, `movups`: the `+ 0.0` is kept, as it must be without `-ffast-math`. The scan of a unit row is
+`movsd`, `mulsd`, `addsd` of zero, `subsd` of the right-hand side, then its tolerance as before.
