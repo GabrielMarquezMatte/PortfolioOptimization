@@ -90,35 +90,42 @@ jobs:
       - name: Test (C++ and style)
         run: ctest --preset ${{ matrix.preset }}
 
+      # The steps below run even when the C++ tests fail: tests known to fail off Windows (CHANGELOG, Known
+      # limitations) would otherwise skip the benchmarks, the version check and the Python tests on Linux and macOS.
+      # The job stays red while any step fails.
       # The benchmarks are compiled and their two self-tests run, never timed: shared runners give no stable timings.
       - name: Build benchmarks (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: |
           cmake -S . -B build/bench -DCMAKE_BUILD_TYPE=Release -DPO_BUILD_BENCHMARKS=ON -DPO_BUILD_TESTS=OFF
           cmake --build build/bench --parallel
           ctest --test-dir build/bench --output-on-failure
 
       - name: Install uv
+        if: ${{ !cancelled() }}
         uses: astral-sh/setup-uv@v6
 
       # One version in CMakeLists.txt and python/pyproject.toml; release.yml also checks the tag and the CHANGELOG.
       - name: Version check (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py check
 
       - name: Python tests
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
         run: uv run --project python --python 3.14 pytest python/tests -q
 
       - name: Python tests (3.11, the requires-python floor)
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
         run: uv run --project python --python 3.11 pytest python/tests -q
 
       - name: mypy
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
