@@ -12,7 +12,7 @@ assert spec is not None and spec.loader is not None
 release_version = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release_version)
 
-CMAKE = 'set(PO_VERSION 0.1.0 CACHE STRING "PortOpt version (x.y.z)")\n'
+CMAKE = "if(NOT DEFINED PO_VERSION)\n    set(PO_VERSION 0.1.0)\nendif()\n"
 PYPROJECT = '[project]\nname = "pyportopt"\nversion = "0.1.0"\n'
 UNRELEASED = "# Changelog\n\n## [Unreleased]\n\n### Added\n"
 RELEASED = "# Changelog\n\n## [Unreleased]\n\n## [0.1.0] - 2026-11-20\n\n### Added\n"

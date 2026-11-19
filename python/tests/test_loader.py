@@ -19,6 +19,17 @@ def test_missing_library_message_names_env_var(tmp_path: Path) -> None:
     assert str(tmp_path) in str(error.value)
 
 
+def test_relative_override_resolves_against_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A bare name handed to the loader as is would be searched on PATH or LD_LIBRARY_PATH instead.
+    (tmp_path / "custom.dll").write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    path = _native.locate_library("custom.dll", tmp_path / "elsewhere")
+    assert path.is_absolute()
+    assert path == (tmp_path / "custom.dll").resolve()
+
+
 def test_missing_symbol_raises_import_error_naming_it() -> None:
     missing = "po_portfolio_volatility"
     exported = {name: SimpleNamespace() for name in _native.PROTOTYPES if name != missing}

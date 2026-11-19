@@ -19,7 +19,7 @@ from pathlib import Path
 from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[2]
-CMAKE_VERSION = re.compile(r"^set\(PO_VERSION (\S+) ", re.MULTILINE)
+CMAKE_VERSION = re.compile(r"^\s*set\(PO_VERSION ([^\s)]+)\)", re.MULTILINE)
 PYPROJECT_VERSION = re.compile(r'^version = "([^"]+)"', re.MULTILINE)
 
 

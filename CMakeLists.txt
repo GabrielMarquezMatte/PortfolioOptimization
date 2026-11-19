@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.28)
-set(PO_VERSION 0.1.0 CACHE STRING "PortOpt version (x.y.z)")
+# Not a cache entry, so a version bump reaches build directories that already exist; -DPO_VERSION=x.y.z overrides it.
+if(NOT DEFINED PO_VERSION)
+    set(PO_VERSION 0.1.0)
+endif()
 project(PortOpt VERSION ${PO_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -93,9 +96,12 @@ target_link_libraries(portopt PRIVATE portopt_core)
 if(MINGW)
     # No --output-def: ld 2.47 fails at random with it and writes an empty file. The export list of the release .lib
     # comes from the ABI contract (scripts/abi_contract.py def), checked against the DLL's own export table.
+    # --no-insert-timestamp: a PE header without the link time, so a rebuild of a release gives the same DLL (PyPI
+    # refuses a second upload of a file name with other bytes).
     target_link_options(portopt PRIVATE
         -static-libgcc -static-libstdc++
-        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
+        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
+        -Wl,--no-insert-timestamp)
 elseif(NOT WIN32 AND NOT APPLE)
     # libstdc++.so.6 and libgcc_s.so.1 are not on every distribution (musl, minimal images).
     # --exclude-libs keeps the symbols of the static libstdc++ out of the export table: the library exports the C
@@ -212,12 +218,12 @@ if(PO_BUILD_TESTS)
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME style
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/style/check_style.py ${CMAKE_SOURCE_DIR})
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tests/style/check_style.py ${PROJECT_SOURCE_DIR})
     # include/portopt/portopt.abi is the contract of portopt.h; a change to the header is a change to that file.
     add_test(NAME abi_contract
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/scripts/abi_contract.py check)
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/scripts/abi_contract.py check)
     add_test(NAME abi_contract_unit
-        COMMAND Python3::Interpreter -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/abi)
+        COMMAND Python3::Interpreter -m unittest discover -s ${PROJECT_SOURCE_DIR}/tests/abi)
 
     add_subdirectory(cpp/tests)
 endif()
@@ -263,5 +269,5 @@ if(PO_BUILD_BENCHMARKS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME benchmark_allocation_selftest COMMAND portopt_benchmarks --selftest)
     add_test(NAME benchmark_quick_selftest
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/benchmarks/quick.py selftest)
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tests/benchmarks/quick.py selftest)
 endif()

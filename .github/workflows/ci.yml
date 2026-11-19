@@ -110,19 +110,25 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py check
 
+      # Without the library conftest.py drops the tests that need it and packaging/ still passes, so the import comes
+      # first and fails the step (bash -e) on a library that does not load.
       - name: Python tests
         if: ${{ !cancelled() }}
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
-        run: uv run --project python --python 3.14 pytest python/tests -q
+        run: |
+          uv run --project python --python 3.14 python -c "import portopt"
+          uv run --project python --python 3.14 pytest python/tests -q
 
       - name: Python tests (3.11, the requires-python floor)
         if: ${{ !cancelled() }}
         shell: bash
         env:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
-        run: uv run --project python --python 3.11 pytest python/tests -q
+        run: |
+          uv run --project python --python 3.11 python -c "import portopt"
+          uv run --project python --python 3.11 pytest python/tests -q
 
       - name: mypy
         if: ${{ !cancelled() }}

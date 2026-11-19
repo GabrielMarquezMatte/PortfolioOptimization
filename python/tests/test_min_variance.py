@@ -88,6 +88,13 @@ def test_singular_covariance_raises_value_error() -> None:
         po.Data(MU, duplicated)
 
 
+@pytest.mark.parametrize("objective", [9, 2**32, -(2**31) - 1])
+def test_objective_outside_the_enum_raises_value_error(objective: int) -> None:
+    # 2**32 must not wrap into the int32 of po_spec_create and solve MIN_VARIANCE.
+    with pytest.raises(ValueError, match=r"objective is not one of PO_OBJECTIVE_\*"):
+        po.Spec(objective)  # type: ignore[arg-type]
+
+
 def test_unsupported_status_raises_not_implemented() -> None:
     # Every objective is solved now, so po_solve no longer returns PO_UNSUPPORTED; the mapping stays.
     with pytest.raises(NotImplementedError):

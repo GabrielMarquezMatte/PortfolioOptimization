@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-version=$(sed -n 's/^set(PO_VERSION \([0-9.]*\) .*/\1/p' CMakeLists.txt)
+version=$(sed -n 's/^ *set(PO_VERSION \([0-9.]*\)).*/\1/p' CMakeLists.txt)
 major_minor=${version%.*}
 next_minor="${major_minor%%.*}.$((${major_minor#*.} + 1))"
 

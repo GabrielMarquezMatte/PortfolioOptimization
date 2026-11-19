@@ -82,7 +82,8 @@ def locate_library(override: str | None, directory: Path) -> Path:
         path = Path(override)
         if not path.is_file():
             raise ImportError(f"{LIBRARY_ENV} points to {override}, which is not a file")
-        return path
+        # Absolute: the loader looks a bare file name up on its search path, not in the working directory.
+        return path.resolve()
     for name in LIBRARY_NAMES:
         if (directory / name).is_file():
             return directory / name
