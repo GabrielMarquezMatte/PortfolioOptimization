@@ -178,6 +178,12 @@ Its optimum `w(t)` is piecewise affine in
      coordinates (Householder QR) and the QR of `L'Z` for the reduced Hessian `H_r = Z'Sigma Z`, in the frame of the
      point's shift `v`, anchored at a solve of the face at `t_a` (`w_a`), never at the QP solution itself, whose
      rounding carries `eps |t Sigma^-1 v|`;
+   - when no weight is fixed (the budget alone, for example) and the `m + 4` triangular solves with `L` of the range
+     space cost fewer flops than the null space (`(m + 4) n^2` against `4 n^2 m + 2 n (n - m)^2`), the same face solve
+     in the range space instead: in `y = L'w`, with `L^-1 N = Q R`, `y = Q [R'^-1 b; (Q' t L^-1 v)_2]` and
+     `dy = Q [0; (Q' L^-1 v)_2]`. Its weights carry `eps cond(Sigma)` rather than `eps cond(Z'Sigma Z)`, and its
+     stationarity residual `eps |L| |t L^-1 v|`, so a crossing it does not certify is computed again by the null
+     space;
    - the root `h` of `|L'(w_a + h dw)|^2 = s^2`, written without cancellation, `t* = t_a + h`, `w* = w_a + h dw`, and
      the multipliers `u` by least squares in `N u = Sigma w* - t* v`.
 

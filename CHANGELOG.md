@@ -176,9 +176,13 @@ The first release.
   QP solutions confirmed by a third solve (`|vol / s - 1| <= 5.6e-16` at every cap of the known shape). `compare-solutions`
   over the 70 cases against the interpolated crossing: only the 10 `max_return/*` cases changed (60 of 70 bit for bit
   identical), worst relative weight difference 2.3e-14, worst objective difference 5.6e-16, iteration ratio 0.83, no
-  status change. `max_return/free` is 1.32 times slower at 10 assets and 1.90 times at 100 (5.7 to 7.5 us and 187 to
-  357 us), an accepted cost: the face of the budget alone has the largest dimension; the other `max_return` cases
-  are 0.93 to 0.99 of the time before, and `leverage` at 100 assets 0.52
+  status change. The other `max_return` cases are 0.93 to 0.99 of the time before, and `leverage` at 100 assets
+  0.52. On a face with every weight free (the budget alone, `max_return/free`) the tangent is solved in the range
+  space of `Sigma` with its factor `L` instead of the null space, whose QR of `L'Z` is O(n^3) there, and a crossing
+  it does not certify falls back to the null space. Against the interpolated crossing, `max_return/free` is 0.96 of
+  the time at 1000 assets (it was 2.9 times slower with the null space alone), and still 1.89 times slower at 10
+  assets and 1.22 at 100 (5.5 to 10.3 us and 147 to 179 us), the fixed cost of the tangent and its certificate where
+  the old crossing needed one QP solve of 1 to 3 iterations
   ([docs/performance/max-return-crossing.md](docs/performance/max-return-crossing.md)).
 
 ### Fixed

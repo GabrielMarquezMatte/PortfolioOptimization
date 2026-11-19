@@ -2,7 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <bit>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -15,6 +19,7 @@ namespace
 using po::Data;
 using po::Spec;
 using po::problems::Crossing;
+using po::problems::FaceSolve;
 using po::problems::Path;
 using po::problems::PathPoint;
 
@@ -88,6 +93,54 @@ TEST(ParametricPath, TangentCrossingRejectsAPointOffItsFace)
     PathPoint point = po::problems::solve_at(path, 0.3);
     ASSERT_EQ(point.solution.status, po::qp::Status::Optimal);
     EXPECT_FALSE(po::problems::tangent_crossing(path, point).has_value());
+}
+
+Spec free_max_return(double cap)
+{
+    Spec spec;
+    spec.objective = po::Objective::MaxReturn;
+    spec.max_volatility = cap;
+    return spec;
+}
+
+double relative_difference(const std::vector<double>& first, const std::vector<double>& second)
+{
+    double largest = 0.0;
+    double change = 0.0;
+    for (std::size_t i = 0; i < first.size(); ++i)
+    {
+        largest = std::max(largest, std::fabs(first[i]));
+        change = std::max(change, std::fabs(first[i] - second[i]));
+    }
+    return change / largest;
+}
+
+// The budget is the only row and every weight is free: the face with the fewest rows, where the rule takes the range
+// space. Its crossing is the one of the null space to rounding, and the rule's choice is the range space's bits.
+TEST(ParametricPath, RangeSpaceTangentMatchesTheNullSpace)
+{
+    Data data = three_assets();
+    Path path = po::problems::make_path(free_max_return(0.3), data);
+    PathPoint point = po::problems::solve_at(path, 0.3);
+    ASSERT_EQ(point.solution.status, po::qp::Status::Optimal);
+    std::optional<Crossing> range = po::problems::tangent_crossing(path, point, FaceSolve::RangeSpace);
+    std::optional<Crossing> null = po::problems::tangent_crossing(path, point, FaceSolve::NullSpace);
+    ASSERT_TRUE(range.has_value());
+    ASSERT_TRUE(null.has_value());
+    EXPECT_GT(range->t, point.t);
+    EXPECT_NEAR(range->t, null->t, 1e-12 * null->t);
+    EXPECT_LE(relative_difference(null->solution.x, range->solution.x), 1e-12);
+    EXPECT_LE(relative_difference(null->solution.equality_multipliers, range->solution.equality_multipliers),
+              1e-12);
+    std::optional<Crossing> chosen = po::problems::tangent_crossing(path, point);
+    ASSERT_TRUE(chosen.has_value());
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(chosen->t), std::bit_cast<std::uint64_t>(range->t));
+    for (std::size_t i = 0; i < range->solution.x.size(); ++i)
+    {
+        SCOPED_TRACE(i);
+        EXPECT_EQ(std::bit_cast<std::uint64_t>(chosen->solution.x[i]),
+                  std::bit_cast<std::uint64_t>(range->solution.x[i]));
+    }
 }
 
 } // namespace

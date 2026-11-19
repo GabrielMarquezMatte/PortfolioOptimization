@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "linalg/cholesky.hpp"
 #include "linalg/qr.hpp"
 #include "problems/mean_variance.hpp"
 #include "qp/goldfarb_idnani.hpp"
@@ -832,21 +833,15 @@ std::vector<double> columns_from(std::span<const double> a, std::size_t rows, st
     return result;
 }
 
-// The face of point reduced to its null space: nullopt when it has no direction (as many rows as free weights),
-// when its rows are dependent over F (a face larger than the one with its fixed weights), or when the reduced
-// Hessian has a pivot below its noise.
-std::optional<ReducedFace> reduced_face(const Path& path, const PathPoint& point, std::span<const double> signs)
+// The face reduced to its null space: nullopt when its rows are dependent over F (a face larger than the one with
+// its fixed weights), or when the reduced Hessian has a pivot below its noise.
+std::optional<ReducedFace> reduced_face(const Path& path, FaceRows rows)
 {
     const qp::Problem& problem = path.translation.problem;
     std::optional<ReducedFace> face(std::in_place);
-    face->rows = face_rows(problem, point, signs);
+    face->rows = std::move(rows);
     std::size_t p = face->rows.free.size();
     std::size_t m = face->rows.rhs.size();
-    if (m >= p)
-    {
-        face.reset();
-        return face;
-    }
     face->normals = linalg::householder_qr(face->rows.normals, p, m);
     if (!linalg::has_full_column_rank(face->normals))
     {
@@ -917,6 +912,78 @@ FaceLine face_line(const Path& path, const ReducedFace& face, const PathPoint& p
     std::vector<double> none(m, 0.0);
     return FaceLine{from_face(face, fixed, anchored, face.rows.fixed),
                     from_face(face, none, drift, std::vector<double>(n, 0.0))};
+}
+
+// The face in the range space of Sigma = L L', when every weight is free. In y = L'w the face solve minimizes
+// 0.5 |y|^2 - t (L^-1 v)'y over G'y = rhs for G = L^-1 N = Q R, so y = Q [R'^-1 rhs; (Q't L^-1 v)_2],
+// dy = Q [0; (Q'L^-1 v)_2] and w = L'^-1 y. nullopt when the rows are dependent.
+std::optional<linalg::Qr> range_normals(const Path& path, const FaceRows& rows)
+{
+    std::size_t n = rows.free.size();
+    std::size_t m = rows.rhs.size();
+    std::vector<double> solved(n * m);
+    std::vector<double> column(n);
+    for (std::size_t k = 0; k < m; ++k)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            column[i] = rows.normals[i * m + k];
+        }
+        linalg::solve_lower(path.factor, n, column);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            solved[i * m + k] = column[i];
+        }
+    }
+    std::optional<linalg::Qr> normals(std::in_place, linalg::householder_qr(solved, n, m));
+    if (!linalg::has_full_column_rank(*normals))
+    {
+        normals.reset();
+    }
+    return normals;
+}
+
+// L'^-1 Q [head; (Q'L^-1 right)_2].
+std::vector<double> from_range(const Path& path, const linalg::Qr& normals, std::span<const double> head,
+                               std::vector<double> right)
+{
+    std::size_t n = right.size();
+    linalg::solve_lower(path.factor, n, right);
+    linalg::apply_transposed(normals, right);
+    std::ranges::copy(head, right.begin());
+    linalg::apply(normals, right);
+    linalg::solve_lower_transposed(path.factor, n, right);
+    return right;
+}
+
+FaceLine range_line(const Path& path, const FaceRows& rows, const linalg::Qr& normals, const PathPoint& point)
+{
+    std::vector<double> head = rows.rhs;
+    linalg::solve_upper_transposed(normals, head);
+    std::vector<double> anchored = point.shift.excess;
+    for (double& entry : anchored)
+    {
+        entry *= point.t;
+    }
+    std::vector<double> none(head.size(), 0.0);
+    return FaceLine{from_range(path, normals, head, std::move(anchored)),
+                    from_range(path, normals, none, point.shift.excess)};
+}
+
+// The branch of fewer flops (leading terms, a multiply and an add counted apart) on a face whose n weights are all
+// free, with m rows and r = n - m: the null space applies Q' to the n columns of L, 4 n^2 m, and factors L'Z
+// (n x r), 2 n r^2; the range space makes m + 4 triangular solves with L, (m + 4) n^2. The QR of the n x m rows
+// (N or L^-1 N) is common to both. A face with a fixed weight stays in the null space: its range space would need
+// the factor of Sigma_FF, n p^2 / 3 to n p^2 flops to form from the rows F of L and p^3 / 3 to factor, the order of
+// the null space's 2 n r^2 itself, and a face the certificate refuses would pay for both branches.
+bool range_space_cheaper(std::size_t n, std::size_t m)
+{
+    double assets = static_cast<double>(n);
+    double rows = static_cast<double>(m);
+    double dimension = assets - rows;
+    double null_space = 4.0 * assets * assets * rows + 2.0 * assets * dimension * dimension;
+    double range_space = (rows + 4.0) * assets * assets;
+    return range_space < null_space;
 }
 
 // The h with |L'(weights + h direction)| = s: |L'w|^2 = c + 2 b h + a h^2 reaches s^2 at
@@ -1110,6 +1177,72 @@ qp::Solution crossing_solution(const PathPoint& point, Candidate candidate)
     return solution;
 }
 
+// The crossing on the face line of point, when the KKT conditions of Q(t*) certify it.
+std::optional<Crossing> certified_crossing(const Path& path, const PathPoint& point,
+                                           std::span<const double> signs, FaceLine line)
+{
+    std::optional<double> step = crossing_step(path, line);
+    if (!step.has_value() || !std::isfinite(point.t + *step) || !(point.t + *step > 0.0))
+    {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < line.weights.size(); ++i)
+    {
+        line.weights[i] += *step * line.direction[i];
+    }
+    Candidate candidate = candidate_at(path, point, point.t + *step, std::move(line.weights));
+    if (!crossing_certified(path, point, signs, candidate))
+    {
+        return std::nullopt;
+    }
+    return Crossing{candidate.t, crossing_solution(point, std::move(candidate))};
+}
+
+std::optional<Crossing> null_space_crossing(const Path& path, const PathPoint& point,
+                                            std::span<const double> signs, FaceRows rows)
+{
+    std::optional<ReducedFace> face = reduced_face(path, std::move(rows));
+    if (!face.has_value())
+    {
+        return std::nullopt;
+    }
+    return certified_crossing(path, point, signs, face_line(path, *face, point));
+}
+
+// The weights of the range space carry eps cond(Sigma) where those of the null space carry eps cond(Z'Sigma Z), and
+// its stationarity residual is eps |L| |g|, with g = t L^-1 v the unconstrained optimum in y, where the null space's
+// is eps |Sigma| |w|. Neither error is taken on trust: the root puts vol = s at the computed weights by the
+// cancellation-free formula, the multipliers come from the same least squares over N, and the certificate measures
+// that residual against the dual tolerance. It passes where |g| is of the order of |y| = |L'w|, and refuses a face
+// that holds the portfolio far from t Sigma^-1 v (the start of the Goldfarb-Idnani solve in
+// docs/research/2026-11-18-max-return-path-and-portable-generators.md, section 1); there Cheaper takes the null space.
+// nullopt as well when a weight is fixed.
+std::optional<Crossing> range_space_crossing(const Path& path, const PathPoint& point,
+                                             std::span<const double> signs, const FaceRows& rows)
+{
+    if (rows.free.size() < path.translation.problem.n)
+    {
+        return std::nullopt;
+    }
+    std::optional<linalg::Qr> normals = range_normals(path, rows);
+    if (!normals.has_value())
+    {
+        return std::nullopt;
+    }
+    return certified_crossing(path, point, signs, range_line(path, rows, *normals, point));
+}
+
+std::optional<Crossing> range_or_null_space_crossing(const Path& path, const PathPoint& point,
+                                                     std::span<const double> signs, FaceRows rows)
+{
+    std::optional<Crossing> crossing = range_space_crossing(path, point, signs, rows);
+    if (!crossing.has_value())
+    {
+        crossing = null_space_crossing(path, point, signs, std::move(rows));
+    }
+    return crossing;
+}
+
 } // namespace
 
 Path make_path(const Spec& spec, const Data& data)
@@ -1230,33 +1363,30 @@ qp::Solution slope_solution(const PathPoint& point, const Slope& shifted)
     return solution;
 }
 
-std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point)
+// A face with as many rows as free weights has no direction.
+std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point, FaceSolve solve)
 {
     if (point.solution.status != qp::Status::Optimal)
     {
         return std::nullopt;
     }
     std::vector<double> signs = common_signs(point);
-    std::optional<ReducedFace> face = reduced_face(path, point, signs);
-    if (!face.has_value())
+    FaceRows rows = face_rows(path.translation.problem, point, signs);
+    std::size_t n = path.translation.problem.n;
+    std::size_t p = rows.free.size();
+    std::size_t m = rows.rhs.size();
+    if (m >= p)
     {
         return std::nullopt;
     }
-    FaceLine line = face_line(path, *face, point);
-    std::optional<double> step = crossing_step(path, line);
-    if (!step.has_value() || !std::isfinite(point.t + *step) || !(point.t + *step > 0.0))
+    if (solve == FaceSolve::RangeSpace)
     {
-        return std::nullopt;
+        return range_space_crossing(path, point, signs, rows);
     }
-    for (std::size_t i = 0; i < line.weights.size(); ++i)
+    if (solve == FaceSolve::NullSpace || p < n || !range_space_cheaper(n, m))
     {
-        line.weights[i] += *step * line.direction[i];
+        return null_space_crossing(path, point, signs, std::move(rows));
     }
-    Candidate candidate = candidate_at(path, point, point.t + *step, std::move(line.weights));
-    if (!crossing_certified(path, point, signs, candidate))
-    {
-        return std::nullopt;
-    }
-    return Crossing{candidate.t, crossing_solution(point, std::move(candidate))};
+    return range_or_null_space_crossing(path, point, signs, std::move(rows));
 }
 } // namespace po::problems

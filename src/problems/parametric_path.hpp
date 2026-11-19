@@ -145,11 +145,23 @@ struct Crossing
     qp::Solution solution;
 };
 
-// From the face and shift of point: the exact tangent dw on that face (null space of the active normals over the
-// free coordinates, QR of L'Z), anchored at a face solve at point.t; the root of ||L'(w_a + h dw)|| = cap by the
-// cancellation-free formula; certified by the KKT conditions of Q(t*) at one point, Q(t*) being convex
-// (docs/research/2026-11-18-max-return-path-and-portable-generators.md, section 2). nullopt when the certificate
-// fails or the reduced Hessian has a pivot below its noise.
-std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point);
+// How the face is solved. The range space applies only when no weight is fixed (F every weight, so its factor is the
+// L of the path); Cheaper takes it there when it costs fewer flops (the rule is in the source) and falls back to the
+// null space when it yields no certified crossing. NullSpace and RangeSpace force one branch, without fallback.
+enum class FaceSolve
+{
+    Cheaper,
+    NullSpace,
+    RangeSpace
+};
+
+// From the face and shift of point: the exact tangent dw on that face over its free coordinates F, in the null space
+// of the active normals (QR of L'Z) or in the range space of Sigma (QR of L^-1 N), anchored at a face solve at
+// point.t; the root of ||L'(w_a + h dw)|| = cap by the cancellation-free formula; certified by the KKT conditions of
+// Q(t*) at one point, Q(t*) being convex (docs/research/2026-11-18-max-return-path-and-portable-generators.md,
+// section 2). nullopt when the certificate fails, a factor of the face has a pivot below its noise, or the range
+// space is forced on a face with a fixed weight.
+std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point,
+                                         FaceSolve solve = FaceSolve::Cheaper);
 
 } // namespace po::problems
