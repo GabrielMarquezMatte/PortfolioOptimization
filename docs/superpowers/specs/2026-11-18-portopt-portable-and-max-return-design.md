@@ -155,9 +155,9 @@ custa e registrar a exceção ao objetivo 3). A troca do cruzamento do MAX_RETUR
 com a mesma regra e a mesma parada (decisão do Claude: o solve de face roda só no bracket final, numa face, e deve
 custar pouco perto da bissecção que poupa).
 
-**Plataformas** (decisão do Claude): A/B completo em `gcc-bench` no Windows (a máquina de medição do projeto) e um
-A/B de `hypot` e `log` isolados (microbenchmark de `bm_kernel`, mesma regra) no Linux, em Docker na mesma máquina,
-contra a glibc, cujo `hypot` é mais rápido que o da MinGW. O macOS não é medido (não há máquina; runner compartilhado
+**Plataformas** (decisão do Claude): A/B completo em `gcc-bench` no Windows (a máquina de medição do projeto) e o
+mesmo A/B do `quick.py` no Linux, em Docker na mesma máquina, contra a glibc, cujo `hypot` é mais rápido que o da
+MinGW (o quick suite já passa pelos Givens do QP e pelo Spinu; nenhum benchmark novo). O macOS não é medido (não há máquina; runner compartilhado
 não dá tempo estável); fica registrado em `docs/performance/`.
 
 ### 6.4 Guarda de bits da biblioteca
