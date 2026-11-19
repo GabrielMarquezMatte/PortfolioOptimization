@@ -93,9 +93,12 @@ target_link_libraries(portopt PRIVATE portopt_core)
 if(MINGW)
     # No --output-def: ld 2.47 fails at random with it and writes an empty file. The export list of the release .lib
     # comes from the ABI contract (scripts/abi_contract.py def), checked against the DLL's own export table.
+    # --no-insert-timestamp: a PE header without the link time, so a rebuild of a release gives the same DLL (PyPI
+    # refuses a second upload of a file name with other bytes).
     target_link_options(portopt PRIVATE
         -static-libgcc -static-libstdc++
-        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic)
+        -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive,-Bdynamic
+        -Wl,--no-insert-timestamp)
 elseif(NOT WIN32 AND NOT APPLE)
     # libstdc++.so.6 and libgcc_s.so.1 are not on every distribution (musl, minimal images).
     # --exclude-libs keeps the symbols of the static libstdc++ out of the export table: the library exports the C
