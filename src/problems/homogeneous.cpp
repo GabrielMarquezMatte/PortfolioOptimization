@@ -18,8 +18,8 @@ namespace po::problems
 namespace
 {
 
-// kappa at most this multiple of its rounding (kappa_noise) is the closure point kappa = 0: 400 times the
-// largest error of kappa measured at the boundary, and 1.6e5 times below the smallest kappa of an OPTIMAL result
+// kappa at most this multiple of its rounding (kappa_noise) is the closure point kappa = 0: 470 times the
+// largest error of kappa measured at the boundary, and 2.3e5 times below the smallest kappa of an OPTIMAL result
 // of the battery, both in units of kappa_noise (docs/guide/validation.md).
 constexpr double kKappaNoiseFactor = 16.0;
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();

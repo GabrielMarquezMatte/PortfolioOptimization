@@ -97,7 +97,7 @@ void check_shapes(const std::vector<ProblemShape>& shapes, Counts& counts)
 
 // MAX_SHARPE and MAX_DIVERSIFICATION over fuzz_shapes(300, 3), without and with the leverage of each shape,
 // against the frontier reference: the same status, and when OPTIMAL the same ratio and KKT, all within the
-// band. Of the 1200 cases, 1039 are OPTIMAL (91 binding the leverage), 133 INFEASIBLE and 28 UNBOUNDED
+// band. Of the 1200 cases, 1039 are OPTIMAL (80 binding the leverage), 133 INFEASIBLE and 28 UNBOUNDED
 // (docs/guide/validation.md).
 TEST(RatioFuzz, AgainstFrontierReference)
 {

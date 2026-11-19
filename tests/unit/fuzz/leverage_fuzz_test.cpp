@@ -214,7 +214,7 @@ std::optional<double> binding_leverage(Spec spec, const Data& data, std::uint64_
 
 // Every case at the leverage of its shape (uniform in [0.8, 3]: infeasible, inactive or binding) and, where one
 // exists, at a leverage below the optimum's gross exposure: most shapes have a box under which the leverage of the
-// shape never binds. Of the 1979 cases, 699 bind (docs/guide/validation.md).
+// shape never binds. Of the 1979 cases, 687 bind (docs/guide/validation.md).
 TEST(LeverageFuzz, AgainstSignPatterns)
 {
     std::size_t binding = 0;

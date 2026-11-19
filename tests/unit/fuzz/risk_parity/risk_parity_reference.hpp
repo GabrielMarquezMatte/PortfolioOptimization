@@ -529,7 +529,8 @@ inline ScanResult scan_reference(const po::Spec& spec, const po::Data& data, std
 }
 
 // The scan's value moved to the feasible set to first order: its point sits on the curve only to the rounding of
-// the curve (a gap of up to 2e-10 of s measured) and inside the box only to kScanBoxTolerance, and f changes by
+// the curve (a gap of the order of its rounding: up to 2e-10 of s on the instances before the portable generators)
+// and inside the box only to kScanBoxTolerance, and f changes by
 // lambda_k h_k off the curve and by beta_j h_j past an active bound, with the multipliers of the result. Without
 // this a scan point just inside the ellipse, or just past a bound the result sits on, beats an exact solution.
 inline double scan_value_at_target(const po::Spec& spec, const po::Data& data, const po::Result& result,

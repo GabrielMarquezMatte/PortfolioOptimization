@@ -274,8 +274,8 @@ void count_binding(const std::optional<Result>& result, LeverageCount& count)
 }
 
 // gcc-release runs LeverageFuzz in full. gcc-debug, where it took 117 s, runs the first 256 shapes (every combination
-// once) at three of the five caps, 38 s, where 407 cases bind the leverage, 278 with the cap
-// (docs/guide/validation.md).
+// once) at three of the five caps, 38 s, where 412 cases bind the leverage, 277 with the cap
+// (docs/guide/validation.md; counted in gcc-release on those shapes, the debug time is that of plan 7).
 #ifdef NDEBUG
 constexpr std::size_t kLeverageShapes = 400;
 constexpr std::array kCapFractions = {0.1, 0.3, 0.5, 0.7, 0.9};
@@ -317,8 +317,8 @@ std::vector<Cap> caps_of(const GeneratedProblem& problem)
 
 // Every shape of fuzz_shapes(kLeverageShapes, 3) without the fixed box, at the leverage of with_leverage (uniform in
 // [0.8, 3]: infeasible, inactive or binding) and at a leverage below the gross exposure of the optimum without it,
-// against the frontier reference whose MIN_VARIANCE has the same leverage. In gcc-release, of the 2314 cases, 1057
-// bind the leverage, 763 of them with the cap (docs/guide/validation.md).
+// against the frontier reference whose MIN_VARIANCE has the same leverage. In gcc-release, of the 2316 cases, 1066
+// bind the leverage, 760 of them with the cap (docs/guide/validation.md).
 TEST(MaxReturnFuzz, LeverageFuzz)
 {
     LeverageCount count;

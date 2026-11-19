@@ -613,7 +613,7 @@ void expect_partial_point(const Spec& spec, const Data& data, const Result& resu
     }
 }
 
-// Twice the threshold of 16 kappa_noise. The measured error of the computed kappa is at most 0.040 kappa_noise
+// Twice the threshold of 16 kappa_noise. The measured error of the computed kappa is at most 0.034 kappa_noise
 // (docs/guide/validation.md), so an exact kappa above this cannot fall below the threshold: such a problem is
 // decided by the data and must be OPTIMAL.
 constexpr double kDecidedKappa = 32.0;
@@ -648,9 +648,9 @@ void check_partial_rate(const PartialBoundary& boundary, double moved, double to
 
 // rf at the return of the global minimum-variance portfolio of F, k ulps away (k in {0, +-1, +-3, +-16}), and
 // moved down by 3 to 3e4 times cond(Sigma) eps relative, over cond(Sigma) 1e2 to 1e8 at both scales. No exact
-// kappa <= 0 is OPTIMAL, and no exact kappa above twice the threshold is UNBOUNDED. Of the 192 solves, 70 are
-// OPTIMAL (exact kappa from 19 kappa_noise) and 122 UNBOUNDED, 58 of them with an exact kappa > 0 of at most
-// 8.0 kappa_noise (docs/guide/validation.md).
+// kappa <= 0 is OPTIMAL, and no exact kappa above twice the threshold is UNBOUNDED. Of the 192 solves, 72 are
+// OPTIMAL (exact kappa from 36 kappa_noise) and 120 UNBOUNDED, 56 of them with an exact kappa > 0 of at most
+// 11.0 kappa_noise (docs/guide/validation.md).
 TEST(MaxSharpe, PartiallyBoundedAtMinimumVarianceReturn)
 {
     constexpr std::array kConditions = {1e2, 1e4, 1e6, 1e8};
@@ -813,8 +813,9 @@ void expect_feasible_optimum(const Spec& spec, const Data& data, const Result& r
     po::testing::expect_user_leverage(problem, data, result, tolerance);
 }
 
-// Long-only passes the whole KKT check at cond(Sigma) = 1e12 with a margin of 74 below the band (the worst
-// stationarity 1.4e-9 at n = 150, 5.4e-9 at n = 50); at 1e13 the margin is 2.6, so it is not checked there.
+// Long-only passes the whole KKT check at cond(Sigma) = 1e12 with a margin of 16 below the band (the worst
+// stationarity 6.2e-9 for MAX_DIVERSIFICATION, 3.0e-9 for MAX_SHARPE; on the instances before the portable
+// generators 1.4e-9 at n = 150, 5.4e-9 at n = 50); at 1e13 the margin was 2.6 there, so it is not checked.
 constexpr double kLongOnlyKktCondition = 1e12;
 
 void check_bounded_cones(Objective objective, const Data& data, double condition)

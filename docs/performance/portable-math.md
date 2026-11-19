@@ -14,7 +14,8 @@ same plus the two replacements. Both binaries were kept side by side and run in 
   (`-DCMAKE_BUILD_TYPE=Release -DPO_BUILD_BENCHMARKS=ON -DPO_BUILD_TESTS=OFF`, generic, no `-march=native`). The
   image has no `gcc-toolset-15`, and GCC 14 rejects `std::pair{"c", run_solve_c}` in
   `tests/benchmarks/capi/bm_capi.cpp` (a pair of a function type), so the container built a copy of the tree with
-  `&run_solve_c` and `&run_solve_cpp`; no file of the repository changed for that.
+  `&run_solve_c` and `&run_solve_cpp`; the repository has that fix since (`fix(bench): take the address of the C API
+  runners for GCC 14`).
 
 Commands, per platform (after one discarded run of each binary): four rounds of
 `python tests/benchmarks/quick.py run --exe EXE --out FILE` with A and B alternating, A first in every round.

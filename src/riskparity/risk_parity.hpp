@@ -34,15 +34,16 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 // exposure sum_i |w_i| above about 4.5e3 is MaxIterations even when it is stationary.
 // With a target volatility and few or no active bounds at cond(Sigma) around 1e8 the weights are determined
 // only to the rounding of the KKT residual amplified by the conditioning of the problem: an Optimal result
-// can be up to about 1e-4 relative from the exact KKT point (measured up to 3.7e-5), while its objective
+// can be up to about 1e-4 relative from the exact KKT point (measured up to 2.8e-5), while its objective
 // value is right to 1e-7 (1 + f). The multipliers are those of one Newton solve at the returned weights,
 // kept when its safeguard accepts it (least squares at the weights otherwise). With a target volatility at
-// least 1e-3 relative above sigma_min they are measured, not derived, within 2.7e-13 relative at
-// cond(Sigma) = 1e4, 5.2e-11 at 1e6 and 5.3e-10 at 1e8 (the largest measured, n = 5 to 50, bound multipliers
-// on n = 5 and 8), at the weights those solves returned; further off, the multipliers follow the weights.
-// Nearer sigma_min the error grows roughly like 1 / delta, s = sigma_min (1 + delta): measured
-// up to 2.7e-12 at delta = 1e-4 and 4.5e-7 at 1e-10 (cond(Sigma) = 1e4), 1.3e-6 at 1e-10 over
-// cond(Sigma) <= 1e8. Above 1e8 they are not validated (measured up to 0.25 off at 1e10;
+// least 1e-3 relative above sigma_min they are measured, not derived, within 8.1e-13 relative at
+// cond(Sigma) = 1e4, 2.4e-12 at 1e6 and 9.3e-11 at 1e8 (the largest measured, n = 5 to 20, no box; 1.6e-10 for
+// the bound multipliers at 1e8), at the weights those solves returned; further off, the multipliers follow the
+// weights. Nearer sigma_min the error grows roughly like 1 / delta, s = sigma_min (1 + delta): measured
+// up to 3.2e-12 at delta = 1e-4 and 4.3e-7 at 1e-10 (cond(Sigma) = 1e4), 6.2e-7 at 1e-10 over
+// cond(Sigma) <= 1e8. Above 1e8 they are not validated (measured up to 2.1e-7 off at 1e10 on 8 shapes, and 0.25 on
+// a wider grid before the portable generators;
 // docs/guide/validation.md). A local method: Optimal means a stationary point reached
 // from the Spinu solution, not the global minimum. iterations counts the Newton steps of Spinu, the steps of
 // every descent and the Newton steps on the KKT system.

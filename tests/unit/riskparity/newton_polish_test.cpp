@@ -355,9 +355,10 @@ struct MultiplierCeiling
 // The multipliers of the target-volatility path against those of the KKT point refined in long double, with
 // the weights unchanged. The least-squares estimate at the rounded weights loses the correction H dw that the
 // Newton solve at the end of the polish keeps. The ceilings of the corrected multipliers are the largest
-// measured on these cases times 10, not derived (docs/guide/validation.md): 5.2e-11 at 1e6 and 7.1e-10 at
-// 1e8. The least-squares ones stay more than 100 times above them (8.2e-7 and 3.7e-2), so that the test tells
-// the two apart.
+// measured on the cases of the instances before the portable generators times 10, not derived
+// (docs/guide/validation.md): 5.2e-11 at 1e6 and 7.1e-10 at 1e8. On the present cases the largest are 2.4e-12
+// and 9.3e-11, 217 and 77 times below the ceilings. The least-squares ones, 4.2e-4 and 2.2e-2 (8.2e-7 and 3.7e-2
+// before), stay more than 100 times above them, so that the test tells the two apart.
 TEST(NewtonPolish, KeepsTheNewtonMultiplierCorrection)
 {
     if (!po::testing::kLongDoubleIsExtended)

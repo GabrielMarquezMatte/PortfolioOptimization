@@ -534,7 +534,7 @@ TEST(RiskParityReference, CompensatedDotInDoubleIsAccurateAtCondition1e8)
 }
 
 // At cond(Sigma) = 1e8, where the floor check and the refinement rely on it without another check: a coarse
-// band (the two differ by up to 3.6e-8 of the largest entry here). Not because the analytic Hessian of the
+// band (the two differ by up to 3.2e-7 of the largest entry here). Not because the analytic Hessian of the
 // library is rounded by eps cond(Sigma): against 80 digits it is right to 1.3e-15 of its largest entry at
 // every cond(Sigma) up to 1e10 at the points of the multiplier measurement (docs/guide/validation.md), so
 // the gap is that of the differences; at these random weights the two were not measured apart.

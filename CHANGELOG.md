@@ -107,6 +107,12 @@ The first release.
 - Release automation: `wheels.yml` on every push that touches the build, `cpp.yml` for the wrapper and its CMake
   package on GCC, Clang and MSVC (and under ASan and UBSan), `release.yml` on a `v*` tag (a prerelease tag is a
   PyPI prerelease), and the benchmarks built in CI.
+- Tests that pin the same bits on every platform: `Generators.HaveTheCommittedBits` (the test generators, by their
+  bits), `PortableMath.*` (`po::portable::exp`, `log` and `hypot` against committed values), `Determinism.*` (the
+  solution bits of one problem of each objective) and `MaxReturnFuzz.KnownShapeUnder{Windows,Linux}Covariance` (the
+  case of `MaxReturnFuzz.LeverageFuzz` that had been `MAX_ITER`, under both covariances, frozen). The test
+  generators use no libm function and no `<random>` distribution, so every test instance has the same bits on
+  Windows, Linux and macOS.
 ### Changed
 
 - Performance, with every result bit for bit identical (70 cases at 10 and 100 assets and all 35 at 1000 assets,
@@ -141,11 +147,11 @@ The first release.
   gate do not change. The correction is made only at a point that passed the gate, and the rank test of the QR does
   not veto it (at `cond(Sigma) = 1e8` with `N >= 12` and no box the KKT matrix fails that test on about half the
   shapes while the correction is right). With a target volatility at least 1e-3 relative above the minimum
-  volatility the measured relative error of the multipliers went from up to 1.5e-8, 1.6e-5 and 1.3 to up to 2.7e-13,
-  5.2e-11 and 5.3e-10 at `cond(Sigma)` 1e4, 1e6 and 1e8 (`N` from 5 to 50; bound multipliers within 1.5e-10 at 1e8,
+  volatility the measured relative error of the multipliers went from up to 3.7e-10, 4.2e-4 and 2.2e-2 to up to 8.1e-13,
+  2.4e-12 and 9.3e-11 at `cond(Sigma)` 1e4, 1e6 and 1e8 (`N` from 5 to 20; bound multipliers within 1.6e-10 at 1e8,
   `N` = 5 and 8); measured, not derived, and pinned by ceilings 10 times the largest measured on the cases of each
   test. Nearer the minimum volatility, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: up to
-  1.4e-10 at `delta = 1e-6` and 1.3e-6 at `1e-10`. At `cond(Sigma) >= 1e10` an `OPTIMAL` result is still not
+  2.3e-10 at `delta = 1e-6` and 6.2e-7 at `1e-10`. At `cond(Sigma) >= 1e10` an `OPTIMAL` result is still not
   validated. See
   [docs/guide/validation.md](docs/guide/validation.md#the-kkt-residual-and-its-noise).
 
@@ -156,6 +162,32 @@ The first release.
   `PortOptError` with `status == 4`).
 - Python: `portopt.__version__`, the version of the installed distribution. The distribution is named
   `pyportopt` (`pip install pyportopt`; the import stays `import portopt`), because `portopt` is taken on PyPI.
+- The bits of a QP solution: the Givens of the QP and the Spinu objective call `po::portable::hypot` and
+  `po::portable::log` instead of the platform's `std::hypot` and `std::log` (`po::portable::exp` serves the test
+  generators), so `src/` calls no libm function besides `sqrt` and `fma` and a solve returns the same bits on
+  Windows, Linux and macOS. `compare-solutions` over the 70 cases (10 and 100 assets) before and after: on Windows 70
+  of 70 bit for bit identical, iteration ratio 1.0000; on Linux (glibc 2.28) no status or iteration count changed and
+  35 of 70 differ in the last bits (worst relative weight difference 3.8e-15, objective 1.1e-14), the glibc `hypot`
+  having differed from the portable one. The solve times stay within noise on both
+  ([docs/performance/portable-math.md](docs/performance/portable-math.md)).
+- The bits of a `MAX_RETURN` solution at a volatility cap that binds: the point is the exact root of the tangent of
+  the face of the path, certified by the KKT conditions of `Q(t*)` at one point, in place of the interpolation of two
+  QP solutions confirmed by a third solve (`|vol / s - 1| <= 5.6e-16` at every cap of the known shape). `compare-solutions`
+  over the 70 cases against the interpolated crossing: only the 10 `max_return/*` cases changed (60 of 70 bit for bit
+  identical), worst relative weight difference 2.3e-14, worst objective difference 5.6e-16, iteration ratio 0.83, no
+  status change. `max_return/free` is 1.32 times slower at 10 assets and 1.90 times at 100 (5.7 to 7.5 us and 187 to
+  357 us), an accepted cost: the face of the budget alone has the largest dimension; the other `max_return` cases
+  are 0.93 to 0.99 of the time before, and `leverage` at 100 assets 0.52
+  ([docs/performance/max-return-crossing.md](docs/performance/max-return-crossing.md)).
+
+### Fixed
+
+- A `MAX_RETURN` problem (`cond(Sigma) = 1e8`, 24 assets with cash and a leverage, nearly equal means) that became
+  `MAX_ITER` under a perturbation of 3.6e-13 relative of the covariance, so that `MaxReturnFuzz.LeverageFuzz` failed
+  on Linux and macOS: the exact tangent crossing solves it under both covariances.
+- The iteration limit of the Goldfarb-Idnani solver counts the gross exposure family as `2n` rows, not `n`: a generated
+  row can leave and be generated again, and a solve of `Q(t)` of that problem under the Linux covariance took 556
+  iterations against a limit of 490.
 
 ### Known limitations
 
@@ -163,20 +195,13 @@ The first release.
   (there are up to `2^(n-1)` normalized solutions of `c = b`; with negative lower bounds one in another orthant can be
   missed).
 - With a target volatility and few or no active bounds at `cond(Sigma)` around 1e8, the weights are determined only to
-  the rounding of the KKT residual amplified by the conditioning: up to about 1e-4 relative (measured up to 3.7e-5)
-  from the exact KKT point, while the objective value is right to its band. Such a solve at `n = 50` can take about
-  10 s; at `n <= 20` at most about 0.15 s.
-- A bounded problem with the budget row only (Capped box, equal budget, `n = 20`, `cond(Sigma) = 1e8`, seed 31696) ends
-  as `MAX_ITER`, without a point. Documented, not fixed.
+  the rounding of the KKT residual amplified by the conditioning: up to about 1e-4 relative (measured up to 2.8e-5)
+  from the exact KKT point, while the objective value is right to its band. Such a solve takes at most about 0.7 s at
+  `n <= 50` and about 7 s at `n = 100` (measured on the author's machine).
+- A bounded problem with the budget row only can end as `MAX_ITER`, without a point: on the earlier test generators
+  one (Capped box, equal budget, `n = 20`, `cond(Sigma) = 1e8`) did; no instance of the present generators does.
+  Documented, not fixed.
 - A target return without bounds has no minimizer in general and is `MAX_ITER`.
-- The test generators build their covariances with `std::log`, `std::exp` and `std::cos`, which glibc, the Windows
-  UCRT and Apple's libm round differently, so the fuzz batteries test slightly different problems on each platform.
-  Tests that pass on Windows fail elsewhere: `MaxReturnFuzz.LeverageFuzz` on Linux and macOS (its known residual
-  case, `cond(Sigma) = 1e8` with cash and a leverage, is `MAX_ITER` under a perturbation of 3.6e-13 relative of the
-  covariance; see [docs/guide/validation.md](docs/guide/validation.md#fuzz-battery)),
-  `RiskParityDescentFuzz.ConvergedRunsAreKkt`, `RiskParityReference.ForwardErrorMeasuresTheDistanceToTheRefinedPoint`
-  and `MaxReturn.FaceShiftCashMultiplier` on Linux, and `RiskParity.TargetVolatilityEllipseAgainstScan` on macOS.
-  Portable generators and the robustness of that `MAX_RETURN` case are the next plan.
 
 [Unreleased]: https://github.com/GabrielMarquezMatte/PortfolioOptimization/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/GabrielMarquezMatte/PortfolioOptimization/releases/tag/v0.1.0

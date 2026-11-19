@@ -389,9 +389,9 @@ std::optional<Candidate> newton_step(const KktProblem& problem, const Candidate&
 
 // The step of the free weights and the change of the multipliers of the kept equalities that the Newton
 // system at a point gives. The rank test of the QR does not veto it: at cond(Sigma) = 1e8 with n >= 12 the
-// scaled KKT matrix fails it on about half the shapes measured, while the solution corrects the multipliers
-// to 3.8e-10 or better there (docs/guide/validation.md); contraction, stationarity and sides decide
-// (corrected_multipliers).
+// scaled KKT matrix failed it on about half the shapes measured (before the portable generators), while the
+// solution corrected the multipliers to 3.8e-10 or better there (docs/guide/validation.md); contraction,
+// stationarity and sides decide (corrected_multipliers).
 struct NewtonCorrection
 {
     std::vector<double> weights;

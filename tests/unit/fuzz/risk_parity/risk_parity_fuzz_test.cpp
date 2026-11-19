@@ -216,8 +216,9 @@ TEST(RiskParityFuzz, UnevenBudgetsAndConditioning)
     EXPECT_EQ(optimal, 96);
 }
 
-// The descents of the polyhedral-descent sweep that the polish does not turn into a KKT point, through
-// po::solve: OPTIMAL and KKT at the band, or no point (docs/guide/validation.md).
+// The descents of the polyhedral-descent sweep that the polish did not turn into a KKT point on the instances before
+// plan 8, through po::solve: OPTIMAL and KKT at the band, or no point (docs/guide/validation.md). The shape of seed
+// 31696 was MAX_ITER at both scales then; on the present instances both are OPTIMAL.
 TEST(RiskParityFuzz, UnrepairedDescentShapesThroughSolve)
 {
     for (double scale : {1.0, 1e-4})
@@ -234,10 +235,11 @@ TEST(RiskParityFuzz, UnrepairedDescentShapesThroughSolve)
 
 // The guard of the weights of this class: they are not held to the band of cond(Sigma), which does not apply
 // at the floor, but their error must not grow past this measured ceiling (the largest of 229 results is
-// 3.7e-5; docs/guide/validation.md). Measured, not derived.
+// 2.8e-5; docs/guide/validation.md). Measured, not derived.
 constexpr double kWeightErrorCeiling = 1e-4;
-// A sanity bound only: weight_error_bound holds but is 3.7e3 to 3e4 times above the error, so it guards
-// nothing the ceiling does not; it would catch a refinement or a bound that came apart.
+// A sanity bound only: weight_error_bound holds but is at least 5e2 times above the error (the largest error over
+// the bound, in 229 results, is 1.9e-3), so it guards nothing the ceiling does not; it would catch a refinement or a
+// bound that came apart.
 constexpr double kSanityBoundFactor = 4.0;
 
 // What the forward error of one OPTIMAL result is, against the refined KKT point of its active set.
@@ -267,9 +269,10 @@ Shape thinnest_class(std::size_t n, std::uint64_t seed)
 }
 
 // The thinnest forward-error class of the sweep: no box, a target volatility, cond(Sigma) = 1e8, n = 20.
-// Seed 4 (31696) is a result whose weights are 2.3e-5 from the refined KKT point while its stationarity is
-// at 0.22 of its rounding floor. The value is right at the band and the weights below their measured
-// ceiling, kWeightErrorCeiling; the band of the weights does not apply to a result at its floor.
+// Seeds 1 to 4 have weight errors from 9.8e-14 to 6.2e-12 (seed 4, 31696, the largest); over 199 seeds of n = 20
+// the worst is 1.3e-5, seed 135, at a stationarity far below its rounding floor. The value is right at the band and
+// the weights below their measured ceiling, kWeightErrorCeiling; the band of the weights does not apply to a result
+// at its floor.
 TEST(RiskParityFuzz, WeightsAtCondition1e8BelowTheirMeasuredCeiling)
 {
     if (!po::testing::kLongDoubleIsExtended)
@@ -421,9 +424,11 @@ void tally_bound_case(const Shape& shape, const MultiplierCeiling& ceiling, Boun
 
 // The same with a box, LongOnly or Capped (lower 0, upper 1.2 / n), both budgets, n = 5 and 8, 4 seeds: the
 // held weights and their beta, sign and complementarity included (expect_risk_parity_kkt), and beta by value
-// against the refined KKT point. Measured largest (equalities / beta): 1.9e-14 / 1.8e-14 at 1e4,
-// 2.6e-12 / 3.5e-13 at 1e6, 1.4e-10 / 1.5e-10 at 1e8; the beta of the least-squares fit at the same weights,
-// without the H dw term, reach 2.4e-10, 8.1e-10 and 1.2e-7.
+// against the refined KKT point. Measured largest (equalities / beta) on the instances of plan 8: 1.4e-14 / 8.6e-15
+// at 1e4, 2.1e-13 / 2.6e-12 at 1e6, 2.0e-12 / 1.6e-10 at 1e8; the beta of the least-squares fit at the same weights,
+// without the H dw term, reach 5.7e-12, 1.1e-8 and 3.1e-7. The ceilings below are those of the earlier instances
+// (the largest measured there, 1.9e-14 / 1.8e-14, 2.6e-12 / 3.5e-13 and 1.4e-10 / 1.5e-10, times 10): they still
+// hold, with 1.4 times to spare for beta at 1e6.
 constexpr MultiplierCeiling kBoxMultiplierCeilings[] = {
     {1e4, 1.9e-13, 1.8e-13}, {1e6, 2.6e-11, 3.6e-12}, {1e8, 1.4e-9, 1.5e-9}};
 

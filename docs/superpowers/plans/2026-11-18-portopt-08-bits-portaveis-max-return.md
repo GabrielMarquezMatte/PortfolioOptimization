@@ -6,7 +6,7 @@
 
 **Architecture:** Primeiro o cruzamento do `MAX_RETURN` passa a sair de uma tangente exata da face (null-space, referencial do shift) com certificado KKT num ponto, validado contra as duas versões (Windows e Linux) da Σ do caso hoje pinado. Depois `src/` perde a libm transcendental (`hypot`, `log` → `po::portable`), sob A/B de performance. Por fim os geradores de teste passam a usar só `po::portable` e `engine()` cru, e a documentação é remedida.
 
-**Tech Stack:** C++23, CMake 3.28, GoogleTest, MinGW-GCC 16 (`gcc-release`, `gcc-bench`), MSVC (`native-release`), Docker (`quay.io/pypa/manylinux_2_28_x86_64` com `gcc-toolset-15`), Python 3.14 (`tests/benchmarks/quick.py`), GitHub Actions.
+**Tech Stack:** C++23, CMake 3.28, GoogleTest, MinGW-GCC 16 (`gcc-release`, `gcc-bench`), MSVC (`native-release`), Docker (`quay.io/pypa/manylinux_2_28_x86_64` com `gcc-toolset-14`), Python 3.14 (`tests/benchmarks/quick.py`), GitHub Actions.
 
 **Spec:** `docs/superpowers/specs/2026-11-18-portopt-portable-and-max-return-design.md`; pesquisa `docs/research/2026-11-18-max-return-path-and-portable-generators.md` ("pesquisa §N").
 
@@ -53,14 +53,14 @@
       std::vector<double> caps;        // the caps the fuzz computed on that platform, same order
   };
   ShapeFixture known_shape_windows();  // shape seed 3963545680699380072, as MinGW-GCC on Windows generates it
-  ShapeFixture known_shape_linux();    // the same shape, as GCC 15 + glibc generates it
+  ShapeFixture known_shape_linux();    // the same shape, as GCC 14.2.1 + glibc 2.28 generates it
   GeneratedProblem fixture_problem(const ShapeFixture& fixture);  // Box None, cash, spec.leverage = fixture.leverage
   }
   ```
   Todos os doubles em hex-float (`%a`), exatos.
 
 - [ ] **Step 1:** Escrever no scratchpad (não no repositório) `dump_shape.cpp`, que inclui `tests/unit/fuzz/random_problems.hpp`, acha em `with_leverage(fuzz_shapes(kLeverageShapes, 3))` o shape de seed `3963545680699380072`, gera o problema e imprime em `%a` n, μ, Σ, `risk_free`, `leverage` e os caps das frações de `kCapFractions` calculados como `LeverageFuzz` os calcula (copiar a função de caps de `max_return_fuzz_test.cpp`). Compilar com `-std=c++23 -O2 -ffp-contract=off` contra `portopt_core`.
-- [ ] **Step 2:** Rodar no Windows (MinGW, `gcc-release`) e no Linux: `docker run --rm -v "$PWD:/work" -w /work quay.io/pypa/manylinux_2_28_x86_64 sh -c ". /opt/rh/gcc-toolset-15/enable && <cmake configure+build de portopt_core com PO_BUILD_TESTS=OFF> && g++ ... dump_shape.cpp ... && ./dump_shape"`. Conferir no Linux: 561 das 576 entradas de Σ diferem do Windows e μ é igual (`validation.md` "Other platforms"). Se não bater, **parar** e mostrar ao autor.
+- [ ] **Step 2:** Rodar no Windows (MinGW, `gcc-release`) e no Linux: `docker run --rm -v "$PWD:/work" -w /work quay.io/pypa/manylinux_2_28_x86_64 sh -c ". /opt/rh/gcc-toolset-14/enable && <cmake configure+build de portopt_core com PO_BUILD_TESTS=OFF> && g++ ... dump_shape.cpp ... && ./dump_shape"`. Conferir no Linux: 561 das 576 entradas de Σ diferem do Windows e μ é igual (`validation.md` "Other platforms"). Se não bater, **parar** e mostrar ao autor.
 - [ ] **Step 3:** Gravar as duas saídas em `known_shape_fixture.hpp` (comentário no topo: de onde vieram, o comando do Step 2, e que são congeladas — não mudam quando os geradores mudarem).
 - [ ] **Step 4: Testes** em `max_return_fuzz_test.cpp`, reusando `checked_against_reference(problem, cap, condition_tolerance(1e8))` sem nenhum relaxamento:
   ```cpp
@@ -132,7 +132,7 @@
   - `PortableMath.FmaIsCorrectlyRounded`: `std::fma(1 + 0x1p-52, 1 - 0x1p-52, -1.0) == -0x1p-104`, `std::fma(0x1.0000001p0, 0x1.0000001p0, -0x1.0000002p0) == 0x1p-56`, mais dois casos de arredondamento difícil (escolha do builder). Se falhar numa plataforma: spec §6.4 (`fma` próprio por Dekker/Veltkamp em `po::portable`), não tolerância.
 - [ ] **Step 2:** `ctest --preset gcc-release -R PortableMath` → falha (ausente).
 - [ ] **Step 3:** Implementar `portable_math.{hpp,cpp}`. Rodar os testes em `gcc-release` **e** `native-release`: mesmos bits (Review Focus 5).
-- [ ] **Step 4:** Antes da troca: `cmake --build --preset gcc-bench`, `quick.py run` duas vezes (descartar a primeira), depois `quick_a.json`; `portopt_profile --max-n 100 --json solutions_a.json`. Docker Linux (`manylinux_2_28_x86_64`, `gcc-toolset-15`, `-DCMAKE_BUILD_TYPE=Release -DPO_BUILD_BENCHMARKS=ON -DPO_BUILD_TESTS=OFF`): o mesmo par `quick.py run --exe build/linux-bench/portopt_benchmarks` (duas vezes, a segunda é a A).
+- [ ] **Step 4:** Antes da troca: `cmake --build --preset gcc-bench`, `quick.py run` duas vezes (descartar a primeira), depois `quick_a.json`; `portopt_profile --max-n 100 --json solutions_a.json`. Docker Linux (`manylinux_2_28_x86_64`, `gcc-toolset-14`, `-DCMAKE_BUILD_TYPE=Release -DPO_BUILD_BENCHMARKS=ON -DPO_BUILD_TESTS=OFF`): o mesmo par `quick.py run --exe build/linux-bench/portopt_benchmarks` (duas vezes, a segunda é a A).
 - [ ] **Step 5:** Trocar `std::hypot` → `po::portable::hypot` em `make_givens` e `std::log` → `po::portable::log` em `spinu.cpp:72`. `grep -rnE "std::(hypot|log|exp|pow|sin|cos)" src` vazio.
 - [ ] **Step 6:** B nos dois ambientes; `quick.py compare` A × B. Pior que `noise` em qualquer caso → **parar e levar ao autor** com as duas tabelas (opções do spec §6.3).
 - [ ] **Step 7:** `compare-solutions solutions_a.json solutions_b.json`: nenhum status muda; pesos e objetivos dentro da banda; casos com iterações diferentes listados no commit. Status mudou → parar e levar ao autor.
