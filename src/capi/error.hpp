@@ -8,8 +8,8 @@
 namespace po::capi
 {
 
-po_status set_error(po_status status, std::string_view message);
-void clear_error();
+po_status set_error(po_status status, std::string_view message) noexcept;
+void clear_error() noexcept;
 const char* last_error();
 
 template <typename F>

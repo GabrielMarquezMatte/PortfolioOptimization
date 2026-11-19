@@ -12,13 +12,21 @@ thread_local std::string last_error_message;
 
 }
 
-po_status set_error(po_status status, std::string_view message)
+po_status set_error(po_status status, std::string_view message) noexcept
 {
-    last_error_message.assign(message);
+    try
+    {
+        last_error_message.assign(message);
+    }
+    catch (...)
+    {
+        // A std::string never shrinks below its small buffer, which holds this literal: it cannot allocate.
+        last_error_message.assign("out of memory");
+    }
     return status;
 }
 
-void clear_error()
+void clear_error() noexcept
 {
     last_error_message.clear();
 }
