@@ -348,6 +348,37 @@ TEST(MaxReturnFuzz, LeverageFuzz)
     EXPECT_GE(count.both, kBothBind);
 }
 
+// Without cash or a box, a leverage of 1 leaves the simplex: sum_i |w_i| <= 1 = 1'w only with w >= 0. Where the
+// active generated rows disagree on the zeros D, the budget 1 and the generated row -s, s = 1 on the support, are
+// independent over all weights and opposite over the support. Every shape of fuzz_shapes(400, 4) without cash or box
+// and with cond(Sigma) at most 1e4 (32 shapes), at caps 1.1, 1.5 and 2 times the minimum volatility under the
+// leverage, against the frontier reference: all 96 OPTIMAL.
+TEST(MaxReturnFuzz, LeverageOfOneWithoutCashOrBox)
+{
+    std::size_t optimal = 0;
+    for (ProblemShape shape : po::testing::fuzz_shapes(400, 4))
+    {
+        if (shape.box != ProblemShape::Box::None || shape.cash || shape.condition > 1e4)
+        {
+            continue;
+        }
+        shape.leverage = 1.0;
+        SCOPED_TRACE(describe(shape));
+        GeneratedProblem problem = po::testing::generate(shape);
+        double minimum = minimum_volatility(problem.spec, problem.data);
+        double tolerance = condition_tolerance(shape.condition);
+        for (double factor : {1.1, 1.5, 2.0})
+        {
+            SCOPED_TRACE(factor);
+            if (checked_against_reference(problem, factor * minimum, tolerance).has_value())
+            {
+                ++optimal;
+            }
+        }
+    }
+    EXPECT_EQ(optimal, 96U);
+}
+
 // The shape of the old known residual under each platform's covariance (known_shape_fixture.hpp), at the caps the
 // fuzz computed there, each against its full band: nothing relaxed.
 void expect_every_cap_optimal(const po::testing::ShapeFixture& fixture)

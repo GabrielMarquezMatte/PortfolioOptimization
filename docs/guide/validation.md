@@ -1457,6 +1457,12 @@ cover:
   `cond <= 1e4`, 2.2e-12 at 1e6 and 1.6e-10 at 1e8. `gcc-debug` runs the first 256 shapes (every combination once) at
   the caps 0.1, 0.5 and 0.9: 412 cases bind the leverage, 277 with the cap (counted in `gcc-release` on those shapes;
   `gcc-debug` was not run in plan 8).
+- **`MaxReturnFuzz.LeverageOfOneWithoutCashOrBox`**: the shapes of `fuzz_shapes(400, 4)` without cash or box and with
+  `cond(Sigma) <= 1e4` (32), at the leverage 1, so that the feasible set is the simplex, with caps 1.1, 1.5 and 2 times
+  `sigma_min` under the leverage; the checks are those of `AgainstFrontierReference`. All 96 cases are `OPTIMAL`.
+  Before the face rows left out a row dependent over the free weights, 32 of them were `MAX_ITER`: on a face whose
+  active sign vectors disagree on the zeros, the budget and the generated row are opposite over the free weights, so
+  no crossing was certified and the bisection ended at adjacent doubles with both ends refused.
 - **`RatioFuzz.AgainstFrontierReference`**: `fuzz_shapes(300, 3)` for `MAX_SHARPE` and `MAX_DIVERSIFICATION`, at each
   shape without a leverage and with `with_leverage`. The status must be that of `max_ratio_reference`. An `OPTIMAL`
   result must have the reference's ratio, the cash weight exactly 0 and `expect_user_kkt` with the gradient written in
