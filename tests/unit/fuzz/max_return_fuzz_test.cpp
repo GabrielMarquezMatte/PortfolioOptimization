@@ -11,6 +11,7 @@
 
 #include "core/result.hpp"
 #include "fuzz/frontier_reference.hpp"
+#include "fuzz/known_shape_fixture.hpp"
 #include "fuzz/random_problems.hpp"
 #include "random_covariance.hpp"
 #include "solve/solve.hpp"
@@ -395,6 +396,31 @@ TEST(MaxReturnFuzz, LeverageFuzz)
     }
     EXPECT_GE(count.leverage, kLeverageBinds);
     EXPECT_GE(count.both, kBothBind);
+}
+
+// The shape of the known residual under each platform's covariance (known_shape_fixture.hpp), at the caps the fuzz
+// computed there, each against its full band: nothing relaxed.
+void expect_every_cap_optimal(const po::testing::ShapeFixture& fixture)
+{
+    GeneratedProblem problem = po::testing::fixture_problem(fixture);
+    double tolerance = condition_tolerance(1e8);
+    for (std::size_t k = 0; k < fixture.fractions.size(); ++k)
+    {
+        SCOPED_TRACE(fixture.fractions[k]);
+        std::optional<Result> result = checked_against_reference(problem, fixture.caps[k], tolerance);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result->status, SolveStatus::Optimal);
+    }
+}
+
+TEST(MaxReturnFuzz, KnownShapeUnderTheWindowsCovariance)
+{
+    expect_every_cap_optimal(po::testing::known_shape_windows());
+}
+
+TEST(MaxReturnFuzz, KnownShapeUnderTheLinuxCovariance)
+{
+    expect_every_cap_optimal(po::testing::known_shape_linux());
 }
 
 } // namespace
