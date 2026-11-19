@@ -40,9 +40,11 @@ double opaque(double x)
 // The committed bits are the output of the MinGW build. Each is checked against a 60-digit reference,
 //     python -c "from mpmath import mp, mpf, exp, log, sqrt; mp.dps = 60; print(exp(mpf(X)))"
 // (log(mpf(X)), sqrt(mpf(A)**2 + mpf(B)**2) for the others), at a distance of |result - exact| in units of
-// 2^(max(floor(log2 |exact|), -1022) - 52). The largest distance in these tables is 0.6745 ulp, at exp(1);
-// 20000 random arguments of each kind reach 0.8052 ulp for exp, 0.8102 for log and 1.1062 for hypot.
-constexpr std::array<Unary, 11> kExp = {{
+// 2^(max(floor(log2 |exact|), -1022) - 52). The largest distance in these tables is 0.6745 ulp, at exp(1).
+// exp(710) is +inf and exp(-746) is +0, the correctly rounded results. In a one-off measurement from
+// scratch scripts, 20000 random arguments of each kind reached 0.8052 ulp for exp, 0.8102 for log and
+// 1.1062 for hypot.
+constexpr std::array<Unary, 15> kExp = {{
     {0.3, 0x3FF59905'8C8C1A96},
     {-0.3, 0x3FE7B4C8'69C37C05},
     {0.5, 0x3FFA6129'8E1E069C},
@@ -54,9 +56,13 @@ constexpr std::array<Unary, 11> kExp = {{
     {700.0, 0x7F0D945D'F4F8EC8E},
     {-740.0, 0x00000000'00000055},
     {1e-10, 0x3FF00000'0006DF38},
+    {0.0, 0x3FF00000'00000000},
+    {-0.0, 0x3FF00000'00000000},
+    {710.0, 0x7FF00000'00000000},
+    {-746.0, 0x00000000'00000000},
 }};
 
-constexpr std::array<Unary, 11> kLog = {{
+constexpr std::array<Unary, 14> kLog = {{
     {0.1, 0xC0026BB1'BBB55515},
     {0.5, 0xBFE62E42'FEFA39EF},
     {0.75, 0xBFD26962'1134DB92},
@@ -68,9 +74,12 @@ constexpr std::array<Unary, 11> kLog = {{
     {1e-300, 0xC0859634'47F87FB5},
     {1e300, 0x40859634'47F87FB5},
     {5e-320, 0xC086F9BE'0F7CEE66},
+    {2.8, 0x3FF07952'35C1EA1B},
+    {0.7, 0xBFD6D3C3'24E13F50},
+    {2 * (1 + 0x1p-30), 0x3FE62E42'FF7A39EF},
 }};
 
-constexpr std::array<Binary, 10> kHypot = {{
+constexpr std::array<Binary, 12> kHypot = {{
     {1.0, 1.0, 0x3FF6A09E'667F3BCD},
     {1.0, 2.0, 0x4001E377'9B97F4A8},
     {0.1, 0.2, 0x3FCC9F25'C5BFEDDA},
@@ -81,6 +90,8 @@ constexpr std::array<Binary, 10> kHypot = {{
     {0x1p-1060, 0x3p-1060, 0x00000000'0000CA63},
     {0.3, 0.4, 0x3FE00000'00000000},
     {5.0, 12.0, 0x402A0000'00000000},
+    {0x1.8p-1030, 0x1p-1031, 0x0000194C'583ADA5B},
+    {0x1.3p-1020, 0x1.7p-1050, 0x00330000'00000000},
 }};
 
 TEST(PortableMath, ExpHasTheCommittedBits)
