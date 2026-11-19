@@ -408,8 +408,9 @@ double refit_tolerance(std::size_t n, double delta)
 // the budget and of the volatility turn parallel: the Newton correction of the multipliers is returned only
 // where the safeguard accepts it. Every result is OPTIMAL and a KKT point at the band, whose returned
 // multipliers expect_risk_parity_kkt finds no farther from the refined KKT point than the least-squares ones.
-// The safeguard keeps the least-squares multipliers at delta = 1e-10 in both boxes, and also at 1e-8 and 1e-9
-// without a box and at 1e-6 and 1e-7 long only: 6 of the 18, measured.
+// The safeguard keeps the least-squares multipliers at delta from 1e-7 to 1e-10 without a box and at 1e-6 and
+// 1e-7 long only: 6 of the 18, measured. Which ones it keeps turns on single roundings: its contraction test
+// (second correction at most half the first) is near its threshold here, at 0.43 long only at 1e-10.
 TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
 {
     Data data = sample_data(5, 13);
@@ -427,7 +428,7 @@ TEST(RiskParity, NearMinimumVolatilityKeepsLeastSquaresMultipliers)
             kept += polished.correction.accepted ? 0 : 1;
             // Where the correction, though it contracts, would leave a stationarity far above its noise
             // (docs/guide/validation.md): the safeguard keeps the least-squares multipliers.
-            if (delta == 1e-10)
+            if (delta == 1e-10 && std::isinf(spec.lower))
             {
                 EXPECT_FALSE(polished.correction.accepted);
             }
@@ -702,6 +703,51 @@ TEST(RiskParity, ScaleInvariance)
     EXPECT_NEAR(second.volatility_multiplier * std::sqrt(kScale), first.volatility_multiplier,
                 1e-8 * std::fabs(first.volatility_multiplier));
     EXPECT_NEAR(second.residual, first.residual, 1e-9 * first.residual);
+}
+
+std::vector<double> scaled_covariance(double scale)
+{
+    std::vector<double> covariance = {0.04, 0.006, 0.002, 0.006, 0.09, 0.01, 0.002, 0.01, 0.16};
+    for (double& entry : covariance)
+    {
+        entry *= scale;
+    }
+    return covariance;
+}
+
+// Scale invariance at the ends of the doubles: w'Sigma w of 1e160 and 1e-200 is past 1e154 and 1e-154, where a
+// product of two variances leaves the doubles. A cap of 0.4 holds the first weight; the weights are those at
+// Sigma unscaled.
+TEST(RiskParity, ExtremeScalesWithBox)
+{
+    Spec spec = long_only_spec();
+    spec.upper = 0.4;
+    Result unscaled = solved(spec, Data::create(3, {}, scaled_covariance(1.0)).value());
+    ASSERT_EQ(unscaled.status, SolveStatus::Optimal);
+    ASSERT_LT(unscaled.bound_multipliers[0], 0.0);
+    for (double scale : {1e160, 1e-200})
+    {
+        SCOPED_TRACE(scale);
+        Data data = Data::create(3, {}, scaled_covariance(scale)).value();
+        Result result = solved(spec, data);
+        expect_stationary(spec, data, result);
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            EXPECT_NEAR(result.weights[i], unscaled.weights[i], kBand) << "weight " << i;
+        }
+    }
+}
+
+// A budget entry of 1e-200 squares to 0 in the barrier curvature b_i / y_i^2 unless divided twice.
+TEST(RiskParity, TinyBudgetEntryIsOptimal)
+{
+    Data data = Data::create(3, {}, scaled_covariance(1.0)).value();
+    Spec spec = risk_parity_spec();
+    spec.risk_budget = {1e-200, 0.5, 0.5};
+    Result result = solved(spec, data);
+    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    EXPECT_TRUE(std::ranges::all_of(result.weights, [](double weight) { return weight > 0.0; }));
+    EXPECT_LE(result.residual, 1e-18);
 }
 
 double optimal_value(Spec spec, const Data& data, double target_return, double target_volatility)

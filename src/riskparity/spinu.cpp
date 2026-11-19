@@ -107,7 +107,7 @@ std::vector<double> hessian_of(const Problem& problem, const Point& point)
     std::vector<double> hessian(problem.covariance.begin(), problem.covariance.end());
     for (std::size_t i = 0; i < problem.n; ++i)
     {
-        hessian[i * problem.n + i] += problem.budget[i] / (point.y[i] * point.y[i]);
+        hessian[i * problem.n + i] += problem.budget[i] / point.y[i] / point.y[i];
     }
     return hessian;
 }

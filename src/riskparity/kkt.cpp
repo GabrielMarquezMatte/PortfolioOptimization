@@ -98,7 +98,9 @@ void add_equalities(const KktProblem& problem, std::span<const double> w, const 
     }
 }
 
-// hess f - lambda_vol hess vol, with hess vol = Sigma / vol - p p' / vol^3.
+// hess f - lambda_vol hess vol, with hess vol = Sigma / vol - p p' / vol^3. Each p is divided by vol before
+// the product: p_j p_l is of the order of vol^4 and leaves the doubles once vol passes 1e77 or falls below
+// 1e-77.
 std::vector<double> lagrangian_hessian(const KktProblem& problem, const KktPoint& point,
                                        const Moments& moments, std::span<const double> objective_hessian)
 {
@@ -112,12 +114,12 @@ std::vector<double> lagrangian_hessian(const KktProblem& problem, const KktPoint
     std::span<const double> p = moments.product;
     double multiplier = point.equality_multipliers.back();
     double volatility = moments.volatility;
-    double cube = volatility * volatility * volatility;
     for (std::size_t j = 0; j < n; ++j)
     {
         for (std::size_t l = 0; l < n; ++l)
         {
-            hessian[j * n + l] -= multiplier * (covariance[j * n + l] / volatility - p[j] * p[l] / cube);
+            double outer = (p[j] / volatility) * (p[l] / volatility) / volatility;
+            hessian[j * n + l] -= multiplier * (covariance[j * n + l] / volatility - outer);
         }
     }
     return hessian;

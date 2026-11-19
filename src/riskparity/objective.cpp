@@ -194,6 +194,15 @@ std::vector<double> second_order_term(const Data& data, std::span<const double> 
     std::vector<double> a = numerator_gradient(data, w, moments);
     double v = moments.variance;
     double k = dot(moments.contributions, r);
+    // a / v and p / v before any product: a_j p_l and p_j p_l are of the order of v^2 and leave the doubles
+    // once v passes 1e154 or falls below 1e-154.
+    std::vector<double> a_over_v(n);
+    std::vector<double> p_over_v(n);
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        a_over_v[j] = a[j] / v;
+        p_over_v[j] = p[j] / v;
+    }
     std::vector<double> term(n * n);
     for (std::size_t j = 0; j < n; ++j)
     {
@@ -201,8 +210,8 @@ std::vector<double> second_order_term(const Data& data, std::span<const double> 
         {
             double sigma = covariance[j * n + l];
             double gap_curvature = (r[j] + r[l] - 2.0 * k) * sigma / v;
-            double cross = -2.0 * (a[j] * p[l] + p[j] * a[l]) / (v * v);
-            double outer = 8.0 * k * p[j] * p[l] / (v * v);
+            double cross = -2.0 * (a_over_v[j] * p_over_v[l] + p_over_v[j] * a_over_v[l]);
+            double outer = 8.0 * k * p_over_v[j] * p_over_v[l];
             term[j * n + l] = gap_curvature + cross + outer;
         }
     }
@@ -361,7 +370,9 @@ std::vector<double> gauss_newton(std::span<const double> jacobian, std::size_t n
 }
 
 // With s = step, q = Sigma s and N_i = w_i p_i: dN_i = s_i p_i + w_i q_i + s_i q_i, dv = 2 p's + s'q,
-// dc_i = (dN_i v - N_i dv) / (v (v + dv)) and df = sum_i dc_i (2 r_i + dc_i).
+// dc_i = (dN_i - c_i dv) / (v + dv) and df = sum_i dc_i (2 r_i + dc_i). The form without c_i,
+// (dN_i v - N_i dv) / (v (v + dv)), multiplies two variances and leaves the doubles once v passes 1e154
+// or falls below 1e-154.
 Change value_change(const Data& data, std::span<const double> budget, std::span<const double> w,
                     std::span<const double> step)
 {
@@ -372,9 +383,9 @@ Change value_change(const Data& data, std::span<const double> budget, std::span<
     double updated = v + change.variance;
     for (std::size_t i = 0; i < w.size(); ++i)
     {
-        double numerator = w[i] * moments.product[i];
         double numerator_change = step[i] * moments.product[i] + w[i] * q[i] + step[i] * q[i];
-        double contribution_change = (numerator_change * v - numerator * change.variance) / (v * updated);
+        double contribution_change =
+            (numerator_change - moments.contributions[i] * change.variance) / updated;
         change.value += contribution_change * (2.0 * moments.gap[i] + contribution_change);
     }
     return change;
