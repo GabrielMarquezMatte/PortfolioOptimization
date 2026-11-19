@@ -218,12 +218,12 @@ if(PO_BUILD_TESTS)
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME style
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/style/check_style.py ${CMAKE_SOURCE_DIR})
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tests/style/check_style.py ${PROJECT_SOURCE_DIR})
     # include/portopt/portopt.abi is the contract of portopt.h; a change to the header is a change to that file.
     add_test(NAME abi_contract
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/scripts/abi_contract.py check)
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/scripts/abi_contract.py check)
     add_test(NAME abi_contract_unit
-        COMMAND Python3::Interpreter -m unittest discover -s ${CMAKE_SOURCE_DIR}/tests/abi)
+        COMMAND Python3::Interpreter -m unittest discover -s ${PROJECT_SOURCE_DIR}/tests/abi)
 
     add_subdirectory(cpp/tests)
 endif()
@@ -269,5 +269,5 @@ if(PO_BUILD_BENCHMARKS)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME benchmark_allocation_selftest COMMAND portopt_benchmarks --selftest)
     add_test(NAME benchmark_quick_selftest
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tests/benchmarks/quick.py selftest)
+        COMMAND Python3::Interpreter ${PROJECT_SOURCE_DIR}/tests/benchmarks/quick.py selftest)
 endif()
