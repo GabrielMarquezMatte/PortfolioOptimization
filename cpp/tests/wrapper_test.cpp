@@ -72,6 +72,12 @@ TEST(Wrapper, MinVarianceMatchesTheCApiBitForBit)
     EXPECT_EQ(std::memcmp(multipliers.data(), native.multipliers.data(), sizeof(multipliers)), 0);
 }
 
+TEST(Wrapper, DefaultSpecIsMinVariance)
+{
+    const po::Spec spec;
+    EXPECT_EQ(spec.objective, po::Objective::min_variance);
+}
+
 TEST(Wrapper, ErrorCarriesStatusAndMessage)
 {
     const po::Expected<po::Result> result =

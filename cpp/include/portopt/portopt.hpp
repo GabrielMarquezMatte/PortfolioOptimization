@@ -80,7 +80,7 @@ struct AssetBounds
 // gives its domain and the objectives it applies to. An empty risk_budget is the default 1 / n.
 struct Spec
 {
-    Objective objective;
+    Objective objective = Objective::min_variance;
     std::variant<std::monostate, Bounds, AssetBounds> bounds{};
     std::optional<double> target_return{};
     std::optional<double> risk_aversion{};
