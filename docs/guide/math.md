@@ -380,7 +380,7 @@ b_i`, so `w = y / 1'y` has `c = b`. `F` is strictly convex and coercive, `grad F
 boundary. `F` is not standard self-concordant when `b_i < 1` (the third derivative of `-b ln y` is `2 b / y^3` against
 `(b / y^2)^(3/2)`), but `F / min_i b_i` is, which gives a damped step whose iteration bound scales with `1 / min_i b_i`
 (a derivation of this work); the solver uses Armijo instead. It stops on the size of the step just taken,
-`max_i |dy_i / y_i| <= 16 eps` or when that size stops halving at `<= 1e-6`, because the Newton decrement bounds
+`max_i |dy_i / y_i| <= 16 eps` or when that size stops halving at `<= 1e-8`, because the Newton decrement bounds
 `F - F*` and not the error of the weights (measurements in [validation.md](validation.md#numerical-decisions-of-risk_parity)).
 Without a target return, a target volatility or an active bound, that point is the answer: every multiplier is 0 and `f`
 is at its rounding floor. The same holds when the box contains it.
