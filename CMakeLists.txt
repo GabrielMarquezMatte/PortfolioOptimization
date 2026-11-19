@@ -186,6 +186,7 @@ if(PO_BUILD_TESTS)
         tests/unit/riskparity/polyhedral_descent_test.cpp
         tests/unit/riskparity/risk_parity_test.cpp
         tests/unit/riskparity/spinu_test.cpp
+        tests/unit/solve/determinism_test.cpp
         tests/unit/solve/requirements_test.cpp
         tests/unit/solve/solve_test.cpp
         tests/unit/metrics/portfolio_test.cpp)
