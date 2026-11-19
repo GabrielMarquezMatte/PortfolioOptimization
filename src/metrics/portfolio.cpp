@@ -39,7 +39,8 @@ double variance(const Data& data, std::span<const double> weights)
     {
         total += weights[i] * row_dot(data.covariance().subspan(i * n, n), weights);
     }
-    return total;
+    // An accepted covariance is positive definite, so a negative total is rounding on an ill-conditioned one.
+    return std::fmax(0.0, total);
 }
 
 double cash_return(const Data& data, std::span<const double> weights)
