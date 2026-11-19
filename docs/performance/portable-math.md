@@ -146,3 +146,13 @@ Every `BM_Solve` case is within noise or faster.
 
 macOS: there is no machine, and a shared CI runner has no stable time. The replacement is expected to cost the same
 there as on Linux; it has not been measured.
+
+## The results outside the domain
+
+`exp`, `log` and `hypot` return the C99 Annex F values for non-finite or non-positive arguments (one comparison
+each in front of the path above, which is unchanged), where they had relied on an `assert`. A is the commit before
+(`e6127f3`), B the change; five interleaved rounds of `quick.py run` on Windows (`gcc-bench`, 2026-11-19), the first
+discarded, the columns and the rule of the tables above. No row is worse than noise: the ratios of the minima are
+0.987 to 1.007 (`max_return/long_only/100` 1.007 with an sd of 33 us), and the Givens and Spinu cases
+(`kernel/qp_iteration/100` 1.000, `risk_parity/*` 0.998 to 1.005) are flat. `compare-solutions`: 70 of 70 bit for bit
+identical. Linux was not measured for this change: Windows showed no doubt.

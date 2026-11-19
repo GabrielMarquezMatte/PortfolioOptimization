@@ -6,6 +6,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <limits>
 
 namespace
@@ -155,6 +156,55 @@ TEST(PortableMath, FmaIsCorrectlyRounded)
     // it down.
     EXPECT_EQ(bits_of(std::fma(opaque(1 + 0x1p-30), opaque(1 + 0x1p-22 + 0x1p-23), opaque(-0x1p-100))),
               bits_of(0x1.0000060400001p0));
+}
+
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
+constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+
+// The special values of C99 Annex F (F.9.3.1 exp, F.9.3.7 log, F.9.4.3 hypot).
+constexpr std::array<Unary, 2> kExpSpecial = {{
+    {kInfinity, 0x7FF00000'00000000},
+    {-kInfinity, 0x00000000'00000000},
+}};
+
+constexpr std::array<Unary, 3> kLogSpecial = {{
+    {0.0, 0xFFF00000'00000000},
+    {-0.0, 0xFFF00000'00000000},
+    {kInfinity, 0x7FF00000'00000000},
+}};
+
+constexpr std::array<Binary, 6> kHypotSpecial = {{
+    {kInfinity, kNaN, 0x7FF00000'00000000},
+    {kNaN, -kInfinity, 0x7FF00000'00000000},
+    {-kInfinity, 1.0, 0x7FF00000'00000000},
+    {0.0, kInfinity, 0x7FF00000'00000000},
+    {-kInfinity, -kInfinity, 0x7FF00000'00000000},
+    {kInfinity, 0x1p-1074, 0x7FF00000'00000000},
+}};
+
+TEST(PortableMath, OutsideTheDomainGivesTheAnnexFResults)
+{
+    for (const Unary& entry : kExpSpecial)
+    {
+        EXPECT_EQ(bits_of(po::portable::exp(opaque(entry.x))), entry.bits) << entry.x;
+    }
+    EXPECT_TRUE(std::isnan(po::portable::exp(opaque(kNaN))));
+    for (const Unary& entry : kLogSpecial)
+    {
+        EXPECT_EQ(bits_of(po::portable::log(opaque(entry.x))), entry.bits) << entry.x;
+    }
+    for (double x : {-1.0, -0x1p-1074, -kInfinity, kNaN})
+    {
+        EXPECT_TRUE(std::isnan(po::portable::log(opaque(x)))) << x;
+    }
+    for (const Binary& entry : kHypotSpecial)
+    {
+        EXPECT_EQ(bits_of(po::portable::hypot(opaque(entry.a), opaque(entry.b))), entry.bits)
+            << entry.a << ", " << entry.b;
+    }
+    EXPECT_TRUE(std::isnan(po::portable::hypot(opaque(kNaN), opaque(1.0))));
+    EXPECT_TRUE(std::isnan(po::portable::hypot(opaque(-2.0), opaque(kNaN))));
+    EXPECT_TRUE(std::isnan(po::portable::hypot(opaque(kNaN), opaque(kNaN))));
 }
 
 } // namespace

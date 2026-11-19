@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -45,6 +44,8 @@ constexpr double from_bits(std::uint64_t bits)
 {
     return std::bit_cast<double>(bits);
 }
+
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
 // The constants are the hexadecimal words of fdlibm, which it states are the intended values.
 constexpr double kLn2Hi = from_bits(0x3FE62E42'FEE00000);
@@ -218,11 +219,39 @@ double hypot_of_normal(double larger, double smaller, int extra_exponent)
     return std::sqrt(x * x + y * y) * power_of_two(exponent + extra_exponent);
 }
 
+// C99 Annex F outside (0, +inf): -inf at +-0, NaN below 0 and at NaN, +inf at +inf.
+double log_outside_domain(double x)
+{
+    if (x == 0.0)
+    {
+        return -kInfinity;
+    }
+    if (x < 0.0)
+    {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return x + x;
+}
+
+// C99 Annex F for |a| or |b| infinite or NaN: +inf when either is infinite, even with the other NaN; NaN
+// otherwise.
+double hypot_outside_domain(double abs_a, double abs_b)
+{
+    if (abs_a == kInfinity || abs_b == kInfinity)
+    {
+        return kInfinity;
+    }
+    return abs_a + abs_b;
+}
+
 } // namespace
 
 double exp(double x)
 {
-    assert(std::isfinite(x));
+    if (std::isnan(x))
+    {
+        return x + x;
+    }
     std::uint32_t high = high_word(x);
     std::size_t sign = high >> 31;
     std::uint32_t abs_high = high & 0x7FFFFFFF;
@@ -252,7 +281,10 @@ double exp(double x)
 
 double log(double x)
 {
-    assert(std::isfinite(x) && x > 0.0);
+    if (!(x > 0.0 && x < kInfinity))
+    {
+        return log_outside_domain(x);
+    }
     if (x < 0x1p-1022)
     {
         return log_of_normal(x * kTwo54, -54);
@@ -262,9 +294,14 @@ double log(double x)
 
 double hypot(double a, double b)
 {
-    assert(std::isfinite(a) && std::isfinite(b));
-    double larger = std::max(std::abs(a), std::abs(b));
-    double smaller = std::min(std::abs(a), std::abs(b));
+    double abs_a = std::abs(a);
+    double abs_b = std::abs(b);
+    if (!(abs_a < kInfinity && abs_b < kInfinity))
+    {
+        return hypot_outside_domain(abs_a, abs_b);
+    }
+    double larger = std::max(abs_a, abs_b);
+    double smaller = std::min(abs_a, abs_b);
     if (larger == 0.0)
     {
         return 0.0;
