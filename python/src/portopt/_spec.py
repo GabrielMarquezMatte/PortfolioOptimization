@@ -69,7 +69,11 @@ class Spec:
     _handle: _native.Handle = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        handle = _native.create_handle(lib.po_spec_create, lib.po_spec_free, int(self.objective))
+        objective = int(self.objective)
+        if not -(2**31) <= objective < 2**31:
+            # ctypes would wrap it into int32 (2**32 becomes MIN_VARIANCE); the message is the native one.
+            raise ValueError("objective is not one of PO_OBJECTIVE_*")
+        handle = _native.create_handle(lib.po_spec_create, lib.po_spec_free, objective)
         object.__setattr__(self, "_handle", handle)
         if self.bounds is not None:
             self._set_bounds(*self.bounds)
