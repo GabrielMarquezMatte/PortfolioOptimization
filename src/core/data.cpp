@@ -264,8 +264,10 @@ std::expected<void, Failure> Data::set_returns(std::span<const double> returns,
     {
         return std::unexpected(std::move(*failure));
     }
-    returns_.assign(returns.begin(), returns.end());
-    benchmark_.assign(benchmark.begin(), benchmark.end());
+    std::vector<double> new_returns(returns.begin(), returns.end());
+    std::vector<double> new_benchmark(benchmark.begin(), benchmark.end());
+    returns_ = std::move(new_returns);
+    benchmark_ = std::move(new_benchmark);
     observation_count_ = t;
     return {};
 }
