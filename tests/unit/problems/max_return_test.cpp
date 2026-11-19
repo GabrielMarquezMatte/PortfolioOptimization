@@ -405,6 +405,38 @@ TEST(MaxReturn, ConditioningSweep)
     }
 }
 
+// Cash fixed at 0.1 by its bounds, the risky weights long-only, cond(Sigma) = 1e8 and means 0.1 (1 + 1e-6 u_i): Q(t)
+// far along the path starts at t Sigma^-1 mu~, far from the final w, and the rounding of the steps from there leaves
+// the active bound of the cash off by more than the tolerance at w. Its other bound, violated by that alone, made a
+// Q(t) infeasible, and the path broke down at t > 0.
+TEST(MaxReturn, FixedCashIllConditioned)
+{
+    for (double fraction : {0.3, 0.9})
+    {
+        for (std::uint64_t seed = 1; seed <= 40; ++seed)
+        {
+            SCOPED_TRACE(testing::Message() << "fraction " << fraction << " seed " << seed);
+            std::size_t n = 3 + seed % 6;
+            std::vector<double> mu = po::testing::random_vector(n, seed + 500, -1.0, 1.0);
+            for (double& value : mu)
+            {
+                value = 0.1 * (1.0 + 1e-6 * value);
+            }
+            Data data = Data::create(n, mu, po::testing::random_covariance(n, seed, 1e8)).value();
+            data.set_risk_free(kRiskFree);
+            Spec bounds;
+            bounds.asset_lower.assign(n + 1, 0.0);
+            bounds.asset_upper.assign(n + 1, 1.0);
+            bounds.asset_lower[n] = 0.1;
+            bounds.asset_upper[n] = 0.1;
+            double cap = (1.0 + fraction) * minimum_volatility(bounds, data);
+            Result result = solve_checked(max_return(bounds, cap), data, sweep_tolerance(1e8));
+            ASSERT_EQ(result.status, SolveStatus::Optimal);
+            EXPECT_NEAR(result.weights[n], 0.1, 1e-12);
+        }
+    }
+}
+
 // Without cash the path solves Q(t) for mu less its midrange (1'w = 1 makes it the same w(t)) and maps the
 // budget multiplier back: adding k to every mean leaves the weights and the volatility multiplier and lowers
 // the budget multiplier by k, at a crossing and with an inactive cap.

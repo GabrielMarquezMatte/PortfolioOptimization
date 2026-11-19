@@ -591,6 +591,59 @@ TEST(GoldfarbIdnani, GrossExposureFamilyWithManyExchanges)
     po::testing::expect_kkt(problem, solution, 1e-9);
 }
 
+// The QP of UTILITY at risk aversion 1e-5: G = 1e-5 Sigma, g = -mu, under the budget. The start G^-1 (-g) is near
+// 1e4 times the final x, and the rounding of the steps from it leaves the active rows off by more than the
+// tolerance of the final x.
+Problem small_risk_aversion_problem(std::size_t n, std::uint64_t seed)
+{
+    Problem problem;
+    problem.n = n;
+    problem.hessian = po::testing::random_covariance(n, seed);
+    scale_hessian(problem, 1e-5);
+    problem.linear = po::testing::random_vector(n, seed + 500, -0.15, -0.03);
+    add_equality(problem, std::vector<double>(n, 1.0), 1.0);
+    return problem;
+}
+
+// Long-only with x_0 fixed at 0.2 by its two bounds: once x_0 >= 0.2 is active, x_0 <= 0.2 is its negation and is
+// violated by the residual of x_0 >= 0.2 alone. A dual step on it dropped a row on a rate of rounding size, or found
+// no row to drop: the problem was declared infeasible.
+TEST(GoldfarbIdnani, FixedVariableFarFromTheStart)
+{
+    constexpr std::size_t n = 6;
+    for (std::uint64_t seed = 1; seed <= 40; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = small_risk_aversion_problem(n, seed);
+        std::vector<double> lower(n, 0.0);
+        std::vector<double> upper(n, 1.0);
+        lower[0] = 0.2;
+        upper[0] = 0.2;
+        add_bounds(problem, lower, upper);
+        Solution solution = po::qp::solve(problem);
+        ASSERT_EQ(solution.status, Status::Optimal);
+        EXPECT_NEAR(solution.x[0], 0.2, 1e-12);
+        po::testing::expect_kkt(problem, solution);
+    }
+}
+
+// The leverage 1 under the budget without bounds: the feasible set is the simplex, and the row of the family at
+// s = 1, -1'x >= -1, is the negation of the budget, violated by its residual alone once x >= 0.
+TEST(GoldfarbIdnani, GrossExposureRowNegatesTheBudget)
+{
+    for (std::uint64_t seed = 1; seed <= 40; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        std::size_t n = 2 + static_cast<std::size_t>(seed % 7);
+        Problem problem = small_risk_aversion_problem(n, seed);
+        problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(n, 0.0), -1.0};
+        Solution solution = po::qp::solve(problem);
+        ASSERT_EQ(solution.status, Status::Optimal);
+        EXPECT_LE(gross_exposure(solution.x), 1.0 + 1e-12);
+        po::testing::expect_kkt(problem, solution);
+    }
+}
+
 bool same_bits(const std::vector<double>& a, const std::vector<double>& b)
 {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(double)) == 0;

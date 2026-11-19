@@ -53,6 +53,14 @@ struct Constraints
     GeneratedRows renumbered;
 };
 
+// How a violated candidate dependent on the active rows is taken: always by a dual step, or passed over when it
+// holds on the face of the active rows (holds_on_active_face).
+enum class DependentCandidates
+{
+    DualStep,
+    PassOverHeldOnFace
+};
+
 // G x + g = N u holds for the active normals N and multipliers u of set.active.
 struct State
 {
@@ -61,6 +69,7 @@ struct State
     std::size_t next_equality = 0;
     int iterations = 0;
     int iteration_limit = 0;
+    DependentCandidates dependent = DependentCandidates::DualStep;
 };
 
 struct Step
@@ -414,6 +423,63 @@ void compute_candidate_directions(const Constraints& constraints, State& state,
                             unit_entry(constraints, candidate.index), candidate.sign);
 }
 
+void refine_active(const Constraints& constraints, State& state)
+{
+    std::vector<double> residual(state.set.active.size());
+    for (std::size_t k = 0; k < residual.size(); ++k)
+    {
+        const ActiveConstraint& constraint = state.set.active[k];
+        residual[k] = -constraint.sign * slack(constraints, state, constraint.index);
+    }
+    refine_toward_active(state.set, residual, state.x);
+}
+
+// For a candidate whose normal is the combination dual_direction of the active normals: its slack less the part
+// that the residuals of the active rows explain, which is its slack on their face.
+double slack_on_active_face(const Constraints& constraints, const State& state, const ActiveConstraint& candidate)
+{
+    double value = candidate.sign * slack(constraints, state, candidate.index);
+    for (std::size_t k = 0; k < state.set.active.size(); ++k)
+    {
+        const ActiveConstraint& constraint = state.set.active[k];
+        value -= state.set.dual_direction[k] * constraint.sign * slack(constraints, state, constraint.index);
+    }
+    return value;
+}
+
+// The active rows hold at x only to the rounding of every step from the unconstrained start, which does not shrink
+// with x: from a start far larger than the final x it can exceed the tolerance there. A candidate dependent on them
+// (the other bound of a fixed weight, a row of the family that negates the budget) is then violated by that
+// rounding alone, and a dual step on it drops a row by a ratio over the rounding of dual_direction, or declares the
+// problem infeasible. Before any such step its multiplier is zero, so G x + g = N u holds without it.
+bool holds_on_active_face(const Constraints& constraints, const State& state, const ActiveConstraint& candidate,
+                          double limit)
+{
+    if (state.dependent != DependentCandidates::PassOverHeldOnFace || candidate.multiplier != 0.0)
+    {
+        return false;
+    }
+    double face_slack = slack_on_active_face(constraints, state, candidate);
+    if (candidate.index < constraints.equality_count)
+    {
+        return std::fabs(face_slack) <= limit;
+    }
+    return face_slack >= -limit;
+}
+
+// The candidate is not added. The refinement moves x onto the active rows, where it holds, so that it is not picked
+// again at once, and counts as an iteration, so that picking it again after x moves cannot loop forever.
+Progress pass_over(const Constraints& constraints, State& state)
+{
+    if (state.iterations == state.iteration_limit)
+    {
+        return Progress::MaxIterations;
+    }
+    ++state.iterations;
+    refine_active(constraints, state);
+    return Progress::Added;
+}
+
 Progress add_constraint(const Constraints& constraints, State& state, ActiveConstraint candidate)
 {
     while (true)
@@ -425,6 +491,10 @@ Progress add_constraint(const Constraints& constraints, State& state, ActiveCons
         if (!moves_primal && std::fabs(violation) <= limit)
         {
             return Progress::Added;
+        }
+        if (!moves_primal && holds_on_active_face(constraints, state, candidate, limit))
+        {
+            return pass_over(constraints, state);
         }
         double primal_length = kInfinity;
         if (moves_primal)
@@ -478,17 +548,6 @@ void discard_inactive_generated(Constraints& constraints, State& state)
         constraint.index = append_generated(constraints, kept, normal, signs);
     }
     std::swap(previous, kept);
-}
-
-void refine_active(const Constraints& constraints, State& state)
-{
-    std::vector<double> residual(state.set.active.size());
-    for (std::size_t k = 0; k < residual.size(); ++k)
-    {
-        const ActiveConstraint& constraint = state.set.active[k];
-        residual[k] = -constraint.sign * slack(constraints, state, constraint.index);
-    }
-    refine_toward_active(state.set, residual, state.x);
 }
 
 // The refinement moves x onto the active rows by their residuals, which carry the rounding of every step from
@@ -574,10 +633,12 @@ Solution failed_solution(const Problem& problem, Progress progress, int iteratio
     return solution;
 }
 
-Solution solve_factored(const Problem& problem, std::span<const double> factor, ActiveSet set)
+Solution run_dual_method(const Problem& problem, std::span<const double> factor, ActiveSet set,
+                         DependentCandidates dependent)
 {
     Constraints constraints = gather_constraints(problem);
     State state = initial_state(problem, factor, std::move(set));
+    state.dependent = dependent;
     Progress progress = Progress::Added;
     while (progress == Progress::Added)
     {
@@ -594,6 +655,32 @@ Solution solve_factored(const Problem& problem, std::span<const double> factor, 
         discard_inactive_generated(constraints, state);
     }
     return failed_solution(problem, progress, state.iterations);
+}
+
+// A failed solve is run again from J0, the same start, passing over the candidates that hold on the face of the
+// active rows; the iterations of both runs are reported. If that run fails too, the first failure stands.
+void retry_passing_over(const Problem& problem, std::span<const double> factor, Solution& solution)
+{
+    Solution retried = run_dual_method(problem, factor, empty_active_set(factor, problem.n),
+                                       DependentCandidates::PassOverHeldOnFace);
+    if (retried.status != Status::Optimal)
+    {
+        return;
+    }
+    retried.iterations += solution.iterations;
+    solution = std::move(retried);
+}
+
+// Passing over changes the path of solves that the dual step alone already finishes, and their solutions are
+// committed bit for bit (tests/unit/solve/determinism_test.cpp): only a solve that fails takes it.
+Solution solve_factored(const Problem& problem, std::span<const double> factor, ActiveSet set)
+{
+    Solution solution = run_dual_method(problem, factor, std::move(set), DependentCandidates::DualStep);
+    if (solution.status != Status::Optimal)
+    {
+        retry_passing_over(problem, factor, solution);
+    }
+    return solution;
 }
 
 void validate_sizes(const Problem& problem)

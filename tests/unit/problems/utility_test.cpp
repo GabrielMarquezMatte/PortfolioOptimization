@@ -214,6 +214,78 @@ TEST(Utility, LargeRiskAversionApproachesMinVariance)
     expect_near_relative(result.weights, minimum.weights, 1e-6);
 }
 
+Spec with_asset_bounds(Spec spec, std::size_t count, double fixed)
+{
+    spec.asset_lower.assign(count, 0.0);
+    spec.asset_upper.assign(count, 1.0);
+    spec.asset_lower[0] = fixed;
+    spec.asset_upper[0] = fixed;
+    return spec;
+}
+
+// A small risk aversion puts the unconstrained start near 1e4 times the final weights, and the rounding of the steps
+// from it leaves the active bound of the fixed weight off by more than the tolerance there: its other bound, violated
+// by that alone, made the problem infeasible.
+TEST(Utility, FixedWeightAtSmallRiskAversion)
+{
+    constexpr std::size_t n = 6;
+    constexpr double kSmallDelta = 1e-5;
+    for (std::uint64_t seed = 1; seed <= 40; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = random_data(n, seed);
+        Result result = solve_checked(with_asset_bounds(utility(kSmallDelta), n, 0.2), data,
+                                      Scales{kSmallDelta, 1.0});
+        ASSERT_EQ(result.status, SolveStatus::Optimal);
+        EXPECT_NEAR(result.weights[0], 0.2, 1e-12);
+    }
+}
+
+// Cash last, fixed by its bounds, with the risky weights long-only.
+TEST(Utility, FixedCashAtSmallRiskAversion)
+{
+    constexpr std::size_t n = 5;
+    constexpr double kSmallDelta = 1e-4;
+    for (std::uint64_t seed = 1; seed <= 40; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Data data = random_data(n, seed);
+        data.set_risk_free(kRiskFree);
+        Spec spec = utility(kSmallDelta);
+        spec.asset_lower.assign(n + 1, 0.0);
+        spec.asset_upper.assign(n + 1, 1.0);
+        spec.asset_lower[n] = 0.15;
+        spec.asset_upper[n] = 0.15;
+        Result result = solve_checked(spec, data, Scales{kSmallDelta, 1.0});
+        ASSERT_EQ(result.status, SolveStatus::Optimal);
+        EXPECT_NEAR(result.weights[n], 0.15, 1e-12);
+    }
+}
+
+// The leverage 1 without bounds and without cash: the feasible set is the simplex, and the row of the gross exposure
+// family at s = 1 is the negation of the budget, violated by the budget's residual alone. A small risk aversion puts
+// the unconstrained start far from the final weights.
+TEST(Utility, UnitLeverageIsTheSimplex)
+{
+    for (double risk_aversion : {1e-4, 1e-5})
+    {
+        for (std::uint64_t seed = 1; seed <= 40; ++seed)
+        {
+            SCOPED_TRACE(testing::Message() << "risk aversion " << risk_aversion << " seed " << seed);
+            std::size_t n = 2 + static_cast<std::size_t>(seed % 7);
+            Data data = random_data(n, seed);
+            Spec spec = utility(risk_aversion);
+            spec.leverage = 1.0;
+            Result result = solve_checked(spec, data, Scales{risk_aversion, 1.0});
+            ASSERT_EQ(result.status, SolveStatus::Optimal);
+            for (double weight : result.weights)
+            {
+                EXPECT_GE(weight, -1e-12);
+            }
+        }
+    }
+}
+
 TEST(Importance, ZeroIsMinVariance)
 {
     Data data = random_data(10, 2);
