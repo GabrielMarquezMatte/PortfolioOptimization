@@ -573,9 +573,9 @@ Verified means the text was read for the claim it supports; the others are marke
   rows of the leverage. Verified.
 - Niedermayer and Niedermayer (2007), "Applying Markowitz's critical line algorithm", Univ. Bern DP 07-01, proposition 1
   and corollary 1: the piecewise affine path of `MAX_RETURN`. Verified.
-- Cornuejols and Tütüncü (2007, section 8.2) and Choueifaty and Coignard (2008): the homogenization of `MAX_SHARPE` and
+- Cornuejols and TÃ¼tÃ¼ncÃ¼ (2007, section 8.2) and Choueifaty and Coignard (2008): the homogenization of `MAX_SHARPE` and
   `MAX_DIVERSIFICATION`. Not read; cited at second hand. The bound `kappa >= 1 / (L ||v||_inf)` is derived here.
-- Bai, Scheinberg and Tütüncü (2016), Quantitative Finance 16(3): lemmas 2.1 to 2.3, examples 3.1 and 3.2. Verified on
+- Bai, Scheinberg and TÃ¼tÃ¼ncÃ¼ (2016), Quantitative Finance 16(3): lemmas 2.1 to 2.3, examples 3.1 and 3.2. Verified on
   the preprint (2013); the published version was not read. Lemma 2.1 says positive semidefinite, but its proof needs
   positive definite `Sigma` (a derivation of this work).
 - Bruder and Roncalli (2012), "Managing risk exposures using the risk budgeting approach", section 2.3.3: existence and
