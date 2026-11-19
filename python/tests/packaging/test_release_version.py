@@ -66,3 +66,12 @@ def test_prerelease_is_decided_by_the_version_not_by_a_dash() -> None:
 def test_rehearsal_tag_is_a_prerelease_of_the_repository_version() -> None:
     assert release_version.rehearsal_tag(CMAKE) == "v0.1.0-rc.0"
     assert release_version.is_prerelease(release_version.rehearsal_tag(CMAKE))
+
+
+def test_nuget_version_is_semver() -> None:
+    # NuGet takes SemVer 2: the PEP 440 spellings of one prerelease give one package version.
+    assert release_version.nuget_version("v0.1.0") == "0.1.0"
+    assert release_version.nuget_version("v0.1.0-rc.1") == "0.1.0-rc.1"
+    assert release_version.nuget_version("v0.1.0rc1") == "0.1.0-rc.1"
+    assert release_version.nuget_version("v0.2.0b2") == "0.2.0-beta.2"
+    assert release_version.nuget_version("v0.1.0.dev3") == "0.1.0-dev.3"

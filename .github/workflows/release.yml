@@ -1,6 +1,7 @@
 name: Release
 
-# A v* tag publishes the wheels and the native libraries to a GitHub Release and the wheels to PyPI; a prerelease tag
+# A v* tag publishes the wheels and the native libraries to a GitHub Release, the wheels to PyPI and the .NET package to
+# nuget.org; a prerelease tag
 # (v0.1.0-rc.1, or v0.1.0rc1: decided by the version, not by a '-') is a GitHub prerelease, and its wheels are a
 # PyPI prerelease (0.1.0rc1): pip prefers a final release to it, but takes it while no final release exists. Only a
 # tag publishes. A manual run on a branch builds and tests everything as the rehearsal tag
@@ -209,3 +210,106 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always dist/*
+
+  # The .NET package: the assembly and the seven native libraries of the wheels job, each as
+  # runtimes/<rid>/native/libportopt.<ext>. Its version is the SemVer form of the tag (v0.1.0rc1 gives 0.1.0-rc.1); a
+  # manual run packs the rehearsal tag, so nothing it packs is ever a final version.
+  nuget:
+    name: NuGet package
+    needs: [ version, wheels ]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the native libraries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: natives
+          merge-multiple: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Pack
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          version=$(uv run --no-project --python 3.14 --with packaging python python/scripts/release_version.py nuget "$TAG")
+          dotnet pack csharp/src/PortOpt -c Release -p:Version="$version" -p:PortOptNativeAssets="$PWD/natives" -o nuget
+          echo "$version" > nuget/version.txt
+          ls -l nuget
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: nuget/
+          if-no-files-found: error
+
+  # The package as a user gets it, on each system: a clean consumer restored from it, run without PORTOPT_LIB, then
+  # published with Native AOT.
+  nuget-check:
+    name: NuGet package check (${{ matrix.os }})
+    needs: nuget
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: nuget
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install the Native AOT prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y clang zlib1g-dev
+
+      - name: Check the package
+        shell: bash
+        run: bash csharp/scripts/check_package.sh nuget "$(cat nuget/version.txt)"
+
+  # Trusted Publishing: nuget.org trusts this workflow (a policy its owner registers) and NuGet/login trades the OIDC
+  # token for a short-lived API key. NUGET_USER is the nuget.org account, a repository variable. Only a tag publishes:
+  # a nuget.org version is permanent. It runs after the GitHub Release, and a failure here blocks neither it nor PyPI.
+  publish-nuget:
+    name: NuGet
+    needs: [ publish-github, nuget-check ]
+    if: github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the package
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: nuget
+
+      - name: Log in to nuget.org
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish to nuget.org
+        run: >-
+          dotnet nuget push nuget/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json --skip-duplicate

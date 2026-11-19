@@ -7,6 +7,8 @@
     python python/scripts/release_version.py prerelease TAG  "true" for a prerelease tag (v0.1.0rc1 too), else "false"
     python python/scripts/release_version.py rehearsal       a prerelease tag of the repository's version (v0.1.0-rc.0),
                                                            which a dry run builds with so it takes the path of a tag
+    python python/scripts/release_version.py nuget TAG       the SemVer 2 version of the NuGet package (v0.1.0rc1 and
+                                                           v0.1.0-rc.1 both give 0.1.0-rc.1)
 
 A release candidate is built from the tag alone (v0.1.0-rc.1 gives the wheel 0.1.0rc1 and CMake 0.1.0), so no commit
 changes a version for it.
@@ -21,6 +23,7 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parents[2]
 CMAKE_VERSION = re.compile(r"^\s*set\(PO_VERSION ([^\s)]+)\)", re.MULTILINE)
 PYPROJECT_VERSION = re.compile(r'^version = "([^"]+)"', re.MULTILINE)
+SEMVER_LABELS = {"a": "alpha", "b": "beta", "rc": "rc"}
 
 
 def parse(tag: str) -> Version:
@@ -39,6 +42,17 @@ def cmake_version(tag: str) -> str:
 
 def is_prerelease(tag: str) -> bool:
     return parse(tag).is_prerelease
+
+
+def nuget_version(tag: str) -> str:
+    """A prerelease of PEP 440 (a, b, rc, dev) as SemVer prerelease labels, which NuGet orders below the release."""
+    version = parse(tag)
+    labels = []
+    if version.pre is not None:
+        labels.append(f"{SEMVER_LABELS[version.pre[0]]}.{version.pre[1]}")
+    if version.dev is not None:
+        labels.append(f"dev.{version.dev}")
+    return "-".join([version.base_version, ".".join(labels)]) if labels else version.base_version
 
 
 def rehearsal_tag(cmake: str) -> str:
@@ -74,6 +88,9 @@ def mismatches(cmake: str, pyproject: str, changelog: str, tag: str | None) -> l
 def main(argv: list[str]) -> int:
     if argv[:1] == ["prerelease"]:
         print("true" if is_prerelease(argv[1]) else "false")
+        return 0
+    if argv[:1] == ["nuget"]:
+        print(nuget_version(argv[1]))
         return 0
     if argv[:1] == ["rehearsal"]:
         print(rehearsal_tag((ROOT / "CMakeLists.txt").read_text(encoding="utf-8")))

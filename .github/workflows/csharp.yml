@@ -1,0 +1,104 @@
+name: C# binding
+
+# Builds the library, then builds and tests the .NET binding in csharp/ against it on the three systems. The binding
+# loads the library named by PORTOPT_LIB, the same variable the Python package reads. Each job then packs that library
+# for its own RID and checks the package with a clean consumer and a Native AOT publish.
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'csharp/**'
+      - 'include/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'global.json'
+      - '.github/workflows/csharp.yml'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'csharp/**'
+      - 'include/**'
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'global.json'
+      - '.github/workflows/csharp.yml'
+
+concurrency:
+  group: csharp-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  binding:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            rid: linux-x64
+            library: build/csharp/libportopt.so
+          - name: macos
+            os: macos-latest
+            rid: osx-arm64
+            library: build/csharp/libportopt.dylib
+          - name: windows
+            os: windows-latest
+            rid: win-x64
+            library: build/csharp/Release/portopt.dll
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # As in ci.yml: GCC 15 from the toolchain PPA, whose signing key Launchpad sometimes serves with an HTTP 500.
+      # clang and zlib are the Native AOT prerequisites.
+      - name: Install GCC 15 and the Native AOT prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for attempt in 1 2 3 4 5; do
+            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test && break
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 15))
+          done
+          for attempt in 1 2 3 4 5; do
+            sudo apt-get -o Acquire::Retries=5 update &&
+              sudo apt-get -o Acquire::Retries=5 install -y gcc-15 g++-15 clang zlib1g-dev && break
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep $((attempt * 30))
+          done
+          echo "CC=gcc-15" >> "$GITHUB_ENV"
+          echo "CXX=g++-15" >> "$GITHUB_ENV"
+
+      - name: Build the library
+        shell: bash
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          cmake -S . -B build/csharp -DCMAKE_BUILD_TYPE=Release -DPO_BUILD_TESTS=OFF
+          cmake --build build/csharp --target portopt --config Release
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Test the binding
+        shell: bash
+        env:
+          PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
+        run: dotnet test --solution csharp/PortOpt.slnx -c Release
+
+      - name: Check the package
+        shell: bash
+        run: |
+          mkdir -p natives
+          library="${{ matrix.library }}"
+          cp "$library" "natives/portopt-native-${{ matrix.rid }}.${library##*.}"
+          natives="$(cd natives && (pwd -W 2>/dev/null || pwd))"
+          dotnet pack csharp/src/PortOpt -c Release -p:Version=0.0.0-ci -p:PortOptNativeAssets="$natives" \
+            -p:PortOptNativeRids=${{ matrix.rid }} -o packages
+          bash csharp/scripts/check_package.sh packages 0.0.0-ci
