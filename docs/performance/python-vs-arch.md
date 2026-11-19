@@ -1,7 +1,7 @@
-# Python and C layers against the solve
+# Python, .NET and C layers against the solve
 
 What the layers above `po::solve` cost: the C interface (`include/portopt/portopt.h`, one guard and one handle per
-call) and the Python package (`ctypes` and `numpy` over it), against the time of the solve they wrap. No other
+call), the Python package (`ctypes` and `numpy` over it) and the .NET binding (`LibraryImport` over it), against the time of the solve they wrap. No other
 library is measured, so no comparison with one is made; the file keeps the name of its model in the author's
 VolEngine (`python-vs-arch.md`), whose table compared a package with `arch`. Every number comes from the one machine
 below; compare only runs from the same machine.
@@ -11,6 +11,7 @@ Tools:
 - `tests/benchmarks/capi/bm_capi.cpp`: `BM_CApi/*` in `portopt_benchmarks`, the C calls against the C++ calls under
   them, on the instances of [Measuring](measuring.md#the-instances).
 - `python/benchmarks/bench_overhead.py`: the same steps through `ctypes`, one row per step.
+- `csharp/benchmarks/PortOpt.Benchmarks`: `Optimizer.Solve` against direct `LibraryImport` calls.
 - `portopt_profile --via capi`: every benchmark case solved through the C interface, for `compare-solutions`
   ([Measuring](measuring.md#profile-and-comparison-of-solutions)).
 
@@ -111,6 +112,27 @@ volatility takes 229 µs (the 17.6 µs of `solve()` is 8% of it) and `MAX_RETURN
 cases that end at once (`free`, `leverage`, `cash`) take 70 to 110 µs, where the 30 µs is 27 to 43%; the cases that
 iterate take 0.23 to 29 ms, 13% of the cheapest and under 7% of the others. At n = 1000 it is negligible for every
 case, the cheapest `po_solve` being 49.8 ms.
+
+## The .NET layer
+
+`csharp/benchmarks/PortOpt.Benchmarks` (`BindingOverhead`, BenchmarkDotNet 0.15.8, .NET 10.0.14, same machine, the
+`gcc-release` library, `--job short`: 3 iterations, so the error columns are wide) times a long-only
+`MIN_VARIANCE` through `Optimizer.Solve` against the same calls made directly on `NativeMethods` (create the spec,
+solve, read status and weights). The binding also translates the `Spec` record, reads the four named multipliers,
+the bound multipliers and the residual, and builds the `Result`.
+
+| | n = 10 | n = 100 |
+| --- | ---: | ---: |
+| Direct calls | 3.12 µs | 140 µs |
+| `Optimizer.Solve` | 3.36 µs | 122 µs |
+| Allocated by `Optimizer.Solve` | 352 B | 1.8 KB |
+
+At n = 10 the binding adds about 0.25 µs (8%), a hundredth of the 30 µs of the Python layer; at n = 100 the
+difference is inside the noise of the solve. `MarketData` is built once and reused, as a service would.
+
+```
+PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll dotnet run -c Release --project csharp/benchmarks/PortOpt.Benchmarks -- --filter '*BindingOverhead*' --job short
+```
 
 ## Reading
 

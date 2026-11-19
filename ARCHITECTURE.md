@@ -12,14 +12,16 @@ neither), eight of them reduced to a dense Goldfarb-Idnani quadratic program beh
 parametric family of them, `MAX_SHARPE` and `MAX_DIVERSIFICATION` through a homogeneous one), and `RISK_PARITY`, a
 non-convex least squares, solved by Newton on the Spinu form and, with a target or a bound that cuts it off, by a
 sequence of such QPs and an augmented Lagrangian; portfolio return, volatility, utility, tracking error, the Sharpe and
-diversification ratios and the risk contributions of given weights; and a Python package over the C API. Every
+diversification ratios and the risk contributions of given weights; and a Python package and a .NET binding over the
+C API. Every
 objective is solved: `PO_UNSUPPORTED` no longer occurs for a valid objective.
 
 ## Layers
 
 ```
-  Python (python/src/portopt, ctypes + numpy)
-                 |
+  Python (python/src/portopt, ctypes + numpy)    C# (csharp/src/PortOpt, LibraryImport)
+                 |                                    |
+                 +------------------------------------+
         C API  include/portopt/portopt.h        <-- the only stable contract
                  |
         src/capi   handles, error boundary
@@ -108,6 +110,10 @@ Build targets (`CMakeLists.txt`):
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio`, `tracking_error`, `risk_contributions` and `risk_budget_residual` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
 | `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds, `leverage`, `target_volatility` and `risk_budget` included; the bounds and the budget canonicalized to tuples so that equality and hash work); `Data` and its metrics (`risk_contributions` too); `SolveStatus`, `Result` and `solve` |
+| `csharp/src/PortOpt/Interop` | `NativeMethods` (one hand-written `LibraryImport` per contract function, C names), the `SafeHandle` of each handle, library discovery (`PORTOPT_LIB`) and the ABI check, status to `PortOptException` |
+| `csharp/src/PortOpt` | `Spec` and `Bounds`/`AssetBounds` (records, the native spec built at the solve), `MarketData` (owns the `po_data` handle; the metrics), `Optimizer.Solve`, `Result` (copied values), the enums |
+| `csharp/tests/PortOpt.Tests` | The contract check (every `function` and `define` of `portopt.abi` against the declarations and the enums), the coverage check (every function called by the library), and the tests of the layer |
+| `csharp/tests/PortOpt.Consumer`, `csharp/scripts/check_package.sh` | A clean consumer restored from a built package, run without `PORTOPT_LIB` and published with Native AOT |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
 | `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
 | `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`; `known_shape_fixture.hpp` freezes the covariance of the known `MAX_RETURN` shape as the Windows and the Linux libm gave it), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `tests/unit/fuzz/risk_parity/` holds the risk parity references (the scan of the feasible curve, the KKT check with its rounding floor, and the refinement of a result in `long double` that measures its forward error), the `RiskParityDescentFuzz` sweep of the polyhedral descent, the `RiskParitySolveSweep` of `po::solve` and the `RiskParityFuzz` battery |
@@ -148,12 +154,13 @@ exactly its functions and that the Linux and macOS libraries export `po_*` and n
 
 ## Distribution
 
-The C++ wrapper (`cpp/include/portopt/portopt.hpp`) and the Python package are two consumers of the same C API; the
-wrapper adds no computation. One script builds a platform's library and wheel and tests the wheel installed
+The C++ wrapper (`cpp/include/portopt/portopt.hpp`), the Python package and the .NET binding are consumers of the same
+C API; none adds computation. One script builds a platform's library and wheel and tests the wheel installed
 (`python/scripts/build_wheel.sh`); `wheels.yml` runs it on the seven platforms on every push that touches the build,
 in `manylinux_2_28` and `musllinux_1_2` containers on Linux, so a release never builds a platform for the first
 time. `release.yml` takes a `v*` tag through the same workflow and publishes the libraries to the GitHub Release
-and the wheels to PyPI (a prerelease tag as a PyPI prerelease). The distributed libraries are generic builds (no `-march`)
+and the wheels to PyPI (a prerelease tag as a PyPI prerelease), and packs the seven libraries into the `PortOpt` NuGet
+package (`runtimes/<rid>/native/libportopt.<ext>`), checked on the three systems and published to nuget.org. The distributed libraries are generic builds (no `-march`)
 with the C++ runtime linked statically.
 
 ## Anatomy of a `po_solve`

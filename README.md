@@ -37,6 +37,12 @@ pip install pyportopt
 The distribution is `pyportopt` (the name `portopt` is taken on PyPI); the module is `portopt`. Wheels are built for
 Windows x64, macOS arm64 and x64, and Linux (glibc and musl) x64 and arm64, each with the native library inside.
 
+.NET 10 (C#), with the same seven native libraries inside, trimming- and Native AOT-compatible:
+
+```
+dotnet add package PortOpt
+```
+
 C and C++: every [GitHub Release](https://github.com/GabrielMarquezMatte/PortfolioOptimization/releases) has the
 library of each platform, `portopt-native-<platform>.so`, `.dylib` or `.dll`, to be saved as `libportopt.so`,
 `libportopt.dylib` or `libportopt.dll` (the name the loader looks for), and for Windows the import libraries
@@ -128,6 +134,29 @@ An infeasible or unbounded problem is a result with `status == po.SolveStatus.IN
 `ValueError`. `RISK_PARITY` with cash (`risk_free`) or a `leverage` is invalid input too. `portopt.__version__` is the
 installed version.
 
+## C# example
+
+```csharp
+using PortOpt;
+
+double[] mu = [0.08, 0.12, 0.10];
+double[,] covariance = { { 0.040, 0.006, 0.010 }, { 0.006, 0.090, 0.012 }, { 0.010, 0.012, 0.060 } };
+using var data = new MarketData(mu, covariance, riskFree: 0.02);
+
+// Long-only maximum Sharpe ratio
+var result = Optimizer.Solve(new Spec { Objective = Objective.MaxSharpe, Bounds = new Bounds(0, 1) }, data);
+Console.WriteLine($"{result.Status}: {string.Join(", ", result.Weights)}, Sharpe {data.SharpeRatio(result.Weights)}");
+
+// Risk parity with a risk budget, no cash
+using var risky = new MarketData(mu, covariance);
+var parity = Optimizer.Solve(new Spec { Objective = Objective.RiskParity, RiskBudget = [0.5, 0.3, 0.2] }, risky);
+Console.WriteLine(string.Join(", ", risky.RiskContributions(parity.Weights)));
+```
+
+`Spec` is an immutable record of the settings, `MarketData` owns the native data (dispose it), `Result` is plain
+values, and a native failure is a `PortOptException` with its `Status` and the library's message; an infeasible problem
+is a result with `SolveStatus.Infeasible`. More in [csharp/src/PortOpt/README.md](csharp/src/PortOpt/README.md).
+
 ## C++ example
 
 ```cpp
@@ -197,6 +226,15 @@ PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll uv run --project python pytest
 ```
 
 Without `PORTOPT_LIB` it looks in `python/src/portopt/_lib`.
+
+## C# binding
+
+`csharp/` holds the .NET 10 binding (`csharp/PortOpt.slnx`): the package, its xUnit tests and a BenchmarkDotNet project.
+The tests load the library named by `PORTOPT_LIB`:
+
+```
+PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll dotnet test --solution csharp/PortOpt.slnx -c Release
+```
 
 ## Documents
 

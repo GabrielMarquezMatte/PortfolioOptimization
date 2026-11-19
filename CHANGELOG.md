@@ -9,6 +9,15 @@ library whose ABI version differs).
 
 ## [Unreleased]
 
+### Added
+
+- The .NET 10 binding `PortOpt` (`csharp/`), a NuGet package with the seven native libraries: `Spec`, `MarketData`
+  (the metrics too), `Optimizer.Solve`, `Result`, `PortOptException` and `NativeAbi`, over hand-written
+  `LibraryImport` declarations that a test checks against `portopt.abi`; trimming- and Native AOT-compatible.
+  `csharp.yml` tests it on Linux, macOS and Windows; `release.yml` packs it, checks it with a clean consumer and a
+  Native AOT publish on the three systems, and publishes it to nuget.org by Trusted Publishing after the GitHub
+  Release. `release_version.py nuget` gives the SemVer version of a tag.
+
 ## [0.1.0] - 2026-11-17
 
 The first release.
