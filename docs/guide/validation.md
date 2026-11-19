@@ -160,7 +160,8 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
     near 1 and the spread of the means (1e-8 to 1e-5 relative) moves `w` along it until the cap at `t` from 1e4 to
     beyond 1e15: 41 cases of 15 shapes, all cash with nearly equal means, failed (25 `MAX_ITER`, 16 accepted at an
     adjacent end with `|vol - s| / s` from 3.4e-10 to 6e-6, above their band; at `t = 2.6e10` on one shape
-    `vol(Q(t))` moved by 1.9e-5 between `t` 2e-9 apart). With it, one case remains (below).
+    `vol(Q(t))` moved by 1.9e-5 between `t` 2e-9 apart). With it, one case remained (the known residual below),
+    solved since by the tangent crossing.
   - The multipliers of every point are those of `Q(t)` itself whatever its shift, so that points solved with
     different shifts compare and interpolate; the slope `b_v` of a point is kept in its own frame (`N b_v = -v`) and
     mapped only where the user's multipliers are formed, since `b = b_v - c` at the face adds a common mean of order
@@ -212,44 +213,22 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   QP solutions instead gave slopes whose rounding reached 1e6 eps of the multiplier scale at a condition number of
   1e8, and a stationarity of 2.5e-10 for an inactive cap at 1e7.
 - **The crossing.** The rounding of the volatility of one QP solution `Q(t*)` was measured at about
-  `1e-15 cond(Sigma)` relative (up to 1e-8 at 1e7 and 1e-7 at 1e8), so the former test
-  `|vol(w(t*)) - s| <= 1e-12 s` failed on ill-conditioned problems until the bracket shrank to adjacent doubles and
-  the search stopped at `MAX_ITER` (4% of long-only problems at 1e4, 50% at 1e7). `Q(t*)` now only confirms that
-  `t*` lies on the bracket's segment: the same active set and a volatility within `1e-6` of the bracket's volatility
-  range from `s` (`kCrossingSanity`; an error of the affine model is a sizable fraction of the range). The reported
-  point is the exact root of the segment, the interpolation of its two ends, whose volatility is `s` to rounding
-  (within the 1e-12 of the table, also at 1e7).
-- **Adjacent ends across a breakpoint.** When the bracket shrinks to adjacent doubles on two active sets, the lower end
-  is the answer only when `|vol - s| <= 1e-5 s` (`kAdjacentEnd`); otherwise the path has broken down (`MAX_ITER`).
-  `vol(t)` is continuous, so at an end that is the answer the deviation is the rounding of `vol(Q(t))`. Measured
-  with an instrumented copy of the policy that accepts every end and labels it by the checks of its case:
-  - **Correct ends.** 1865 ends whose result passed every check, the volatility complementarity of
-    `expect_user_kkt` included: the 101 of `MaxReturnFuzz.LeverageFuzz` in the normal search, and, with every
-    bisection forced to adjacent doubles, 725 of `AgainstFrontierReference` and 1039 of `LeverageFuzz`. The largest
-    deviation is 1.01e-7, the known residual below (`t = 6.7e15`, `cond(Sigma) = 1e8`); the largest of the forced
-    ends of `AgainstFrontierReference` is 7.98e-8, in line with `1e-15 cond(Sigma)`. The two ends of the unit suite
-    in the normal search (`MaxReturn.EqualMeansWithCash`) deviate by 1.6e-15 and 2.9e-15.
-  - **Wrong ends.** The 9 ends of `NeverSilentlyWrong` in the normal search, reached where `Q(t)` is lost in its
-    rounding (`t` from 1.8e8 to 6.1e10), deviate by 1.6e-3 to 0.23. Accepted, they are `OPTIMAL` with `lambda_vol < 0`
-    and a volatility up to 23% below `s` (that test checks the return, the bounds and `vol <= s`, which nearly equal
-    means let them pass, so the policy and not the test has to reject them).
-  - **The constant.** 1e-5 is 99 times the largest correct deviation (125 times the largest forced one) and 160 times
-    below the smallest wrong one, a separation of 1.6e4.
-  - **Noise-relative forms tried, none of which separates.** Each form `F` was divided into the deviation, and the
-    separation is the smallest `dev / F` of a wrong end over the largest of a correct one (it must be above 1, and
-    about 2e4 for a margin of 140 on each side): `F1`, the weight noise of the path
-    `n eps (max(1, |w|max) + t |v|max)` mapped through the factor, times `||(|L'| 1)||` over `s`: 0.087;
-    `F2`, the residual noise of the stationarity mapped through the factor, `n eps ||L^-1 (|Sigma||w| + t |v|)|| / s`:
-    0.0026; `F2b`, the same without the `t |v|` term: 36; `F3`, `n eps (max L_jj / min L_jj)^2`, a cheap estimate of
-    `cond(Sigma)`: 0.0077. The forms with `t |v|` fail because the wrong ends sit at large `t`, where that term makes
-    the noise as large as their deviation; `F3` fails because they come from covariances of condition number up to
-    1e16 (the nearly riskless asset), where a noise proportional to the condition number exceeds them; `F2b` orders
-    the two groups but leaves a margin of 6 on each side. `kAdjacentEnd` therefore stays a constant.
-  - **What it guarantees.** An accepted adjacent end is guaranteed only to `|vol - s| <= 1e-5 s`, not to the band of
-    its condition number: `kAdjacentEnd` is 1e5 times the band at `cond(Sigma) <= 1e4`, where the rounding of
-    `vol(Q(t))` is about 1e-13, and looser than the band of 1e-7 at `cond(Sigma) = 1e8`. The battery holds one end
-    accepted between the band and 1e-5, the known residual of `MaxReturnFuzz.LeverageFuzz` (in "Fuzz battery", at
-    1.006e-7). No end of `AgainstFrontierReference` or of the unit suite lies there.
+  `1e-15 cond(Sigma)` relative (up to 1e-8 at 1e7 and 1e-7 at 1e8), so a test `|vol(w(t*)) - s| <= 1e-12 s` on a QP
+  solution fails on ill-conditioned problems (4% of long-only problems at 1e4, 50% at 1e7, ending `MAX_ITER`). The
+  Goldfarb-Idnani solution of `Q(t)` starts from `t Sigma^-1 v`, and on the known residual below that is 6.9e8, whose
+  `eps` is the 1.5e-7 of noise in `vol(Q(t))`; the error lies along the path (the solution of a `t` wrong by 1.8e-7),
+  not off the face. The crossing therefore comes from the exact tangent of the face, anchored at a solve of the face
+  and certified by the KKT conditions of `Q(t*)` at one point (docs/guide/math.md, and
+  `docs/research/2026-11-18-max-return-path-and-portable-generators.md`). Its volatility is `s` to the rounding of
+  its evaluation: on the known shape, under both covariances, `|vol / s - 1| <= 5.6e-16` at every cap.
+- **History: interpolation and adjacent ends.** Until the tangent crossing, the reported point interpolated the two
+  QP solutions at the ends of a bracket on one active set, confirmed by a solve of `Q(t*)` within `1e-6` of the
+  bracket's volatility range (`kCrossingSanity`); at adjacent doubles across a breakpoint the lower end was accepted
+  within `1e-5 s` (`kAdjacentEnd`), a constant that no noise-relative form could replace (the measurements are in this
+  file at commit 7287d84). Both are gone: the tangent does not difference two QP solutions, whose rounding made the
+  direction wrong by 1e6 to 1e7 relative near the crossing, and an end is accepted only through a certified crossing.
+  Identifying a segment by the sign vectors of the generated rows also went: on the known residual the solver
+  alternates between two sets of sign vectors of the same face, so no bracket ever held one "active set".
 - **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
   `INFEASIBLE`.
 
@@ -1431,28 +1410,30 @@ cover:
   leverage). The worst agreement of the ratio is 1.4e-12 at `cond <= 1e4`, 2.0e-11 at 1e6 and 2.5e-9 at 1e8 (at most
   0.025 of the band). The worst residual of `expect_user_kkt`, the stationarity, is 8.2e-13 at `cond <= 1e4`, 8.7e-11
   at 1e6 and 8.4e-9 at 1e8 (at most 0.087 of the band). Every other measure stays below 1e-3 of its band.
-- **The known residual.** One case of `MaxReturnFuzz.LeverageFuzz` misses its band and is pinned by name: shape seed
-  3963545680699380072 (n 24, `cond(Sigma) = 1e8`, annual scale, nearly equal means, no box, cash, the shape's leverage
-  2.154), cap fraction 0.7 (cap 858.4). It is an acceptance at an adjacent end by `kAdjacentEnd`, not an error of the
-  face shift. The pin asserts `OPTIMAL`, the return of the reference, `expect_user_equalities`,
-  `expect_user_bounds`, `expect_user_leverage` and `expect_user_stationarity` within the band, `vol <= s (1 + tol)`
-  and `lambda_vol <= 0`, and relaxes only the volatility complementarity, to at most 1.1e-7; every other case keeps
-  its full band, and any other miss fails. The cap is reached at `t = 6.7e15` on the leverage face, shifted, with 23 generated
-  rows active; there `vol(Q(t))` varies by 1.5e-7 relative between `t` that differ in the last digits (858.428732 to
-  858.428857), the rounding of `1e-15 cond(Sigma)`. The bisection never holds one active set across a bracket and ends
-  at adjacent doubles, whose lower end is accepted (`kAdjacentEnd`) with `vol = s (1 - 1.006e-7)`: the volatility
-  complementarity of `expect_user_kkt` is 1.006e-7 against the band of 1e-7. The return agrees with the reference to
-  6e-14 relative and `lambda_vol = -1.3e-13`. The case runs in `gcc-release` only (the debug run has no cap fraction
+- **The known residual (history).** Until the tangent crossing, one case of `MaxReturnFuzz.LeverageFuzz` missed its
+  band and was pinned by name: shape seed 3963545680699380072 (n 24, `cond(Sigma) = 1e8`, annual scale, nearly equal
+  means, no box, cash, the shape's leverage 2.154), cap fraction 0.7 (cap 858.4). The cap is reached at `t = 6.7e15`
+  on the leverage face, where `vol(Q(t))` varies by 1.5e-7 relative between `t` that differ in the last digits; the
+  bisection ended at adjacent doubles, whose lower end was accepted with `vol = s (1 - 1.006e-7)`, a volatility
+  complementarity of 1.006e-7 against the band of 1e-7. The tangent crossing solves it with nothing relaxed: `OPTIMAL`,
+  `vol = s (1 - 4.4e-16)`, the return of the reference to 5.9e-14 relative, `lambda_vol = -1.2888e-13`, and the full
+  band of `expect_user_kkt`. The shape's covariances on Windows and on Linux are frozen in
+  `tests/unit/fuzz/known_shape_fixture.hpp` and checked at every cap of the fuzz
+  (`MaxReturnFuzz.KnownShapeUnder{Windows,Linux}Covariance`): every cap is `OPTIMAL`, `|vol / s - 1| <= 5.6e-16`, the
+  return within 6.6e-14 of the reference. Under the Linux covariance two caps needed one more fix: a solve of `Q(t)` of
+  the climb (`t = 9.2e12`) took 556 iterations of the QP solver against a limit of 490, because generated rows leave
+  and are generated again; the leverage family now counts as `2n` rows in the iteration limit
+  (`GoldfarbIdnani.GrossExposureFamilyWithManyExchanges`). The case ran in `gcc-release` only (the debug run has no
+  cap fraction
   0.7). Task 0's pinned case of `AgainstFrontierReference` (shape seed
   11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
 - **Other platforms.** Everything above was measured on Windows (MinGW and MSVC). The generators build `Sigma` with
   `std::log`, `std::exp` and `std::cos`, which glibc rounds differently from the Windows UCRT: on Linux 561 of the 576
   covariance entries of the known residual's shape differ, by up to 1856 ulp (3.6e-13 relative; `mu` is the same).
-  With that covariance the case is `MAX_ITER` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, while the
-  Windows covariance is `OPTIMAL` at every fraction on both: the solver is the same, the problem is not, and this
-  shape turns from `OPTIMAL` to `MAX_ITER` under a perturbation of 3.6e-13 of `Sigma`. So `MaxReturnFuzz.LeverageFuzz`
-  fails on Linux and macOS; `RiskParityDescentFuzz.ConvergedRunsAreKkt`,
+  With that covariance the case was `MAX_ITER` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, before
+  the tangent crossing; both covariances are now `OPTIMAL` at every fraction (the known residual above). Measured
+  before the tangent crossing, `MaxReturnFuzz.LeverageFuzz` failed on Linux and macOS; `RiskParityDescentFuzz.ConvergedRunsAreKkt`,
   `RiskParityReference.ForwardErrorMeasuresTheDistanceToTheRefinedPoint` and `MaxReturn.FaceShiftCashMultiplier` fail
   on Linux, and `RiskParity.TargetVolatilityEllipseAgainstScan` on macOS (its solve lands below the value of the scan,
   a reference of limited resolution). The same sets fail on the commit before the 0.1.0 release work. Generators that give the same bits everywhere, and the

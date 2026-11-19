@@ -168,20 +168,30 @@ Its optimum `w(t)` is piecewise affine in
    `min(s^2, max_i Sigma_ii) / |v|max`, so that a large cap does not start far past the last breakpoint; `|v|max` is
    floored at `eps`), until the volatility reaches `s`, or until the limit certificate below holds (the inactive
    cap).
-3. It bisects until both ends of the bracket have the same active set, takes the exact root `t*` of
-   `|L'w|^2 = s^2` on that affine segment and solves `Q(t*)`. When `Q(t*)` has the same active set (it lies on the
-   segment) and `|vol(w(t*)) - s|` is at most `1e-6` of the bracket's volatility range (`kCrossingSanity`), the
-   crossing is accepted; otherwise `Q(t*)` narrows the bracket like any other point. A bracket whose ends are
-   adjacent doubles is accepted as it is: on one segment by its root, across a breakpoint by its lower end when that
-   end's volatility is within `1e-5 s` of `s` (`kAdjacentEnd`); `vol(t)` is continuous, so an end farther away means
-   that `Q(t)` is lost in its rounding there, and the path has broken down (`PO_SOLVE_MAX_ITER`).
+3. It bisects the bracket. When both ends are on the same face (the same active explicit rows and, with the
+   leverage active, the same support with the same signs and the same zeros; not the same sign vectors of the
+   generated rows, of which the solver may pick several sets for one face), it computes the crossing on the face of
+   the lower end:
+   - the weights off the face's free coordinates are fixed exactly: 0 where the active sign vectors disagree, and the
+     bound of each active bound row;
+   - the tangent `dw = Z H_r^-1 Z'v` of the face, by the null space `Z` of the remaining active rows over the free
+     coordinates (Householder QR) and the QR of `L'Z` for the reduced Hessian `H_r = Z'Sigma Z`, in the frame of the
+     point's shift `v`, anchored at a solve of the face at `t_a` (`w_a`), never at the QP solution itself, whose
+     rounding carries `eps |t Sigma^-1 v|`;
+   - the root `h` of `|L'(w_a + h dw)|^2 = s^2`, written without cancellation, `t* = t_a + h`, `w* = w_a + h dw`, and
+     the multipliers `u` by least squares in `N u = Sigma w* - t* v`.
 
-The reported point is the point of the segment at the root: the weights and the multipliers are the interpolation
-of the two ends of the bracket at the fraction of the root. The KKT conditions of `Q(t)` on one active set are linear
-in `(w, u, t)`, and the interpolation keeps the nonnegative multipliers nonnegative and the inactive rows feasible,
-so that point is an exact solution of `Q(t*)` up to the rounding of the ends, and `vol(w) = s` to rounding. The
-rounding of `vol(w(t*))` of a single QP solution, about `1e-15 cond(Sigma) s`, does not enter. (At adjacent ends
-across a breakpoint, the lower end is reported, with `lambda_vol = -vol / t`.)
+   The crossing is accepted when the KKT conditions of `Q(t*)` hold at that one point (`Q(t*)` is convex, so they
+   suffice): every row and the leverage hold to the QP solver's feasibility tolerance, each free weight keeps the sign
+   of the face, the active inequality multipliers are nonnegative, and the leverage term is `zeta g` with `zeta >= 0`
+   and `g` in the subdifferential of `||w||_1` (`g_i = sign(w_i)` on the support, `|g_i| <= 1` on the zeros), a form
+   that does not depend on the sign vectors chosen. The dual tolerance is `16 n eps (t* |v|max + |Sigma|max |w|max)`.
+   A crossing that does not certify (the face ends before `vol = s`) leaves the bisection to go on. A bracket whose
+   ends are adjacent doubles takes the certified crossing of the face of either end, the lower first; when neither
+   certifies the path has broken down (`PO_SOLVE_MAX_ITER`).
+
+The reported point is the crossing: `vol(w*) = s` to the rounding of its evaluation, and `(w*, u)` solves `Q(t*)` to
+the tolerances of the certificate.
 
 At `t*`, `Sigma w - t* v = N u`, where `N u` collects the QP multipliers `u` of the rows. Dividing by `t*`:
 

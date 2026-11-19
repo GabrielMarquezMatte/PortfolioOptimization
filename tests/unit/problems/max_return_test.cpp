@@ -643,11 +643,12 @@ TEST(MaxReturn, FaceShiftLeverageMultiplier)
 // Every weight nonnegative with cash: the cash bound w_cash >= 0 is the face. At the inactive cap w = e_best and cash = 0, where
 // -mu~_i = beta_i - beta_0 gives beta_0 = mu~_best and beta_i = mu~_best - mu~_i: the cash multiplier is the face
 // multiplier mapped back. Just below the volatility of the best asset (the end of the path, reached fully invested)
-// both the cap and the cash bound bind in 5 of the 8 seeds; in the others (42 among them) the path runs from all cash
-// straight to the best asset.
+// both the cap and the cash bound bind in 7 of the 8 seeds, where the cash weight is 0 to its rounding; in seed 42 the
+// path runs from all cash straight to the best asset.
 TEST(MaxReturn, FaceShiftCashMultiplier)
 {
     constexpr std::size_t n = 6;
+    constexpr double kCashRounding = 1e-12;
     int on_face = 0;
     for (std::uint64_t seed = 41; seed <= 48; ++seed)
     {
@@ -668,14 +669,14 @@ TEST(MaxReturn, FaceShiftCashMultiplier)
         Result crossing = solve_checked(max_return(nonnegative(), cap), data);
         EXPECT_LT(crossing.volatility_multiplier, 0.0);
         EXPECT_NEAR(volatility(data, crossing.weights), cap, kVolatilityTolerance * cap);
-        if (crossing.weights[n] > 0.0)
+        if (crossing.weights[n] > kCashRounding)
         {
             continue;
         }
         ++on_face;
         EXPECT_GT(crossing.bound_multipliers[n], 0.0);
     }
-    EXPECT_EQ(on_face, 5);
+    EXPECT_EQ(on_face, 7);
 }
 
 bool same_bits(const std::vector<double>& a, const std::vector<double>& b)

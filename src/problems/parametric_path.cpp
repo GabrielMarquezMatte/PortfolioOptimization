@@ -481,25 +481,24 @@ std::vector<double> transposed_times(std::span<const double> rows, std::span<con
     return product;
 }
 
-// The slope b of the multipliers of Q(t) from that of the shifted Q(t): b_v less the shift amount at the face, the
-// face of point being among its active rows.
-Slope unshifted(Slope slope, const PathPoint& point)
+// The multipliers of Q(t) from those of the shifted Q(t), or their slope b from b_v: amount (t times the shift amount,
+// or the shift amount for a slope) less at the face of point, the face being among its active rows.
+Slope unshifted(Slope slope, const PathPoint& point, double amount)
 {
-    double amount = -point.shift.amount;
     const Face& face = point.shift.face;
     if (face.kind == Face::Kind::Equality)
     {
-        slope.equality[face.row] += amount;
+        slope.equality[face.row] -= amount;
         return slope;
     }
     if (face.kind == Face::Kind::Inequality)
     {
-        slope.inequality[face.row] += amount;
+        slope.inequality[face.row] -= amount;
         return slope;
     }
     if (face.kind == Face::Kind::Generated)
     {
-        slope.gross_exposure[sign_position(point.solution, face.signs).first] += amount;
+        slope.gross_exposure[sign_position(point.solution, face.signs).first] -= amount;
     }
     return slope;
 }
@@ -533,16 +532,6 @@ double zero_crossing(const PathPoint& point, double multiplier, double rate)
         return kInfinity;
     }
     return point.t - multiplier / rate;
-}
-
-// (1 - fraction) lower + fraction upper, entry by entry.
-void interpolate(std::span<const double> lower, std::span<const double> upper, double fraction,
-                 std::span<double> result)
-{
-    for (std::size_t k = 0; k < result.size(); ++k)
-    {
-        result[k] = (1.0 - fraction) * lower[k] + fraction * upper[k];
-    }
 }
 
 // Q(t) solved on the face of the path, when there is one and the solution is certified.
@@ -594,6 +583,581 @@ double nonnegative(double multiplier)
     return std::max(multiplier, 0.0);
 }
 
+// The multipliers u of N u = target over the active normals of point, by least squares, placed by row: the
+// equality rows, every inequality row (0 where inactive) and the active generated rows in the order of the point's
+// sign vectors.
+Slope active_multipliers(const qp::Problem& problem, const PathPoint& point, std::vector<double> target)
+{
+    std::size_t equalities = problem.equality_rhs.size();
+    std::size_t inequalities = point.solution.active_inequalities.size();
+    std::vector<double> b = linalg::least_squares(
+        linalg::householder_qr(active_normals(problem, point), problem.n, active_count(problem, point)),
+        std::move(target));
+    auto generated = b.begin() + static_cast<std::ptrdiff_t>(equalities + inequalities);
+    Slope slope{std::vector<double>(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(equalities)),
+                std::vector<double>(problem.inequality_rhs.size(), 0.0), std::vector<double>(generated, b.end())};
+    for (std::size_t k = 0; k < inequalities; ++k)
+    {
+        slope.inequality[point.solution.active_inequalities[k]] = b[equalities + k];
+    }
+    return slope;
+}
+
+double sign_of(double value)
+{
+    if (value > 0.0)
+    {
+        return 1.0;
+    }
+    if (value < 0.0)
+    {
+        return -1.0;
+    }
+    return 0.0;
+}
+
+// The entry the active sign vectors share, 0 where two of them disagree: there the face holds w_i = 0 (the zeros D).
+// Empty when no generated row is active.
+std::vector<double> common_signs(const PathPoint& point)
+{
+    std::size_t n = point.solution.x.size();
+    std::span<const double> all(point.solution.gross_exposure_signs);
+    std::vector<double> signs;
+    if (generated_count(point) == 0)
+    {
+        return signs;
+    }
+    signs.assign(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(n));
+    for (std::size_t j = 1; j < generated_count(point); ++j)
+    {
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            if (all[j * n + i] != signs[i])
+            {
+                signs[i] = 0.0;
+            }
+        }
+    }
+    return signs;
+}
+
+// The family's part of the face of point: sign(w_i) on the support, 0 on D and where w_i = 0; empty when no
+// generated row is active. It does not depend on which sign vectors hold the face.
+std::vector<double> support_signs(const PathPoint& point)
+{
+    std::vector<double> signs = common_signs(point);
+    for (std::size_t i = 0; i < signs.size(); ++i)
+    {
+        if (signs[i] != 0.0)
+        {
+            signs[i] = sign_of(point.solution.x[i]);
+        }
+    }
+    return signs;
+}
+
+// L w, so that Sigma w = L (L'w).
+std::vector<double> factor_times(std::span<const double> factor, std::span<const double> vector)
+{
+    std::size_t n = vector.size();
+    std::vector<double> product(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j <= i; ++j)
+        {
+            product[i] += factor[i * n + j] * vector[j];
+        }
+    }
+    return product;
+}
+
+// |Sigma|max, the largest diagonal entry |L_i|^2.
+double largest_variance(std::span<const double> factor, std::size_t n)
+{
+    double largest = 0.0;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        std::span<const double> row = factor.subspan(i * n, i + 1);
+        largest = std::max(largest, dot(row, row));
+    }
+    return largest;
+}
+
+// Q x for the orthogonal factor Q = H_0 H_1 ... of qr: its reflectors applied last to first.
+void apply_orthogonal(const linalg::Qr& qr, std::span<double> x)
+{
+    for (std::size_t k = qr.cols; k-- > 0;)
+    {
+        std::span<const double> v = std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows);
+        double projection = 0.0;
+        for (std::size_t i = k; i < qr.rows; ++i)
+        {
+            projection += v[i] * x[i];
+        }
+        for (std::size_t i = k; i < qr.rows; ++i)
+        {
+            x[i] -= 2.0 * projection * v[i];
+        }
+    }
+}
+
+// R'x = b in place, R the triangular factor of qr.
+void solve_upper_transposed(const linalg::Qr& qr, std::span<double> b)
+{
+    std::size_t n = qr.cols;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        double sum = b[i];
+        for (std::size_t k = 0; k < i; ++k)
+        {
+            sum -= qr.upper[k * n + i] * b[k];
+        }
+        b[i] = sum / qr.upper[i * n + i];
+    }
+}
+
+// R x = b in place.
+void solve_upper(const linalg::Qr& qr, std::span<double> b)
+{
+    std::size_t n = qr.cols;
+    for (std::size_t i = n; i-- > 0;)
+    {
+        double sum = b[i];
+        for (std::size_t k = i + 1; k < n; ++k)
+        {
+            sum -= qr.upper[i * n + k] * b[k];
+        }
+        b[i] = sum / qr.upper[i * n + i];
+    }
+}
+
+// The rows of the face of point over its free weights F as the columns of normals (F.size() x rhs.size(),
+// row-major): the equality rows, the active rows that are not bounds and, with the family active, its row a - s for
+// the sign s every active sign vector has on F, with rhs less their terms in the fixed weights. A weight off F is
+// fixed exactly: at 0 on D, at its bound under an active bound row (one entry -1 or 1).
+struct FaceRows
+{
+    std::vector<std::size_t> free;
+    // The fixed weights, 0 on F.
+    std::vector<double> fixed;
+    std::vector<double> normals;
+    std::vector<double> rhs;
+};
+
+// The weight a row of one entry -1 or 1 bounds.
+std::optional<std::size_t> bounded_weight(std::span<const double> row)
+{
+    auto nonzero = [](double entry) { return entry != 0.0; };
+    if (std::ranges::count_if(row, nonzero) != 1)
+    {
+        return std::nullopt;
+    }
+    auto weight = static_cast<std::size_t>(std::ranges::find_if(row, nonzero) - row.begin());
+    if (std::fabs(row[weight]) != 1.0)
+    {
+        return std::nullopt;
+    }
+    return weight;
+}
+
+// The row over F as the next column, its rhs less its term in the fixed weights.
+void append_row(FaceRows& face, std::span<const double> row, double rhs, std::vector<double>& columns)
+{
+    for (std::size_t coordinate : face.free)
+    {
+        columns.push_back(row[coordinate]);
+    }
+    face.rhs.push_back(rhs - dot(row, face.fixed));
+}
+
+std::vector<double> transposed(std::span<const double> a, std::size_t rows, std::size_t cols)
+{
+    std::vector<double> result(rows * cols);
+    for (std::size_t i = 0; i < rows; ++i)
+    {
+        for (std::size_t j = 0; j < cols; ++j)
+        {
+            result[j * rows + i] = a[i * cols + j];
+        }
+    }
+    return result;
+}
+
+// The active rows of point that are not bounds; each bound fixes its weight in face.
+std::vector<std::size_t> fix_bounds(const qp::Problem& problem, const PathPoint& point, FaceRows& face,
+                                    std::vector<bool>& off_face)
+{
+    std::size_t n = problem.n;
+    std::vector<std::size_t> rows;
+    for (std::size_t row : point.solution.active_inequalities)
+    {
+        std::span<const double> normal = std::span<const double>(problem.inequality_rows).subspan(row * n, n);
+        std::optional<std::size_t> weight = bounded_weight(normal);
+        if (!weight.has_value())
+        {
+            rows.push_back(row);
+            continue;
+        }
+        face.fixed[*weight] = problem.inequality_rhs[row] * normal[*weight];
+        off_face[*weight] = true;
+    }
+    return rows;
+}
+
+FaceRows face_rows(const qp::Problem& problem, const PathPoint& point, std::span<const double> signs)
+{
+    std::size_t n = problem.n;
+    FaceRows face;
+    face.fixed.assign(n, 0.0);
+    std::vector<bool> off_face(n, false);
+    std::vector<std::size_t> active = fix_bounds(problem, point, face, off_face);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (!off_face[i] && (signs.empty() || signs[i] != 0.0))
+        {
+            face.free.push_back(i);
+        }
+    }
+    std::vector<double> columns;
+    for (std::size_t k = 0; k < problem.equality_rhs.size(); ++k)
+    {
+        append_row(face, std::span<const double>(problem.equality_rows).subspan(k * n, n), problem.equality_rhs[k],
+                   columns);
+    }
+    for (std::size_t row : active)
+    {
+        append_row(face, std::span<const double>(problem.inequality_rows).subspan(row * n, n),
+                   problem.inequality_rhs[row], columns);
+    }
+    if (!signs.empty())
+    {
+        append_row(face, difference(problem.gross_exposure->offset, signs), problem.gross_exposure->rhs, columns);
+    }
+    face.normals = transposed(columns, face.rhs.size(), face.free.size());
+    return face;
+}
+
+// The face in the coordinates y = Q'w_F of the QR N_F = Q R of its rows: N_F'w_F = rhs fixes y_1 = R'^-1 rhs (the
+// first m entries) and leaves y_2 free, so the last r = |F| - m columns of Q are a basis Z of the face. factor is
+// L'E_F Q (n x |F|, row-major, E_F the columns F of the identity), and hessian the QR of its last r columns L'E_F Z,
+// whose R_r'R_r is the reduced Hessian Z'Sigma_FF Z.
+struct ReducedFace
+{
+    FaceRows rows;
+    linalg::Qr normals;
+    std::vector<double> factor;
+    linalg::Qr hessian;
+};
+
+// L'E_F Q: row j is Q' applied to column j of E_F'L, the entries L_ij for i in F.
+std::vector<double> factor_on_face(std::span<const double> factor, std::size_t n, const FaceRows& rows,
+                                   const linalg::Qr& normals)
+{
+    std::size_t p = rows.free.size();
+    std::vector<double> product(n * p);
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        std::span<double> column = std::span<double>(product).subspan(j * p, p);
+        for (std::size_t a = 0; a < p; ++a)
+        {
+            column[a] = factor[rows.free[a] * n + j];
+        }
+        linalg::apply_transposed(normals, column);
+    }
+    return product;
+}
+
+// The columns first, first + 1, ... of a (rows x cols, row-major).
+std::vector<double> columns_from(std::span<const double> a, std::size_t rows, std::size_t cols, std::size_t first)
+{
+    std::size_t count = cols - first;
+    std::vector<double> result(rows * count);
+    for (std::size_t i = 0; i < rows; ++i)
+    {
+        std::copy_n(a.begin() + static_cast<std::ptrdiff_t>(i * cols + first), count,
+                    result.begin() + static_cast<std::ptrdiff_t>(i * count));
+    }
+    return result;
+}
+
+// The face of point reduced to its null space: nullopt when it has no direction (as many rows as free weights),
+// when its rows are dependent over F (a face larger than the one with its fixed weights), or when the reduced
+// Hessian has a pivot below its noise.
+std::optional<ReducedFace> reduced_face(const Path& path, const PathPoint& point, std::span<const double> signs)
+{
+    const qp::Problem& problem = path.translation.problem;
+    std::optional<ReducedFace> face(std::in_place);
+    face->rows = face_rows(problem, point, signs);
+    std::size_t p = face->rows.free.size();
+    std::size_t m = face->rows.rhs.size();
+    if (m >= p)
+    {
+        face.reset();
+        return face;
+    }
+    face->normals = linalg::householder_qr(face->rows.normals, p, m);
+    if (!linalg::has_full_column_rank(face->normals))
+    {
+        face.reset();
+        return face;
+    }
+    face->factor = factor_on_face(path.factor, problem.n, face->rows, face->normals);
+    face->hessian = linalg::householder_qr(columns_from(face->factor, problem.n, p, m), problem.n, p - m);
+    if (!linalg::has_full_column_rank(face->hessian))
+    {
+        face.reset();
+    }
+    return face;
+}
+
+// w(t) = weights + (t - point.t) direction on the face, over all n weights, w_D = 0.
+struct FaceLine
+{
+    std::vector<double> weights;
+    std::vector<double> direction;
+};
+
+// base with Q [y_1; y_2] on F.
+std::vector<double> from_face(const ReducedFace& face, std::span<const double> fixed, std::span<const double> free,
+                              std::vector<double> base)
+{
+    std::vector<double> y(fixed.begin(), fixed.end());
+    y.insert(y.end(), free.begin(), free.end());
+    apply_orthogonal(face.normals, y);
+    for (std::size_t a = 0; a < y.size(); ++a)
+    {
+        base[face.rows.free[a]] = y[a];
+    }
+    return base;
+}
+
+// The stationarity of the shifted Q(t) on the face, Z'(Sigma w - t v) = 0, solved in y: with w_p the fixed weights
+// and Q [y_1; 0] on F, and L'E_F Z = Q_r R_r, y_2(t) = R_r^-1 (t R_r'^-1 Z'v - (Q_r'L'w_p)_r), so
+// dy_2 = R_r^-1 R_r'^-1 Z'v.
+FaceLine face_line(const Path& path, const ReducedFace& face, const PathPoint& point)
+{
+    std::size_t n = point.solution.x.size();
+    std::size_t p = face.rows.free.size();
+    std::size_t m = face.rows.rhs.size();
+    std::vector<double> fixed = face.rows.rhs;
+    solve_upper_transposed(face.normals, fixed);
+    std::vector<double> particular = factor_transposed_times(path.factor, face.rows.fixed);
+    for (std::size_t j = 0; j < n; ++j)
+    {
+        particular[j] += dot(std::span<const double>(face.factor).subspan(j * p, m), fixed);
+    }
+    linalg::apply_transposed(face.hessian, particular);
+    std::vector<double> drift(p);
+    for (std::size_t a = 0; a < p; ++a)
+    {
+        drift[a] = point.shift.excess[face.rows.free[a]];
+    }
+    linalg::apply_transposed(face.normals, drift);
+    drift.erase(drift.begin(), drift.begin() + static_cast<std::ptrdiff_t>(m));
+    solve_upper_transposed(face.hessian, drift);
+    std::vector<double> anchored(p - m);
+    for (std::size_t b = 0; b < anchored.size(); ++b)
+    {
+        anchored[b] = point.t * drift[b] - particular[b];
+    }
+    solve_upper(face.hessian, anchored);
+    solve_upper(face.hessian, drift);
+    std::vector<double> none(m, 0.0);
+    return FaceLine{from_face(face, fixed, anchored, face.rows.fixed),
+                    from_face(face, none, drift, std::vector<double>(n, 0.0))};
+}
+
+// The h with |L'(weights + h direction)| = s: |L'w|^2 = c + 2 b h + a h^2 reaches s^2 at
+// h = (s^2 - c) / (b + sqrt(b^2 + a (s^2 - c))), without the cancellation of -b + sqrt(...) since b >= 0 where the
+// volatility is nondecreasing. nullopt when there is no such root next to h = 0.
+std::optional<double> crossing_step(const Path& path, const FaceLine& line)
+{
+    std::vector<double> start = factor_transposed_times(path.factor, line.weights);
+    std::vector<double> direction = factor_transposed_times(path.factor, line.direction);
+    double volatility = std::sqrt(dot(start, start));
+    double curvature = dot(direction, direction);
+    double slope = dot(start, direction);
+    double gap = (path.cap - volatility) * (path.cap + volatility);
+    double denominator = slope + std::sqrt(slope * slope + curvature * gap);
+    if (!(denominator > 0.0))
+    {
+        return std::nullopt;
+    }
+    return gap / denominator;
+}
+
+// A point on the face line of a point at t, with its multipliers u_v of N u_v = Sigma w - t v in the frame of the
+// point's shift.
+struct Candidate
+{
+    double t = 0.0;
+    std::vector<double> weights;
+    Slope multipliers;
+};
+
+Candidate candidate_at(const Path& path, const PathPoint& point, double t, std::vector<double> weights)
+{
+    std::vector<double> gradient = factor_times(path.factor, factor_transposed_times(path.factor, weights));
+    for (std::size_t i = 0; i < gradient.size(); ++i)
+    {
+        gradient[i] -= t * point.shift.excess[i];
+    }
+    Slope multipliers = active_multipliers(path.translation.problem, point, std::move(gradient));
+    return Candidate{t, std::move(weights), std::move(multipliers)};
+}
+
+// The rounding of the multipliers of the shifted Q(t*): n eps of the terms of Sigma w - t* v.
+double dual_tolerance(const Path& path, const PathPoint& point, const Candidate& candidate)
+{
+    double n = static_cast<double>(candidate.weights.size());
+    double scale = candidate.t * largest_magnitude(point.shift.excess) +
+                   largest_variance(path.factor, candidate.weights.size()) * largest_magnitude(candidate.weights);
+    return kNoiseFactor * n * kEpsilon * scale;
+}
+
+// Every row and the family hold to the feasibility tolerance of the QP solver, and each weight of F keeps the sign
+// of the face (a weight past zero is on another face).
+bool primal_holds(const Path& path, std::span<const double> signs, std::span<const double> weights)
+{
+    const qp::Problem& problem = path.translation.problem;
+    if (!std::ranges::all_of(weights, [](double weight) { return std::isfinite(weight); }) ||
+        !rows_hold(problem, weights))
+    {
+        return false;
+    }
+    if (signs.empty())
+    {
+        return true;
+    }
+    double row_norm = std::sqrt(static_cast<double>(problem.n));
+    double tolerance = qp::feasibility_tolerance(problem.gross_exposure->rhs, row_norm, largest_magnitude(weights));
+    for (std::size_t i = 0; i < weights.size(); ++i)
+    {
+        if (signs[i] * weights[i] < -tolerance)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The active inequality rows have nonnegative multipliers in Q(t*): u_v less t* amount at the face of the shift.
+bool explicit_duals_hold(const PathPoint& point, const Candidate& candidate, double tolerance)
+{
+    Slope multipliers = unshifted(candidate.multipliers, point, candidate.t * point.shift.amount);
+    return std::ranges::all_of(point.solution.active_inequalities,
+                               [&](std::size_t row) { return multipliers.inequality[row] >= -tolerance; });
+}
+
+// rho = t* v - Sigma w + E'y_v + C'z_v: what stationarity leaves to the family, sum_j zeta_v,j (s_j - a).
+std::vector<double> family_residual(const Path& path, const PathPoint& point, const Candidate& candidate)
+{
+    const qp::Problem& problem = path.translation.problem;
+    std::size_t n = problem.n;
+    std::vector<double> residual = factor_times(path.factor, factor_transposed_times(path.factor, candidate.weights));
+    std::vector<double> equality = transposed_times(problem.equality_rows, candidate.multipliers.equality, n);
+    std::vector<double> inequality = transposed_times(problem.inequality_rows, candidate.multipliers.inequality, n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        residual[i] = candidate.t * point.shift.excess[i] - residual[i] + equality[i] + inequality[i];
+    }
+    return residual;
+}
+
+// The family's term in the stationarity of Q(t*) is zeta (o - g) for its offset o, with zeta = sum_j zeta_j >= 0 and g
+// in the subdifferential of ||w||_1: g_i = sigma_i on the support, |g_i| <= 1 on D. In the frame of the shift, with
+// zeta_v the sum of the shifted multipliers and q = rho + zeta_v o, zeta = zeta_v - t* amount and
+// zeta g = q - t* amount s_f when the shift is along a generated face s_f (amount 0 for any other face), so:
+// sigma_i q_i = zeta_v on the support and -zeta_v + 2 t* amount <= s_f,i q_i <= zeta_v on D. These are quantities
+// of the order of t*|v| + |Sigma||w|, except 2 t* amount, and hold for every set of sign vectors of the face.
+struct FamilyLoad
+{
+    double total = 0.0;
+    double shift = 0.0;
+    std::span<const double> face_signs;
+};
+
+bool subgradient_holds(const FamilyLoad& load, double sign, double face_sign, double q, double tolerance)
+{
+    if (sign != 0.0)
+    {
+        return std::fabs(sign * q - load.total) <= tolerance;
+    }
+    double along = face_sign * q;
+    return along <= load.total + tolerance && along >= -load.total + 2.0 * load.shift - tolerance;
+}
+
+FamilyLoad family_load(const PathPoint& point, const Candidate& candidate)
+{
+    FamilyLoad load;
+    for (double zeta : candidate.multipliers.gross_exposure)
+    {
+        load.total += zeta;
+    }
+    if (point.shift.face.kind == Face::Kind::Generated)
+    {
+        load.shift = candidate.t * point.shift.amount;
+        load.face_signs = point.shift.face.signs;
+    }
+    return load;
+}
+
+bool family_dual_holds(const Path& path, const PathPoint& point, std::span<const double> signs,
+                       const Candidate& candidate, double tolerance)
+{
+    std::vector<double> residual = family_residual(path, point, candidate);
+    if (signs.empty())
+    {
+        return std::ranges::all_of(residual, [&](double entry) { return std::fabs(entry) <= tolerance; });
+    }
+    FamilyLoad load = family_load(point, candidate);
+    if (load.total - load.shift < -tolerance)
+    {
+        return false;
+    }
+    std::span<const double> offset(path.translation.problem.gross_exposure->offset);
+    for (std::size_t i = 0; i < residual.size(); ++i)
+    {
+        double face_sign = 1.0;
+        if (!load.face_signs.empty())
+        {
+            face_sign = load.face_signs[i];
+        }
+        if (!subgradient_holds(load, signs[i], face_sign, residual[i] + load.total * offset[i], tolerance))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The KKT conditions of Q(t*) at the candidate, which suffice since Q(t*) is convex: stationarity and
+// complementarity hold on the face by construction, so primal feasibility and the signs of the multipliers remain.
+bool crossing_certified(const Path& path, const PathPoint& point, std::span<const double> signs,
+                        const Candidate& candidate)
+{
+    double tolerance = dual_tolerance(path, point, candidate);
+    return primal_holds(path, signs, candidate.weights) && explicit_duals_hold(point, candidate, tolerance) &&
+           family_dual_holds(path, point, signs, candidate, tolerance);
+}
+
+// The candidate as a solution of Q(t*) in the convention of PathPoint::solution: the active set of point, its
+// multipliers less t* amount at the face of the shift; an inequality multiplier within the tolerance below 0 is 0.
+qp::Solution crossing_solution(const PathPoint& point, Candidate candidate)
+{
+    Slope multipliers = unshifted(std::move(candidate.multipliers), point, candidate.t * point.shift.amount);
+    qp::Solution solution = point.solution;
+    solution.x = std::move(candidate.weights);
+    solution.equality_multipliers = std::move(multipliers.equality);
+    solution.inequality_multipliers = std::move(multipliers.inequality);
+    for (double& multiplier : solution.inequality_multipliers)
+    {
+        multiplier = nonnegative(multiplier);
+    }
+    solution.gross_exposure_multipliers = std::move(multipliers.gross_exposure);
+    return solution;
+}
+
 } // namespace
 
 Path make_path(const Spec& spec, const Data& data)
@@ -627,7 +1191,7 @@ PathPoint solve_at(Path& path, double t)
 bool same_segment(const PathPoint& earlier, const PathPoint& later)
 {
     return earlier.solution.active_inequalities == later.solution.active_inequalities &&
-           earlier.solution.gross_exposure_signs == later.solution.gross_exposure_signs;
+           support_signs(earlier) == support_signs(later);
 }
 
 bool weights_moved(const PathPoint& earlier, const PathPoint& later)
@@ -647,29 +1211,17 @@ bool weights_constant(const Path& path, const PathPoint& earlier, const PathPoin
 
 Slope multiplier_slope(const Path& path, const PathPoint& point)
 {
-    const qp::Problem& problem = path.translation.problem;
-    std::size_t equalities = problem.equality_rhs.size();
-    std::size_t inequalities = point.solution.active_inequalities.size();
     std::vector<double> target(point.shift.excess.size());
     for (std::size_t i = 0; i < target.size(); ++i)
     {
         target[i] = -point.shift.excess[i];
     }
-    std::vector<double> b = linalg::least_squares(
-        linalg::householder_qr(active_normals(problem, point), problem.n, active_count(problem, point)), target);
-    auto generated = b.begin() + static_cast<std::ptrdiff_t>(equalities + inequalities);
-    Slope slope{std::vector<double>(b.begin(), b.begin() + static_cast<std::ptrdiff_t>(equalities)),
-                std::vector<double>(problem.inequality_rhs.size(), 0.0), std::vector<double>(generated, b.end())};
-    for (std::size_t k = 0; k < inequalities; ++k)
-    {
-        slope.inequality[point.solution.active_inequalities[k]] = b[equalities + k];
-    }
-    return slope;
+    return active_multipliers(path.translation.problem, point, std::move(target));
 }
 
 double vertex_exit(const PathPoint& point, const Slope& shifted)
 {
-    Slope slope = unshifted(shifted, point);
+    Slope slope = unshifted(shifted, point, point.shift.amount);
     const qp::Solution& solution = point.solution;
     double exit = kInfinity;
     for (std::size_t row : solution.active_inequalities)
@@ -690,7 +1242,7 @@ bool limit_holds(const Path& path, const PathPoint& point, const Slope& slope)
 
 qp::Solution moved_along(const PathPoint& point, const Slope& shifted, double t)
 {
-    Slope slope = unshifted(shifted, point);
+    Slope slope = unshifted(shifted, point, point.shift.amount);
     qp::Solution solution = point.solution;
     double distance = t - point.t;
     for (std::size_t k = 0; k < solution.equality_multipliers.size(); ++k)
@@ -712,7 +1264,7 @@ qp::Solution moved_along(const PathPoint& point, const Slope& shifted, double t)
 
 qp::Solution slope_solution(const PathPoint& point, const Slope& shifted)
 {
-    Slope slope = unshifted(shifted, point);
+    Slope slope = unshifted(shifted, point, point.shift.amount);
     qp::Solution solution = point.solution;
     solution.equality_multipliers = slope.equality;
     for (std::size_t k = 0; k < solution.inequality_multipliers.size(); ++k)
@@ -726,31 +1278,33 @@ qp::Solution slope_solution(const PathPoint& point, const Slope& shifted)
     return solution;
 }
 
-// |L'w|^2 = c + 2 b tau + a tau^2 reaches s^2 at the root in [0, 1], written without the cancellation of
-// -b + sqrt(...) since b >= 0 where the volatility is nondecreasing.
-double crossing_fraction(const Path& path, const Bracket& bracket)
+std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point)
 {
-    std::vector<double> start = factor_transposed_times(path.factor, bracket.lower.solution.x);
-    std::vector<double> direction =
-        factor_transposed_times(path.factor, difference(bracket.upper.solution.x, bracket.lower.solution.x));
-    double curvature = dot(direction, direction);
-    double slope = dot(start, direction);
-    double gap = (path.cap - bracket.lower.volatility) * (path.cap + bracket.lower.volatility);
-    return std::clamp(gap / (slope + std::sqrt(slope * slope + curvature * gap)), 0.0, 1.0);
+    if (point.solution.status != qp::Status::Optimal)
+    {
+        return std::nullopt;
+    }
+    std::vector<double> signs = common_signs(point);
+    std::optional<ReducedFace> face = reduced_face(path, point, signs);
+    if (!face.has_value())
+    {
+        return std::nullopt;
+    }
+    FaceLine line = face_line(path, *face, point);
+    std::optional<double> step = crossing_step(path, line);
+    if (!step.has_value() || !std::isfinite(point.t + *step) || !(point.t + *step > 0.0))
+    {
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < line.weights.size(); ++i)
+    {
+        line.weights[i] += *step * line.direction[i];
+    }
+    Candidate candidate = candidate_at(path, point, point.t + *step, std::move(line.weights));
+    if (!crossing_certified(path, point, signs, candidate))
+    {
+        return std::nullopt;
+    }
+    return Crossing{candidate.t, crossing_solution(point, std::move(candidate))};
 }
-
-qp::Solution on_segment(const Bracket& bracket, double fraction)
-{
-    const qp::Solution& lower = bracket.lower.solution;
-    const qp::Solution& upper = bracket.upper.solution;
-    qp::Solution solution = lower;
-    interpolate(lower.x, upper.x, fraction, solution.x);
-    interpolate(lower.equality_multipliers, upper.equality_multipliers, fraction, solution.equality_multipliers);
-    interpolate(lower.inequality_multipliers, upper.inequality_multipliers, fraction,
-                solution.inequality_multipliers);
-    interpolate(lower.gross_exposure_multipliers, upper.gross_exposure_multipliers, fraction,
-                solution.gross_exposure_multipliers);
-    return solution;
-}
-
 } // namespace po::problems

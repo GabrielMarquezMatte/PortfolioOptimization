@@ -175,6 +175,7 @@ if(PO_BUILD_TESTS)
         tests/unit/problems/max_return_test.cpp
         tests/unit/problems/max_sharpe_test.cpp
         tests/unit/problems/min_variance_test.cpp
+        tests/unit/problems/parametric_path_test.cpp
         tests/unit/problems/utility_test.cpp
         tests/unit/problems/tracking_error_test.cpp
         tests/unit/riskparity/augmented_lagrangian_test.cpp

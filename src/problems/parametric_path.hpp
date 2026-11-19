@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -51,11 +52,13 @@ struct Shift
 // mu~ = mu - rf 1, G = Sigma and the factor L of Data; only g = -t v depends on t, for the v of the shift each
 // point is solved with. w(t) is piecewise affine in t with a nondecreasing volatility. On a segment the active set
 // is fixed and w and the QP multipliers u of Q(t) are affine in t, with Sigma w - t mu~ = N u for the active
-// normals N. The active set is the active explicit rows and the sign vectors s_j of the active generated rows
-// a - s_j, whose normals are ordinary columns of N: a weight that crosses zero under the leverage changes a sign
-// vector, and with it the segment. base is the shift of the budget where the rows hold 1'w = 1 (Kind None
-// otherwise); without a budget, face is the last inequality face certified, tried first at the next point. cap is
-// the volatility cap s of MAX_RETURN.
+// normals N: the active explicit rows and the active generated rows a - s_j of the family, ordinary columns of N.
+// The segment is the face, not its sign vectors: with the family active, the s_j agree with sign(w) on the support
+// and w_i = 0 where two of them disagree (the zeros D), and the same face is held by several sets of s_j, between
+// which the solver alternates under rounding. A weight that crosses zero under the leverage changes the face, and
+// with it the segment. base is the shift of the budget where the rows hold 1'w = 1 (Kind None otherwise); without a
+// budget, face is the last inequality face certified, tried first at the next point. cap is the volatility cap s of
+// MAX_RETURN.
 struct Path
 {
     Translation translation;
@@ -103,13 +106,15 @@ Path make_path(const Spec& spec, const Data& data);
 // inequality face, and adds the iterations to the path; the volatility is NaN unless the solution is Optimal.
 PathPoint solve_at(Path& path, double t);
 
-// The same active set: the same active explicit rows and the same sign vectors of the active generated rows.
+// The same face: the same active explicit rows, the family active at both or at neither and, where it is, the same
+// support with the same signs and the same zeros (the zeros D where the sign vectors disagree, and the weights that
+// are 0). The sign vectors themselves are not compared.
 bool same_segment(const PathPoint& earlier, const PathPoint& later);
 
 // The weights differ by more than the rounding of Q(t) can explain (see weight_noise in the source).
 bool weights_moved(const PathPoint& earlier, const PathPoint& later);
 
-// w(t) is the same at both points: the same active set, and either a vertex (the equalities and the active
+// w(t) is the same at both points: the same face, and either a vertex (the equalities and the active
 // rows have rank n, so they fix w) or weights that have not moved.
 bool weights_constant(const Path& path, const PathPoint& earlier, const PathPoint& later);
 
@@ -133,11 +138,18 @@ qp::Solution moved_along(const PathPoint& point, const Slope& slope, double t);
 // The weights of point with the multipliers b.
 qp::Solution slope_solution(const PathPoint& point, const Slope& slope);
 
-// The fraction tau in [0, 1] where |L'w| reaches s, with w = w_a + tau (w_b - w_a) on the bracket's segment.
-double crossing_fraction(const Path& path, const Bracket& bracket);
+// A solution of Q(t) at the crossing vol(w(t)) = cap, multipliers in the convention of PathPoint::solution.
+struct Crossing
+{
+    double t = 0.0;
+    qp::Solution solution;
+};
 
-// The point of the bracket's segment at fraction: weights and multipliers interpolated, an exact solution of
-// Q(t_a + fraction (t_b - t_a)) since the KKT conditions on one active set are linear in (w, u, t).
-qp::Solution on_segment(const Bracket& bracket, double fraction);
+// From the face and shift of point: the exact tangent dw on that face (null space of the active normals over the
+// free coordinates, QR of L'Z), anchored at a face solve at point.t; the root of ||L'(w_a + h dw)|| = cap by the
+// cancellation-free formula; certified by the KKT conditions of Q(t*) at one point, Q(t*) being convex
+// (docs/research/2026-11-18-max-return-path-and-portable-generators.md, section 2). nullopt when the certificate
+// fails or the reduced Hessian has a pivot below its noise.
+std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point);
 
 } // namespace po::problems

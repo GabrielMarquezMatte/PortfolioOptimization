@@ -315,60 +315,10 @@ std::vector<Cap> caps_of(const GeneratedProblem& problem)
     return caps;
 }
 
-// The one case of the battery that misses its band (docs/guide/validation.md): an acceptance at an adjacent end
-// (kAdjacentEnd, 1e-5 s), not an error of the face shift. Cash, nearly equal means, no box, cond(Sigma) = 1e8, the
-// shape's leverage 2.154, cap fraction 0.7: the cap is reached at t = 6.7e15 on the leverage face, where vol(Q(t))
-// is known only to 1.5e-7 and no bracket keeps one active set, and the lower adjacent end has vol = s (1 - 1.006e-7).
-// It must stay OPTIMAL, with the return of the reference, the equalities, the bounds, the leverage, the
-// stationarity and vol <= s (1 + tol) within the band; only the volatility complementarity is relaxed, to at most
-// 1.1e-7 (1.006e-7 measured, against the band of 1e-7). Every other case keeps its band.
-struct KnownResidual
-{
-    std::uint64_t seed;
-    double fraction;
-    double complementarity;
-};
-constexpr KnownResidual kKnownResidual{3963545680699380072ULL, 0.7, 1.1e-7};
-
-std::optional<Result> pinned_against_reference(const GeneratedProblem& problem, double cap, double tolerance)
-{
-    double reference = po::testing::max_return_reference(problem.spec, problem.data, cap);
-    Result result = po::solve(max_return(problem.spec, cap), problem.data).value();
-    EXPECT_EQ(result.status, SolveStatus::Optimal);
-    if (result.status != SolveStatus::Optimal)
-    {
-        return std::nullopt;
-    }
-    double achieved = po::testing::portfolio_return(problem.data, result.weights);
-    EXPECT_NEAR(achieved, reference, tolerance * return_scale(problem.data, reference));
-    Spec spec = max_return(problem.spec, cap);
-    EXPECT_EQ(result.residual, 0.0);
-    po::testing::expect_user_equalities(spec, problem.data, result, tolerance);
-    po::testing::expect_user_bounds(spec, result, tolerance);
-    po::testing::expect_user_leverage(spec, problem.data, result, tolerance);
-    po::testing::expect_user_stationarity(problem.data, result, max_return_gradient(problem.data), tolerance);
-    double volatility = po::testing::portfolio_volatility(problem.data, result.weights);
-    EXPECT_LE(volatility, cap * (1.0 + tolerance));
-    EXPECT_LE(result.volatility_multiplier, 0.0);
-    EXPECT_LE(po::testing::complementarity_of_row(result.volatility_multiplier, volatility - cap, cap),
-              kKnownResidual.complementarity);
-    return result;
-}
-
-std::optional<Result> leverage_case(const ProblemShape& shape, const GeneratedProblem& problem, Cap cap)
-{
-    double tolerance = condition_tolerance(shape.condition);
-    if (shape.seed == kKnownResidual.seed && cap.fraction == kKnownResidual.fraction)
-    {
-        return pinned_against_reference(problem, cap.cap, tolerance);
-    }
-    return checked_against_reference(problem, cap.cap, tolerance);
-}
-
 // Every shape of fuzz_shapes(kLeverageShapes, 3) without the fixed box, at the leverage of with_leverage (uniform in
 // [0.8, 3]: infeasible, inactive or binding) and at a leverage below the gross exposure of the optimum without it,
 // against the frontier reference whose MIN_VARIANCE has the same leverage. In gcc-release, of the 2314 cases, 1057
-// bind the leverage, 763 of them with the cap; one is the known residual above (docs/guide/validation.md).
+// bind the leverage, 763 of them with the cap (docs/guide/validation.md).
 TEST(MaxReturnFuzz, LeverageFuzz)
 {
     LeverageCount count;
@@ -384,7 +334,7 @@ TEST(MaxReturnFuzz, LeverageFuzz)
         for (Cap cap : caps_of(problem))
         {
             SCOPED_TRACE(testing::Message() << "fraction " << cap.fraction << " cap " << cap.cap);
-            count_binding(leverage_case(shape, problem, cap), count);
+            count_binding(checked_against_reference(problem, cap.cap, tolerance), count);
             GeneratedProblem binding = problem;
             binding.spec.leverage = binding_leverage(problem, cap.cap, shape.seed + 1000);
             if (binding.spec.leverage.has_value())
@@ -398,8 +348,8 @@ TEST(MaxReturnFuzz, LeverageFuzz)
     EXPECT_GE(count.both, kBothBind);
 }
 
-// The shape of the known residual under each platform's covariance (known_shape_fixture.hpp), at the caps the fuzz
-// computed there, each against its full band: nothing relaxed.
+// The shape of the old known residual under each platform's covariance (known_shape_fixture.hpp), at the caps the
+// fuzz computed there, each against its full band: nothing relaxed.
 void expect_every_cap_optimal(const po::testing::ShapeFixture& fixture)
 {
     GeneratedProblem problem = po::testing::fixture_problem(fixture);

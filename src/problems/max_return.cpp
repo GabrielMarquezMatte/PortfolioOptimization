@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -16,15 +17,6 @@ namespace po::problems
 namespace
 {
 
-// Q(t*) confirms the crossing when it lies on the bracket's segment and its volatility is within this
-// fraction of the bracket's volatility range from s: an error of the affine model is a sizable fraction of
-// the range, while the rounding of vol(Q(t*)) is about 1e-15 cond(Sigma) s (docs/guide/validation.md).
-constexpr double kCrossingSanity = 1e-6;
-// Across a breakpoint at adjacent doubles, the end is the answer when its volatility is within this of s,
-// relative: 99 times the largest deviation of an end whose result passed every check (1.01e-7, at
-// cond(Sigma) = 1e8), and 160 times below the smallest deviation measured where Q(t) is lost in its rounding.
-// No noise-relative form separated the two groups (docs/guide/validation.md).
-constexpr double kAdjacentEnd = 1e-5;
 constexpr int kMaxDoublings = 200;
 constexpr int kMaxBisections = 200;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
@@ -85,85 +77,77 @@ Result vertical(const Data& data, const Path& path, const PathPoint& start)
     return result;
 }
 
-// The point of the segment where vol = s: there Sigma w - t* v = N u, so the user multipliers are u / t*
-// and the volatility multiplier is -s / t*.
-Result at_crossing(const Data& data, const Path& path, const Bracket& bracket, double fraction)
+// The point of the face where vol = s: there Sigma w - t* v = N u, so the user multipliers are u / t* and the
+// volatility multiplier is -s / t*.
+Result at_tangent(const Data& data, const Path& path, const Crossing& crossing)
 {
-    double t = bracket.lower.t + fraction * (bracket.upper.t - bracket.lower.t);
-    return answer(data, path, on_segment(bracket, fraction), t, -path.cap / t);
+    return answer(data, path, crossing.solution, crossing.t, -path.cap / crossing.t);
 }
 
-bool confirms(const Path& path, const Bracket& bracket, const PathPoint& crossing)
+// t_a and t_b are adjacent doubles, with a breakpoint between them or Q(t) lost in its rounding: the crossing on the
+// face of either end that certifies, the lower first (the upper first when the lower is t = 0), or a breakdown.
+Result from_either_end(const Data& data, const Path& path, const Bracket& bracket)
 {
-    double range = bracket.upper.volatility - bracket.lower.volatility;
-    return same_segment(bracket.lower, crossing) &&
-           std::fabs(crossing.volatility - path.cap) <= kCrossingSanity * range;
+    const PathPoint* first = &bracket.lower;
+    const PathPoint* second = &bracket.upper;
+    if (first->t == 0.0)
+    {
+        std::swap(first, second);
+    }
+    for (const PathPoint* end : {first, second})
+    {
+        std::optional<Crossing> crossing = tangent_crossing(path, *end);
+        if (crossing.has_value())
+        {
+            return at_tangent(data, path, *crossing);
+        }
+    }
+    return broke_down(data, path);
 }
 
-// t_a and t_b are adjacent doubles. On one segment the root is still exact; across a breakpoint, the lower
-// end, whose volatility is below s by rounding only, with the volatility multiplier -vol / t that keeps it
-// stationary (the upper end when the lower is t = 0). An end farther from s is Q(t) lost in its own rounding
-// (vol(t) is continuous): the path has broken down.
-Result at_adjacent(const Data& data, const Path& path, const Bracket& bracket)
-{
-    if (same_segment(bracket.lower, bracket.upper))
-    {
-        return at_crossing(data, path, bracket, crossing_fraction(path, bracket));
-    }
-    const PathPoint* end = &bracket.lower;
-    if (end->t == 0.0)
-    {
-        end = &bracket.upper;
-    }
-    if (std::fabs(end->volatility - path.cap) > kAdjacentEnd * path.cap)
-    {
-        return broke_down(data, path);
-    }
-    return answer(data, path, end->solution, end->t, -end->volatility / end->t);
-}
-
-void narrow(const Path& path, Bracket& bracket, PathPoint point)
+// Whether the point became the lower end.
+bool narrow(const Path& path, Bracket& bracket, PathPoint point)
 {
     if (point.volatility >= path.cap)
     {
         bracket.upper = std::move(point);
-        return;
+        return false;
     }
     bracket.lower = std::move(point);
+    return true;
 }
 
-// On one segment w(t) is affine and the root of vol(w(t)) = s is exact; Q(t*) confirms that t* lies on that
-// segment. A crossing that does not narrows the bracket like any other point.
+// The Goldfarb-Idnani points decide the bracket. When both ends are on one face, the tangent of that face at the
+// lower end gives the crossing; it is tried once per lower end, and one that does not certify leaves the bisection
+// to go on.
 Result bisect(const Data& data, Path& path, Bracket bracket)
 {
+    bool untried = true;
     for (int step = 0; step < kMaxBisections; ++step)
     {
-        if (same_segment(bracket.lower, bracket.upper))
+        if (untried && same_segment(bracket.lower, bracket.upper))
         {
-            double fraction = crossing_fraction(path, bracket);
-            double t = bracket.lower.t + fraction * (bracket.upper.t - bracket.lower.t);
-            PathPoint crossing = solve_at(path, t);
-            if (crossing.solution.status != qp::Status::Optimal)
+            std::optional<Crossing> crossing = tangent_crossing(path, bracket.lower);
+            if (crossing.has_value())
             {
-                return broke_down(data, path);
+                return at_tangent(data, path, *crossing);
             }
-            if (confirms(path, bracket, crossing))
-            {
-                return at_crossing(data, path, bracket, fraction);
-            }
-            narrow(path, bracket, std::move(crossing));
+            untried = false;
         }
         double middle = 0.5 * (bracket.lower.t + bracket.upper.t);
         if (middle <= bracket.lower.t || middle >= bracket.upper.t)
         {
-            return at_adjacent(data, path, bracket);
+            return from_either_end(data, path, bracket);
         }
         PathPoint point = solve_at(path, middle);
         if (point.solution.status != qp::Status::Optimal)
         {
             return broke_down(data, path);
         }
-        narrow(path, bracket, std::move(point));
+        if (narrow(path, bracket, std::move(point)))
+        {
+            untried = true;
+        }
     }
     return broke_down(data, path);
 }
