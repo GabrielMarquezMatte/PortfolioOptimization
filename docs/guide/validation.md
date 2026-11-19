@@ -1108,10 +1108,14 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
   shapes of the fuzz test, `n` up to 20) and 0.28 on the 44 cases of the measurement above; near `sigma_min` the
   rule refuses the worst corrections but does not separate good from bad (see "The multipliers near the minimum
   volatility" below). On the 18 results of the table below (9 values of `delta` from `1e-2` to
-  `1e-10`, no box and long only) the safeguard kept the least-squares multipliers 6 times: at `delta = 1e-10` in both
-  boxes, at `1e-8` and `1e-9` without a box and at `1e-6` and `1e-7` long only
-  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`, which requires exactly that; twice, at
-  `delta = 1e-10`, on the earlier instances); on the 44 cases of the measurement above it refuses none (on the earlier
+  `1e-10`, no box and long only) the safeguard kept the least-squares multipliers 6 times: at `delta` from `1e-7` to
+  `1e-10` without a box and at `1e-6` and `1e-7` long only
+  (`RiskParity.NearMinimumVolatilityKeepsLeastSquaresMultipliers`, which requires the 6 and the refusal at
+  `delta = 1e-10` without a box; twice, at `delta = 1e-10`, on the earlier instances). Which results it keeps
+  turns on single roundings, since the contraction is near its threshold of 1/2 there: before the products of
+  the risk-parity objective were reordered to divide before multiplying, it kept `1e-8` to `1e-10` without a box
+  and `1e-6`, `1e-7` and `1e-10` long only; at `1e-10` long only the contraction went from 0.60 to 0.43, and the
+  accepted correction leaves a stationarity of 0.20 of its noise; on the 44 cases of the measurement above it refuses none (on the earlier
   instances it refused the four with `cond(Sigma) = 1e10` and `n = 8` while the rank test was one of its rules). A point far from its KKT
   point (`s = 1.1 sigma_min` solved, `s = sigma_min (1 + 1e-4)` asked) has a contraction of 0.72 and is
   refused (`NewtonPolish.RejectsACorrectionThatDoesNotContract`), and so is a correction that gives a held

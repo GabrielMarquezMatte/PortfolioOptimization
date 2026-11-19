@@ -259,6 +259,18 @@ TEST(Spinu, ContributionsEqualBudget)
     }
 }
 
+// b_i / (y_i y_i) underflows y_i^2 to 0 for b_i = 1e-200 and leaves the Hessian without its barrier.
+TEST(Spinu, TinyBudgetEntry)
+{
+    std::vector<double> covariance = {0.04, 0.006, 0.002, 0.006, 0.09, 0.01, 0.002, 0.01, 0.16};
+    Data data = covariance_data(3, covariance);
+    std::vector<double> budget = {1e-200, 0.5, 0.5};
+    SpinuResult result = po::riskparity::spinu(data, budget);
+    ASSERT_TRUE(result.converged);
+    EXPECT_TRUE(std::ranges::all_of(result.weights, [](double weight) { return weight > 0.0; }));
+    EXPECT_LE(largest_gap(data, result.weights, budget), 1e-10);
+}
+
 TEST(Spinu, UnevenBudgetsConditioningSweep)
 {
     for (std::size_t n : {5u, 20u})
