@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.28)
-set(PO_VERSION 0.1.0 CACHE STRING "PortOpt version (x.y.z)")
+# Not a cache entry, so a version bump reaches build directories that already exist; -DPO_VERSION=x.y.z overrides it.
+if(NOT DEFINED PO_VERSION)
+    set(PO_VERSION 0.1.0)
+endif()
 project(PortOpt VERSION ${PO_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
