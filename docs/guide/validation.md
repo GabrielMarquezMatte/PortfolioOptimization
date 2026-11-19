@@ -51,8 +51,8 @@ instead check each result against conditions that hold if and only if it is corr
 **Where the numbers of this document come from.** The random covariances, means and budgets of the tests come from
 `tests/unit/random_covariance.hpp` and `tests/unit/fuzz/random_problems.hpp`. Since plan 8 they use no libm
 function and no `<random>` distribution (`po::portable::exp` and `log`, Marsaglia's polar method for the normals,
-rejection for the integers), so a test instance has the same bits on Windows (MinGW and MSVC), Linux and macOS
-([Other platforms](#fuzz-battery)). Every count, worst agreement, residual per `cond(Sigma)` and run time below
+rejection for the integers), so a test instance has the same bits everywhere: verified locally on Windows (MinGW and MSVC) and on Linux (GCC 14,
+glibc 2.28), and the same tests run in CI on all three platforms ([Other platforms](#fuzz-battery)). Every count, worst agreement, residual per `cond(Sigma)` and run time below
 that comes from such an instance and that a test or a `DISABLED_Measure*` test of the repository reproduces was
 measured again on those instances (`gcc-release`, Windows 10, GCC 16.2 from MSYS2 UCRT64, 2026-11-19, one run of
 each, on a machine that was not isolated, so the times are indicative). Figures that came from an instrumented
@@ -1486,13 +1486,15 @@ cover:
   11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
 - **Other platforms.** The generators and the library give the same bits on Windows (MinGW and MSVC), Linux and macOS,
-  so a test instance is the same instance everywhere. In `src/` no libm function is called besides `sqrt` and `fma`
+  so a test instance is the same instance everywhere. Verified locally on Windows (MinGW and MSVC: the full suite, 371
+  tests) and on Linux (the `manylinux_2_28` image, GCC 14.2.1, glibc 2.28, Release: the full suite, 371 tests, with the
+  bits committed from the MinGW build); macOS is checked by the same tests in CI. In `src/` no libm function is called besides `sqrt` and `fma`
   (both rounded exactly): `po::portable::exp`, `log` and `hypot` (`src/core/portable_math.cpp`) replace them, the
   Givens of the QP and the Spinu objective being their users. The test generators use the same functions, Marsaglia's
   polar method for the normals and a rejection method for the integers, and no `<random>` distribution. The claim is
   checked by `Generators.HaveTheCommittedBits` (the instances, by their bits), `PortableMath.*` (the three functions
-  against committed values) and `Determinism.*` (the solution bits of one problem of each objective), which run on
-  every platform of the CI. The change of the QP solution bits that the portable `hypot` made, and the run times, are in
+  against committed values) and `Determinism.*` (the solution bits of one problem of each objective), which run in
+  CI on Windows, Linux and macOS. The change of the QP solution bits that the portable `hypot` made, and the run times, are in
   [docs/performance/portable-math.md](../performance/portable-math.md). Before plan 8 the generators built `Sigma` with
   `std::log`, `std::exp` and `std::cos`, which glibc rounds differently from the Windows UCRT: on Linux 561 of the 576
   covariance entries of the known residual's shape differed, by up to 1856 ulp (3.6e-13 relative; `mu` was the same),
@@ -1503,9 +1505,9 @@ cover:
   `RiskParityReference.ForwardErrorMeasuresTheDistanceToTheRefinedPoint` and `MaxReturn.FaceShiftCashMultiplier` failed
   on Linux, and `RiskParity.TargetVolatilityEllipseAgainstScan` on macOS (its solve landed below the value of the scan,
   a reference of limited resolution). Moving to the portable generators changed every test instance; the tests that
-  relied on the old ones were triaged one by one, and the counts, floors and ceilings that moved (18 other local minima
-  in `AgainstScanReference`, 540 `OPTIMAL` results in `OptimalRunsAreKkt`, 623 converged runs in `ConvergedRunsAreKkt`,
-  the ceilings of the multiplier tests) are those of this document.
+  relied on the old ones were triaged one by one, and the counts and floors that moved (18 other local minima
+  in `AgainstScanReference`, 540 `OPTIMAL` results in `OptimalRunsAreKkt`, 623 converged runs in `ConvergedRunsAreKkt`)
+  are those of this document.
 - **Runtime.** In `gcc-release` (`ctest`, 21 s for the 371 tests of the suite) `MaxReturnFuzz.AgainstFrontierReference`
   0.78 s, `NeverSilentlyWrong` 0.42 s, `MaxReturnFuzz.LeverageFuzz` 3.4 s, `LeverageFuzz.AgainstSignPatterns` 0.68 s and
   `RatioFuzz.AgainstFrontierReference` 1.9 s (1.3 s, 0.8 s, 6.5 s, 0.9 s and 3.1 s on the earlier instances, with the

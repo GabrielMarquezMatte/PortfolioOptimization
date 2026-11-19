@@ -111,8 +111,8 @@ The first release.
   bits), `PortableMath.*` (`po::portable::exp`, `log` and `hypot` against committed values), `Determinism.*` (the
   solution bits of one problem of each objective) and `MaxReturnFuzz.KnownShapeUnder{Windows,Linux}Covariance` (the
   case of `MaxReturnFuzz.LeverageFuzz` that had been `MAX_ITER`, under both covariances, frozen). The test
-  generators use no libm function and no `<random>` distribution, so every test instance has the same bits on
-  Windows, Linux and macOS.
+  generators use no libm function and no `<random>` distribution, so every test instance has the same bits everywhere:
+  verified on Windows (MinGW, MSVC) and Linux (GCC 14, glibc 2.28), and the same tests run in CI on all three platforms.
 ### Changed
 
 - Performance, with every result bit for bit identical (70 cases at 10 and 100 assets and all 35 at 1000 assets,
@@ -149,8 +149,9 @@ The first release.
   shapes while the correction is right). With a target volatility at least 1e-3 relative above the minimum
   volatility the measured relative error of the multipliers went from up to 3.7e-10, 4.2e-4 and 2.2e-2 to up to 8.1e-13,
   2.4e-12 and 9.3e-11 at `cond(Sigma)` 1e4, 1e6 and 1e8 (`N` from 5 to 20; bound multipliers within 1.6e-10 at 1e8,
-  `N` = 5 and 8); measured, not derived, and pinned by ceilings 10 times the largest measured on the cases of each
-  test. Nearer the minimum volatility, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: up to
+  `N` = 5 and 8); measured, not derived, and pinned by ceilings set as 10 times the largest measured on the cases of each
+  test (on the earlier instances for the bound multipliers and the Newton polish, on the present ones for the
+  target-volatility multipliers), which the present measurements pass. Nearer the minimum volatility, `s = sigma_min (1 + delta)`, the error grows roughly like `1 / delta`: up to
   2.3e-10 at `delta = 1e-6` and 6.2e-7 at `1e-10`. At `cond(Sigma) >= 1e10` an `OPTIMAL` result is still not
   validated. See
   [docs/guide/validation.md](docs/guide/validation.md#the-kkt-residual-and-its-noise).
@@ -165,7 +166,7 @@ The first release.
 - The bits of a QP solution: the Givens of the QP and the Spinu objective call `po::portable::hypot` and
   `po::portable::log` instead of the platform's `std::hypot` and `std::log` (`po::portable::exp` serves the test
   generators), so `src/` calls no libm function besides `sqrt` and `fma` and a solve returns the same bits on
-  Windows, Linux and macOS. `compare-solutions` over the 70 cases (10 and 100 assets) before and after: on Windows 70
+  Windows and Linux (verified; the same tests run in CI on macOS too). `compare-solutions` over the 70 cases (10 and 100 assets) before and after: on Windows 70
   of 70 bit for bit identical, iteration ratio 1.0000; on Linux (glibc 2.28) no status or iteration count changed and
   35 of 70 differ in the last bits (worst relative weight difference 3.8e-15, objective 1.1e-14), the glibc `hypot`
   having differed from the portable one. The solve times stay within noise on both
