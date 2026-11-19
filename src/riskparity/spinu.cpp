@@ -6,6 +6,7 @@
 #include <optional>
 #include <utility>
 
+#include "core/portable_math.hpp"
 #include "linalg/cholesky.hpp"
 
 namespace po::riskparity
@@ -69,7 +70,7 @@ Point evaluate(const Problem& problem, std::vector<double> y)
     double value = 0.5 * dot(y, sigma_y);
     for (std::size_t i = 0; i < problem.n; ++i)
     {
-        value -= problem.budget[i] * std::log(y[i]);
+        value -= problem.budget[i] * portable::log(y[i]);
     }
     return Point{std::move(y), std::move(sigma_y), value};
 }

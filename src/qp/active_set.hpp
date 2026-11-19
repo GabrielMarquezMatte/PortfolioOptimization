@@ -1,11 +1,12 @@
 #pragma once
 
 #include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <span>
 #include <utility>
 #include <vector>
+
+#include "core/portable_math.hpp"
 
 namespace po::qp
 {
@@ -129,7 +130,7 @@ inline ActiveSet empty_active_set(std::span<const double> factor, std::size_t n)
 
 inline Givens make_givens(double first, double second)
 {
-    double length = std::hypot(first, second);
+    double length = portable::hypot(first, second);
     if (length == 0.0)
     {
         return Givens{};
