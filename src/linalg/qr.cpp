@@ -93,20 +93,6 @@ void reflect_trailing_columns(std::span<const double> v, std::size_t k, std::spa
     }
 }
 
-void solve_upper(const Qr& qr, std::span<double> b)
-{
-    std::size_t n = qr.cols;
-    for (std::size_t i = n; i-- > 0;)
-    {
-        double sum = b[i];
-        for (std::size_t k = i + 1; k < n; ++k)
-        {
-            sum -= qr.upper[i * n + k] * b[k];
-        }
-        b[i] = sum / qr.upper[i * n + i];
-    }
-}
-
 } // namespace
 
 Qr householder_qr(std::span<const double> a, std::size_t rows, std::size_t cols)
@@ -151,6 +137,42 @@ void apply_transposed(const Qr& qr, std::span<double> b)
     for (std::size_t k = 0; k < qr.cols; ++k)
     {
         reflect(std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows), k, b);
+    }
+}
+
+void apply(const Qr& qr, std::span<double> x)
+{
+    for (std::size_t k = qr.cols; k-- > 0;)
+    {
+        reflect(std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows), k, x);
+    }
+}
+
+void solve_upper(const Qr& qr, std::span<double> b)
+{
+    std::size_t n = qr.cols;
+    for (std::size_t i = n; i-- > 0;)
+    {
+        double sum = b[i];
+        for (std::size_t k = i + 1; k < n; ++k)
+        {
+            sum -= qr.upper[i * n + k] * b[k];
+        }
+        b[i] = sum / qr.upper[i * n + i];
+    }
+}
+
+void solve_upper_transposed(const Qr& qr, std::span<double> b)
+{
+    std::size_t n = qr.cols;
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        double sum = b[i];
+        for (std::size_t k = 0; k < i; ++k)
+        {
+            sum -= qr.upper[k * n + i] * b[k];
+        }
+        b[i] = sum / qr.upper[i * n + i];
     }
 }
 

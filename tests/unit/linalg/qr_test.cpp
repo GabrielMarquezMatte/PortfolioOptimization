@@ -327,4 +327,63 @@ TEST(Qr, ReflectIsBitIdenticalToTheColumnOrder)
     }
 }
 
+// Q [R; 0] is a, column by column, and Q undoes Q'.
+TEST(Qr, ApplyRebuildsTheColumns)
+{
+    constexpr std::size_t rows = 10;
+    constexpr std::size_t cols = 4;
+    std::vector<double> a = po::testing::random_vector(rows * cols, 5, -1.0, 1.0);
+    po::linalg::Qr qr = po::linalg::householder_qr(a, rows, cols);
+    for (std::size_t j = 0; j < cols; ++j)
+    {
+        SCOPED_TRACE(j);
+        std::vector<double> rebuilt(rows, 0.0);
+        for (std::size_t i = 0; i <= j; ++i)
+        {
+            rebuilt[i] = qr.upper[i * cols + j];
+        }
+        po::linalg::apply(qr, rebuilt);
+        std::vector<double> expected = column(a, rows, cols, j);
+        for (std::size_t i = 0; i < rows; ++i)
+        {
+            EXPECT_NEAR(rebuilt[i], expected[i], 1e-14);
+        }
+    }
+    std::vector<double> b = po::testing::random_vector(rows, 6, -1.0, 1.0);
+    std::vector<double> round_trip = b;
+    po::linalg::apply_transposed(qr, round_trip);
+    po::linalg::apply(qr, round_trip);
+    for (std::size_t i = 0; i < rows; ++i)
+    {
+        EXPECT_NEAR(round_trip[i], b[i], 1e-15);
+    }
+}
+
+// R x = b and R'y = b, checked by multiplying back.
+TEST(Qr, SolvesWithTheUpperFactorAndItsTranspose)
+{
+    constexpr std::size_t rows = 8;
+    constexpr std::size_t cols = 5;
+    po::linalg::Qr qr =
+        po::linalg::householder_qr(po::testing::random_vector(rows * cols, 7, -1.0, 1.0), rows, cols);
+    std::vector<double> b = po::testing::random_vector(cols, 8, -1.0, 1.0);
+    std::vector<double> x = b;
+    po::linalg::solve_upper(qr, x);
+    std::vector<double> y = b;
+    po::linalg::solve_upper_transposed(qr, y);
+    for (std::size_t i = 0; i < cols; ++i)
+    {
+        SCOPED_TRACE(i);
+        double upper_times_x = 0.0;
+        double transposed_times_y = 0.0;
+        for (std::size_t k = 0; k < cols; ++k)
+        {
+            upper_times_x += qr.upper[i * cols + k] * x[k];
+            transposed_times_y += qr.upper[k * cols + i] * y[k];
+        }
+        EXPECT_NEAR(upper_times_x, b[i], 1e-13);
+        EXPECT_NEAR(transposed_times_y, b[i], 1e-13);
+    }
+}
+
 } // namespace

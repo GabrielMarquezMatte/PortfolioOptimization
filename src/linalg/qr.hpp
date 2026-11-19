@@ -34,6 +34,15 @@ bool has_full_column_rank(const Qr& qr);
 // b (rows entries) becomes Q'b.
 void apply_transposed(const Qr& qr, std::span<double> b);
 
+// x (rows entries) becomes Q x: the reflectors applied last to first.
+void apply(const Qr& qr, std::span<double> x);
+
+// b (cols entries) becomes the x of R x = b; requires full column rank.
+void solve_upper(const Qr& qr, std::span<double> b);
+
+// b (cols entries) becomes the x of R'x = b; requires full column rank.
+void solve_upper_transposed(const Qr& qr, std::span<double> b);
+
 // The x (cols entries) that minimizes |a x - b|; requires full column rank.
 std::vector<double> least_squares(const Qr& qr, std::vector<double> b);
 

@@ -683,54 +683,6 @@ double largest_variance(std::span<const double> factor, std::size_t n)
     return largest;
 }
 
-// Q x for the orthogonal factor Q = H_0 H_1 ... of qr: its reflectors applied last to first.
-void apply_orthogonal(const linalg::Qr& qr, std::span<double> x)
-{
-    for (std::size_t k = qr.cols; k-- > 0;)
-    {
-        std::span<const double> v = std::span<const double>(qr.reflectors).subspan(k * qr.rows, qr.rows);
-        double projection = 0.0;
-        for (std::size_t i = k; i < qr.rows; ++i)
-        {
-            projection += v[i] * x[i];
-        }
-        for (std::size_t i = k; i < qr.rows; ++i)
-        {
-            x[i] -= 2.0 * projection * v[i];
-        }
-    }
-}
-
-// R'x = b in place, R the triangular factor of qr.
-void solve_upper_transposed(const linalg::Qr& qr, std::span<double> b)
-{
-    std::size_t n = qr.cols;
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        double sum = b[i];
-        for (std::size_t k = 0; k < i; ++k)
-        {
-            sum -= qr.upper[k * n + i] * b[k];
-        }
-        b[i] = sum / qr.upper[i * n + i];
-    }
-}
-
-// R x = b in place.
-void solve_upper(const linalg::Qr& qr, std::span<double> b)
-{
-    std::size_t n = qr.cols;
-    for (std::size_t i = n; i-- > 0;)
-    {
-        double sum = b[i];
-        for (std::size_t k = i + 1; k < n; ++k)
-        {
-            sum -= qr.upper[i * n + k] * b[k];
-        }
-        b[i] = sum / qr.upper[i * n + i];
-    }
-}
-
 // The rows of the face of point over its free weights F as the columns of normals (F.size() x rhs.size(),
 // row-major): the equality rows, the active rows that are not bounds and, with the family active, its row a - s for
 // the sign s every active sign vector has on F, with rhs less their terms in the fixed weights. A weight off F is
@@ -923,7 +875,7 @@ std::vector<double> from_face(const ReducedFace& face, std::span<const double> f
 {
     std::vector<double> y(fixed.begin(), fixed.end());
     y.insert(y.end(), free.begin(), free.end());
-    apply_orthogonal(face.normals, y);
+    linalg::apply(face.normals, y);
     for (std::size_t a = 0; a < y.size(); ++a)
     {
         base[face.rows.free[a]] = y[a];
@@ -940,7 +892,7 @@ FaceLine face_line(const Path& path, const ReducedFace& face, const PathPoint& p
     std::size_t p = face.rows.free.size();
     std::size_t m = face.rows.rhs.size();
     std::vector<double> fixed = face.rows.rhs;
-    solve_upper_transposed(face.normals, fixed);
+    linalg::solve_upper_transposed(face.normals, fixed);
     std::vector<double> particular = factor_transposed_times(path.factor, face.rows.fixed);
     for (std::size_t j = 0; j < n; ++j)
     {
@@ -954,14 +906,14 @@ FaceLine face_line(const Path& path, const ReducedFace& face, const PathPoint& p
     }
     linalg::apply_transposed(face.normals, drift);
     drift.erase(drift.begin(), drift.begin() + static_cast<std::ptrdiff_t>(m));
-    solve_upper_transposed(face.hessian, drift);
+    linalg::solve_upper_transposed(face.hessian, drift);
     std::vector<double> anchored(p - m);
     for (std::size_t b = 0; b < anchored.size(); ++b)
     {
         anchored[b] = point.t * drift[b] - particular[b];
     }
-    solve_upper(face.hessian, anchored);
-    solve_upper(face.hessian, drift);
+    linalg::solve_upper(face.hessian, anchored);
+    linalg::solve_upper(face.hessian, drift);
     std::vector<double> none(m, 0.0);
     return FaceLine{from_face(face, fixed, anchored, face.rows.fixed),
                     from_face(face, none, drift, std::vector<double>(n, 0.0))};
