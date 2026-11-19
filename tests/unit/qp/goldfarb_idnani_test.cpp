@@ -204,10 +204,11 @@ TEST(GoldfarbIdnani, EqualityOnly)
     po::testing::expect_kkt(problem, solution);
 }
 
+// Seed 2: the first whose unconstrained minimizer is negative exactly where the bounds bind.
 TEST(GoldfarbIdnani, ActiveBounds)
 {
     constexpr std::size_t n = 5;
-    Problem problem = unconstrained_problem(n, 3, 1.0);
+    Problem problem = unconstrained_problem(n, 2, 1.0);
     const std::vector<double> optimum = {0.3, 0.0, 0.4, 0.0, 0.3};
     const std::vector<double> bound_multipliers = {0.0, 0.05, 0.0, 0.05, 0.0};
     for (std::size_t i = 0; i < n; ++i)

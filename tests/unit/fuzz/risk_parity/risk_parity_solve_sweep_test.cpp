@@ -35,7 +35,7 @@ using Shape = po::testing::RiskParityShape;
 
 // OPTIMAL results of OptimalRunsAreKkt out of its 576 shapes, as measured (docs/guide/validation.md). The
 // solver is deterministic: fewer is a regression.
-constexpr int kOptimalFloor = 564;
+constexpr int kOptimalFloor = 540;
 // The reference of a floor-limited result is at most this fraction of the rounding floor of the result from
 // stationarity: the point the forward error is measured against is that much closer to a KKT point.
 constexpr double kReferenceOverFloor = 1e-2;

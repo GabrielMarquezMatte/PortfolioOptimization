@@ -9,6 +9,7 @@
 #include <span>
 #include <vector>
 
+#include "core/portable_math.hpp"
 #include "random_covariance.hpp"
 
 namespace
@@ -64,7 +65,7 @@ std::vector<double> conditioned_matrix(std::size_t rows, std::size_t cols, doubl
         {
             fraction = static_cast<double>(k) / static_cast<double>(cols - 1);
         }
-        double singular = std::exp(-fraction * std::log(condition));
+        double singular = po::portable::exp(-fraction * po::portable::log(condition));
         for (std::size_t i = 0; i < rows; ++i)
         {
             for (std::size_t j = 0; j < cols; ++j)

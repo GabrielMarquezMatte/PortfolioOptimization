@@ -118,7 +118,7 @@ TEST(MaxReturnFuzz, AgainstFrontierReference)
 // Log-uniform in [1e-10, 1e-6].
 double riskless_variance(std::uint64_t seed)
 {
-    return std::pow(10.0, po::testing::random_vector(1, seed, -10.0, -6.0)[0]);
+    return po::testing::exp10(po::testing::random_vector(1, seed, -10.0, -6.0)[0]);
 }
 
 // cond(Sigma) of the risky block, whose eigenvalues random_covariance spreads from 0.04 to 0.04 cond (times the

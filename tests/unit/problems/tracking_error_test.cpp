@@ -9,6 +9,7 @@
 #include <span>
 #include <vector>
 
+#include "core/portable_math.hpp"
 #include "kkt.hpp"
 #include "linalg/cholesky.hpp"
 #include "qp/goldfarb_idnani.hpp"
@@ -351,7 +352,7 @@ std::vector<double> conditioned_returns(std::size_t periods, std::size_t n, doub
     for (std::size_t k = 0; k < n; ++k)
     {
         double fraction = static_cast<double>(k) / static_cast<double>(n - 1);
-        double singular = 0.01 * std::exp(-fraction * std::log(condition));
+        double singular = 0.01 * po::portable::exp(-fraction * po::portable::log(condition));
         for (std::size_t t = 0; t < periods; ++t)
         {
             for (std::size_t i = 0; i < n; ++i)

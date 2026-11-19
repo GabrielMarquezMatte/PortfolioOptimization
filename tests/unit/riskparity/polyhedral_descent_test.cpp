@@ -153,10 +153,11 @@ TEST(PolyhedralDescent, TargetReturnLineAgainstScan)
                 DescentResult result = po::riskparity::descend(
                     DescentProblem{spec, data, spec.risk_budget, std::nullopt}, start, options_with(1000));
                 ASSERT_EQ(result.stop, DescentStop::Converged) << "stationarity " << result.stationarity;
-                po::testing::expect_risk_parity_kkt(spec, data, as_result(spec, result), kBand);
+                Result solved = as_result(spec, result);
+                po::testing::expect_risk_parity_kkt(spec, data, solved, kBand);
                 po::testing::ScanResult scan = po::testing::scan_reference(spec, data, spec.risk_budget);
                 double value = po::testing::risk_parity_value(data, spec.risk_budget, result.weights);
-                if (value > scan.value * (1.0 + 1e-9))
+                if (value > po::testing::scan_value_at_target(spec, data, solved, scan) * (1.0 + 1e-9))
                 {
                     double distance = 0.0;
                     for (std::size_t i = 0; i < 3; ++i)

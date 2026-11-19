@@ -75,46 +75,26 @@ double largest_distance(const std::vector<double>& a, const std::vector<double>&
 
 // The OPTIMAL results of AgainstScanReference that are another local minimum of the curve, above the global
 // one of the scan, as measured (docs/guide/validation.md): more is a regression.
-constexpr int kOtherLocalMinima = 6;
+constexpr int kOtherLocalMinima = 18;
 
-// The scan's value moved to the target to first order: its point sits on the curve only to the rounding of
-// the curve (a gap of up to 2e-10 of s measured), and f changes by lambda_k h_k off the curve, with the
-// multipliers of the result. Without this a scan point just inside the ellipse beats an exact solution.
-double scan_value_at_target(const po::Spec& spec, const po::Data& data, const Result& result,
-                            const po::testing::ScanResult& scan)
-{
-    double total = std::accumulate(scan.weights.begin(), scan.weights.end(), 0.0);
-    double value = scan.value - result.budget_multiplier * (total - 1.0);
-    if (spec.target_return.has_value())
-    {
-        double mean = po::testing::compensated_dot_of<double>(3, data.mu(), scan.weights);
-        value -= result.target_return_multiplier * (mean - *spec.target_return);
-    }
-    if (spec.target_volatility.has_value())
-    {
-        double volatility = po::testing::wide_volatility(data, scan.weights);
-        value -= result.volatility_multiplier * (volatility - *spec.target_volatility);
-    }
-    return value;
-}
-
-// No feasible point of the curve within 20 scan steps of the result has a smaller f: the result is a local
-// minimum along the curve, not a saddle or a maximum of it.
+// No feasible scan point of the curve within 20 steps of the result (of 20001 points; 40 of the 40001 on the
+// ellipse, the same share of its parameter) has a smaller f: the result is a local minimum along the curve, not a
+// saddle or a maximum of it.
 bool is_local_minimum_on_curve(const po::Spec& spec, const po::Data& data, const Result& result, double value)
 {
-    constexpr int kPoints = 20001;
-    constexpr int kWindow = 20;
     po::testing::ScanCurve curve = po::testing::scan_curve_of(spec, data).value();
-    double step = (curve.last - curve.first) / (kPoints - 1);
+    int points = static_cast<int>(curve.points);
+    int window = 20 * (points - 1) / static_cast<int>(po::testing::kScanPoints - 1);
+    double step = (curve.last - curve.first) / (points - 1);
     int nearest = 0;
     double nearest_distance = std::numeric_limits<double>::infinity();
-    for (int k = 0; k < kPoints; ++k)
+    for (int k = 0; k < points; ++k)
     {
         double distance = largest_distance(curve.point(curve.first + step * k), result.weights);
         nearest = distance < nearest_distance ? k : nearest;
         nearest_distance = std::fmin(distance, nearest_distance);
     }
-    for (int k = std::max(0, nearest - kWindow); k <= std::min(kPoints - 1, nearest + kWindow); ++k)
+    for (int k = std::max(0, nearest - window); k <= std::min(points - 1, nearest + window); ++k)
     {
         po::testing::ScanResult sample =
             po::testing::scan_point(spec, data, spec.risk_budget, curve, curve.first + step * k);
@@ -146,7 +126,7 @@ void compare_with_scan(const Shape& shape, ScanTally& tally)
     }
     ++tally.compared;
     double value = po::testing::risk_parity_value(generated.data, spec.risk_budget, result.weights);
-    if (value <= scan_value_at_target(spec, generated.data, result, scan) * (1.0 + 1e-9))
+    if (value <= po::testing::scan_value_at_target(spec, generated.data, result, scan) * (1.0 + 1e-9))
     {
         return;
     }
@@ -199,7 +179,7 @@ std::vector<double> extreme_budget(std::size_t n)
     std::vector<double> budget(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        budget[i] = std::pow(10.0, -6.0 + 6.0 * static_cast<double>(i) / static_cast<double>(n - 1));
+        budget[i] = po::testing::exp10(-6.0 + 6.0 * static_cast<double>(i) / static_cast<double>(n - 1));
     }
     double total = std::accumulate(budget.begin(), budget.end(), 0.0);
     for (double& entry : budget)
@@ -331,13 +311,14 @@ struct MultiplierCeiling
 
 // The multipliers of the target-volatility path against those of the KKT point refined in long double from
 // the result, by cond(Sigma): no box, equal budget, n = 5, 8, 12 and 20. The polish keeps the Newton
-// correction of the multipliers at the weights it returns. Measured largest: 2.0e-14 at 1e4, 5.2e-11 at 1e6,
-// 5.3e-10 at 1e8, all at n = 5 (4.8e-10, 3.3e-7 and 3.7e-2 with the least-squares multipliers the polish
-// returned before). At 1e8 the scaled KKT matrix of n = 12 (seed 404) and n = 20 (seeds 403 to 405) fails
-// the rank test of the QR; with that test as a veto they kept least-squares multipliers wrong by up to
-// 4.1e-2, corrected they are within 2.9e-11.
+// correction of the multipliers at the weights it returns. Measured largest: 8.1e-13 at 1e4 (n = 8, seed 405),
+// 2.4e-12 at 1e6 and 9.3e-11 at 1e8 (both n = 8, seed 404). On the instances before the portable generators they
+// were 2.0e-14, 5.2e-11 and 5.3e-10, all at n = 5 (4.8e-10, 3.3e-7 and 3.7e-2 with the least-squares multipliers
+// the polish returned before); there, at 1e8, the scaled KKT matrix of n = 12 (seed 404) and n = 20 (seeds 403
+// to 405) failed the rank test of the QR, and with that test as a veto they kept least-squares multipliers wrong
+// by up to 4.1e-2, corrected within 2.9e-11.
 constexpr MultiplierCeiling kMultiplierCeilings[] = {
-    {1e4, 2e-13, 0.0}, {1e6, 5.2e-10, 0.0}, {1e8, 5.3e-9, 0.0}};
+    {1e4, 8.2e-12, 0.0}, {1e6, 2.4e-11, 0.0}, {1e8, 9.4e-10, 0.0}};
 
 TEST(RiskParityFuzz, TargetVolatilityMultipliersByCondition)
 {

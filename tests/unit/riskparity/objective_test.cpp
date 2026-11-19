@@ -297,12 +297,14 @@ void expect_error_matches_fma(double a, double b)
         << std::hexfloat << a << " * " << b << ": " << error << " against " << reference;
 }
 
-// sign (1 + u) 2^e for u uniform in [0, 1) and e uniform in [low, high]; below 2^-1022 a subnormal.
+// sign (1 + u) 2^e for u uniform in (0, 1) and e uniform in [low, high]; below 2^-1022 a subnormal. The sign, u
+// and e are drawn in that order.
 double random_double(std::mt19937_64& engine, int low, int high)
 {
-    std::uniform_int_distribution<int> exponent(low, high);
     double sign = (engine() & 1U) == 0U ? 1.0 : -1.0;
-    return sign * std::ldexp(1.0 + po::testing::uniform_open(engine), exponent(engine));
+    double mantissa = 1.0 + po::testing::uniform_open(engine);
+    auto exponent = static_cast<int>(po::testing::uniform_integer(engine, low, high));
+    return sign * std::ldexp(mantissa, exponent);
 }
 
 // Each side of the range of Dekker's product: its ends 2^-485 and 2^500, the doubles next to them, products
@@ -348,11 +350,18 @@ TEST(CompensatedDot, DekkerMatchesFmaOnEdgeCases)
         }
     }
     std::mt19937_64 engine(2026);
+    // Each pair is drawn in order, a then b, since the order of evaluation of a call's arguments is unspecified.
     for (int k = 0; k < 2000; ++k)
     {
-        expect_error_matches_fma(random_double(engine, -490, -480), random_double(engine, -490, -480));
-        expect_error_matches_fma(random_double(engine, 495, 505), random_double(engine, -10, 10));
-        expect_error_matches_fma(random_double(engine, -1074, 1023), random_double(engine, -1074, 1023));
+        double a = random_double(engine, -490, -480);
+        double b = random_double(engine, -490, -480);
+        expect_error_matches_fma(a, b);
+        a = random_double(engine, 495, 505);
+        b = random_double(engine, -10, 10);
+        expect_error_matches_fma(a, b);
+        a = random_double(engine, -1074, 1023);
+        b = random_double(engine, -1074, 1023);
+        expect_error_matches_fma(a, b);
     }
 }
 

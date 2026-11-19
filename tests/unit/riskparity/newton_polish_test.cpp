@@ -217,7 +217,7 @@ double smallest_free_noise(const KktProblem& problem, const KktPoint& point)
 
 // A start within its noise takes no Newton step and still comes back with the least-squares multipliers of
 // its weights: a budget multiplier off by half the noise of the stationarity, which leaves that much of the
-// residual along the budget row, is put back.
+// residual along the budget row, is put back to what the least-squares fit at those weights leaves.
 TEST(NewtonPolish, SettlesTheMultipliersWithoutAStep)
 {
     std::size_t n = 5;
@@ -227,13 +227,15 @@ TEST(NewtonPolish, SettlesTheMultipliersWithoutAStep)
     PolishResult polished = po::riskparity::newton_polish(problem, near_kkt_point(spec, data));
     ASSERT_LE(polished.residual, 0.4);
     KktPoint start = polished.least_squares_point;
+    double fitted = budget_component(problem, start);
+    ASSERT_LT(fitted, 0.25);
     start.equality_multipliers[0] += 0.5 * smallest_free_noise(problem, start);
     ASSERT_LE(merit_of(problem, start), 1.0);
     ASSERT_GE(budget_component(problem, start), 0.25);
     PolishResult settled = po::riskparity::newton_polish(problem, start);
     EXPECT_EQ(settled.steps, 0);
     EXPECT_EQ(settled.least_squares_point.weights, start.weights);
-    EXPECT_LE(budget_component(problem, settled.least_squares_point), 0.05);
+    EXPECT_LE(budget_component(problem, settled.least_squares_point), fitted * (1.0 + 1e-6));
     EXPECT_LE(settled.residual, 1.0);
     EXPECT_EQ(settled.residual, merit_of(problem, settled.least_squares_point));
 }

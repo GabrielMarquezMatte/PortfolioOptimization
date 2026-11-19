@@ -175,12 +175,12 @@ TEST(Leverage, CashExcluded)
     }
 }
 
-// Seeds where L = 1.3 binds for both objectives.
+// The first four seeds where L = 1.3 binds for both objectives.
 TEST(Leverage, MultiplierIsDerivativeOfOptimum)
 {
     constexpr double kLeverage = 1.3;
     constexpr double kStep = 1e-4 * kLeverage;
-    for (std::uint64_t seed : {4, 6, 7, 9})
+    for (std::uint64_t seed : {4, 11, 13, 14})
     {
         SCOPED_TRACE(seed);
         Data data = random_data(8, seed);

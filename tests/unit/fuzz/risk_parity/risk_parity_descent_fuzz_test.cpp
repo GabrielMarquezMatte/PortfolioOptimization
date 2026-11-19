@@ -32,7 +32,7 @@ using Shape = po::testing::RiskParityShape;
 constexpr int kMaxIterations = 2000;
 // Converged runs of ConvergedRunsAreKkt out of 640, as measured; the descent is deterministic, so fewer is a
 // regression.
-constexpr int kConvergedFloor = 625;
+constexpr int kConvergedFloor = 623;
 constexpr double kToleranceFraction = 0.1;
 
 double band_of(double condition)

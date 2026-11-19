@@ -10,7 +10,6 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
-#include <numbers>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -239,12 +238,17 @@ struct ScanResult
 
 using Triple = std::array<double, 3>;
 
-// A one-parameter family of points of the feasible set of n = 3, over the parameter interval [first, last].
+// The points of a scan over [first, last], ends included.
+constexpr std::size_t kScanPoints = 20001;
+
+// A one-parameter family of points of the feasible set of n = 3, over the parameter interval [first, last], scanned
+// at `points` evenly spaced values of the parameter.
 struct ScanCurve
 {
     std::function<std::vector<double>(double)> point;
     double first;
     double last;
+    std::size_t points = kScanPoints;
 };
 
 inline Triple cross_product(const Triple& a, const Triple& b)
@@ -340,7 +344,7 @@ inline ScanCurve return_line_curve(const po::Spec& spec, const po::Data& data)
 }
 
 // {1'w = 1, w'Sigma w = s^2}: the minimum-variance point plus B y, B an orthonormal basis of 1'u = 0 and y such that
-// u'Sigma u = radius^2 (Cholesky of B'Sigma B), by the angle of z = radius (cos, sin), L'y = z.
+// u'Sigma u = radius^2 (Cholesky of B'Sigma B), by a point z = radius c of the circle of radius radius, L'y = z.
 struct EllipseFrame
 {
     Triple center;
@@ -364,10 +368,28 @@ inline EllipseFrame ellipse_frame(const po::Data& data, const Triple& center, do
     return EllipseFrame{center, first_axis, second_axis, l11, l21, std::sqrt(m22 - l21 * l21), radius};
 }
 
-inline std::vector<double> ellipse_point(const EllipseFrame& frame, double angle)
+// The unit circle by x in [-1, 3], rational so that it has the same bits on every platform (no sin or cos):
+// c = ((1 - t^2) / (1 + t^2), 2 t / (1 + t^2)) at t = x for x <= 1, the half with c_1 >= 0 at the angle 2 atan(t),
+// and -c at t = x - 2 for x > 1, the other half. Both pieces meet at x = 1 and the circle closes at x = 3; beyond
+// [-1, 3] the point stays on the circle. The angle moves between 1 and 2 radians per unit of x.
+inline std::array<double, 2> unit_circle_point(double x)
 {
-    double second = frame.radius * std::sin(angle) / frame.l22;
-    double first = (frame.radius * std::cos(angle) - frame.l21 * second) / frame.l11;
+    double t = x;
+    double sign = 1.0;
+    if (x > 1.0)
+    {
+        t = x - 2.0;
+        sign = -1.0;
+    }
+    double denominator = 1.0 + t * t;
+    return {sign * (1.0 - t * t) / denominator, sign * 2.0 * t / denominator};
+}
+
+inline std::vector<double> ellipse_point(const EllipseFrame& frame, double x)
+{
+    std::array<double, 2> circle = unit_circle_point(x);
+    double second = frame.radius * circle[1] / frame.l22;
+    double first = (frame.radius * circle[0] - frame.l21 * second) / frame.l11;
     std::vector<double> weights(3);
     for (std::size_t k = 0; k < 3; ++k)
     {
@@ -376,10 +398,11 @@ inline std::vector<double> ellipse_point(const EllipseFrame& frame, double angle
     return weights;
 }
 
+// Twice the points of the other scans: a step of 4 / 40000 in x is at most 2e-4 radians, below the 2 pi / 20000 of
+// a scan by angle with 20001 points.
 inline ScanCurve ellipse_curve(const EllipseFrame& frame)
 {
-    return ScanCurve{[frame](double angle) { return ellipse_point(frame, angle); }, 0.0,
-                     2.0 * std::numbers::pi};
+    return ScanCurve{[frame](double x) { return ellipse_point(frame, x); }, -1.0, 3.0, 2 * kScanPoints - 1};
 }
 
 // The curve of the feasible set; none when it is not a curve (neither or both of the two targets) or empty
@@ -458,16 +481,15 @@ inline double golden_section_minimum(const std::function<double(double)>& value,
 inline ScanResult scan_curve_minimum(const po::Spec& spec, const po::Data& data, std::span<const double> budget,
                                      const ScanCurve& curve)
 {
-    constexpr std::size_t kPoints = 20001;
     ScanResult best{std::numeric_limits<double>::infinity(), {}};
     if (curve.first > curve.last)
     {
         best.value = std::numeric_limits<double>::quiet_NaN();
         return best;
     }
-    double step = (curve.last - curve.first) / static_cast<double>(kPoints - 1);
+    double step = (curve.last - curve.first) / static_cast<double>(curve.points - 1);
     double best_x = curve.first;
-    for (std::size_t k = 0; k < kPoints; ++k)
+    for (std::size_t k = 0; k < curve.points; ++k)
     {
         double x = curve.first + step * static_cast<double>(k);
         ScanResult candidate = scan_point(spec, data, budget, curve, x);
@@ -493,9 +515,9 @@ inline ScanResult scan_curve_minimum(const po::Spec& spec, const po::Data& data,
 }
 
 // Global minimum by scan, n = 3 only. Feasible set a curve: budget + target_return (a line) or budget +
-// target_volatility (an ellipse around the minimum-variance point, by angle). 20001 points, then golden-section
-// on the best bracket; points outside the box are discarded. The value is NaN when no scanned point is feasible
-// or the feasible set is not a curve.
+// target_volatility (an ellipse around the minimum-variance point, by a point of a circle). The curve's points
+// (20001, 40001 on the ellipse), then golden-section on the best bracket; points outside the box are discarded. The
+// value is NaN when no scanned point is feasible or the feasible set is not a curve.
 inline ScanResult scan_reference(const po::Spec& spec, const po::Data& data, std::span<const double> budget)
 {
     std::optional<ScanCurve> curve = scan_curve_of(spec, data);
@@ -504,6 +526,42 @@ inline ScanResult scan_reference(const po::Spec& spec, const po::Data& data, std
         return ScanResult{std::numeric_limits<double>::quiet_NaN(), {}};
     }
     return scan_curve_minimum(spec, data, budget, *curve);
+}
+
+// The scan's value moved to the feasible set to first order: its point sits on the curve only to the rounding of
+// the curve (a gap of up to 2e-10 of s measured) and inside the box only to kScanBoxTolerance, and f changes by
+// lambda_k h_k off the curve and by beta_j h_j past an active bound, with the multipliers of the result. Without
+// this a scan point just inside the ellipse, or just past a bound the result sits on, beats an exact solution.
+inline double scan_value_at_target(const po::Spec& spec, const po::Data& data, const po::Result& result,
+                                   const ScanResult& scan)
+{
+    double total = scan.weights[0] + scan.weights[1] + scan.weights[2];
+    double value = scan.value - result.budget_multiplier * (total - 1.0);
+    if (spec.target_return.has_value())
+    {
+        double mean = compensated_dot_of<double>(3, data.mu(), scan.weights);
+        value -= result.target_return_multiplier * (mean - *spec.target_return);
+    }
+    if (spec.target_volatility.has_value())
+    {
+        double volatility = wide_volatility(data, scan.weights);
+        value -= result.volatility_multiplier * (volatility - *spec.target_volatility);
+    }
+    for (std::size_t j = 0; j < 3; ++j)
+    {
+        double beta = result.bound_multipliers[j];
+        double below = std::fmin(scan.weights[j] - lower_of(spec, j), 0.0);
+        double above = std::fmax(scan.weights[j] - upper_of(spec, j), 0.0);
+        if (beta > 0.0)
+        {
+            value -= beta * below;
+        }
+        if (beta < 0.0)
+        {
+            value -= beta * above;
+        }
+    }
+    return value;
 }
 
 struct RiskParityShape
@@ -549,7 +607,7 @@ inline std::vector<double> shape_budget(const RiskParityShape& shape)
     std::vector<double> exponents = random_vector(shape.n, shape.seed + 700, -6.0, 0.0);
     for (std::size_t i = 0; i < shape.n; ++i)
     {
-        budget[i] = std::pow(10.0, exponents[i]);
+        budget[i] = exp10(exponents[i]);
         total += budget[i];
     }
     for (double& entry : budget)

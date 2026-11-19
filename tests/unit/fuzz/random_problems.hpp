@@ -60,7 +60,7 @@ constexpr double kShapeRiskFreeAboveMeans = 0.2;
 // NearlyEqual: mu_i = m (1 + spread u_i), u_i uniform in [-1, 1], spread log-uniform in [1e-8, 1e-5].
 inline std::vector<double> nearly_equal_mu(double level, std::size_t n, std::uint64_t seed)
 {
-    double spread = std::pow(10.0, random_vector(1, seed, -8.0, -5.0)[0]);
+    double spread = exp10(random_vector(1, seed, -8.0, -5.0)[0]);
     std::vector<double> mu = random_vector(n, seed + 1, -1.0, 1.0);
     for (double& value : mu)
     {

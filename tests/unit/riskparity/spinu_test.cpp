@@ -55,7 +55,7 @@ std::vector<double> uneven_budget(std::size_t n, std::uint64_t seed)
     std::vector<double> budget(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        budget[i] = std::pow(10.0, exponents[i]);
+        budget[i] = po::testing::exp10(exponents[i]);
     }
     double total = std::accumulate(budget.begin(), budget.end(), 0.0);
     for (double& entry : budget)
