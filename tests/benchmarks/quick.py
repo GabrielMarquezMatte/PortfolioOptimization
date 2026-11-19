@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_EXE = Path("build/gcc-bench/portopt_benchmarks.exe")
+DEFAULT_EXE = Path("build/gcc-bench/portopt_benchmarks" + (".exe" if sys.platform == "win32" else ""))
 QUICK_FILTER = (
     "^BM_Solve/(min_variance/long_only|utility/box|max_return/long_only|max_sharpe/long_only"
     "|tracking_error/long_only|max_diversification/box|risk_parity/(budget|target_volatility|box))/(10|100)$"
