@@ -687,7 +687,11 @@ double largest_variance(std::span<const double> factor, std::size_t n)
 // The rows of the face of point over its free weights F as the columns of normals (F.size() x rhs.size(),
 // row-major): the equality rows, the active rows that are not bounds and, with the family active, its row a - s for
 // the sign s every active sign vector has on F, with rhs less their terms in the fixed weights. A weight off F is
-// fixed exactly: at 0 on D, at its bound under an active bound row (one entry -1 or 1).
+// fixed exactly: at 0 on D, at its bound under an active bound row (one entry -1 or 1). normals has full column
+// rank: a row that depends over F on the rows before it is left out. Rows independent over all n weights can
+// depend over F (the budget 1 and the generated row -s with s = 1 on F differ only on D); every row is active at
+// the point, so the rows kept imply the ones left out on the face. The multipliers stay those of every active
+// row over all n weights.
 struct FaceRows
 {
     std::vector<std::size_t> free;
@@ -757,6 +761,38 @@ std::vector<std::size_t> fix_bounds(const qp::Problem& problem, const PathPoint&
     return rows;
 }
 
+// rows (count x free, row-major, a row per column) have full column rank as a free x count matrix.
+bool full_column_rank(std::span<const double> rows, std::size_t count, std::size_t free)
+{
+    if (count > free)
+    {
+        return false;
+    }
+    return linalg::has_full_column_rank(linalg::householder_qr(transposed(rows, count, free), free, count));
+}
+
+// normals from rows (face.rhs.size() x |F|, row-major), each row kept when it is independent of the rows kept
+// before it; the rhs of a row left out goes with it.
+void keep_independent_rows(FaceRows& face, std::span<const double> rows)
+{
+    std::size_t p = face.free.size();
+    std::vector<double> kept;
+    std::vector<double> rhs;
+    for (std::size_t k = 0; k < face.rhs.size(); ++k)
+    {
+        std::span<const double> row = rows.subspan(k * p, p);
+        kept.insert(kept.end(), row.begin(), row.end());
+        if (!full_column_rank(kept, rhs.size() + 1, p))
+        {
+            kept.resize(kept.size() - p);
+            continue;
+        }
+        rhs.push_back(face.rhs[k]);
+    }
+    face.normals = transposed(kept, rhs.size(), p);
+    face.rhs = std::move(rhs);
+}
+
 FaceRows face_rows(const qp::Problem& problem, const PathPoint& point, std::span<const double> signs)
 {
     std::size_t n = problem.n;
@@ -786,7 +822,7 @@ FaceRows face_rows(const qp::Problem& problem, const PathPoint& point, std::span
     {
         append_row(face, difference(problem.gross_exposure->offset, signs), problem.gross_exposure->rhs, columns);
     }
-    face.normals = transposed(columns, face.rhs.size(), face.free.size());
+    keep_independent_rows(face, columns);
     return face;
 }
 
@@ -833,8 +869,8 @@ std::vector<double> columns_from(std::span<const double> a, std::size_t rows, st
     return result;
 }
 
-// The face reduced to its null space: nullopt when its rows are dependent over F (a face larger than the one with
-// its fixed weights), or when the reduced Hessian has a pivot below its noise.
+// The face reduced to its null space (its rows have full column rank, by face_rows): nullopt when the reduced
+// Hessian has a pivot below its noise.
 std::optional<ReducedFace> reduced_face(const Path& path, FaceRows rows)
 {
     const qp::Problem& problem = path.translation.problem;
@@ -843,11 +879,6 @@ std::optional<ReducedFace> reduced_face(const Path& path, FaceRows rows)
     std::size_t p = face->rows.free.size();
     std::size_t m = face->rows.rhs.size();
     face->normals = linalg::householder_qr(face->rows.normals, p, m);
-    if (!linalg::has_full_column_rank(face->normals))
-    {
-        face.reset();
-        return face;
-    }
     face->factor = factor_on_face(path.factor, problem.n, face->rows, face->normals);
     face->hessian = linalg::householder_qr(columns_from(face->factor, problem.n, p, m), problem.n, p - m);
     if (!linalg::has_full_column_rank(face->hessian))
@@ -916,7 +947,7 @@ FaceLine face_line(const Path& path, const ReducedFace& face, const PathPoint& p
 
 // The face in the range space of Sigma = L L', when every weight is free. In y = L'w the face solve minimizes
 // 0.5 |y|^2 - t (L^-1 v)'y over G'y = rhs for G = L^-1 N = Q R, so y = Q [R'^-1 rhs; (Q't L^-1 v)_2],
-// dy = Q [0; (Q'L^-1 v)_2] and w = L'^-1 y. nullopt when the rows are dependent.
+// dy = Q [0; (Q'L^-1 v)_2] and w = L'^-1 y. nullopt when L^-1 N has a pivot below its noise.
 std::optional<linalg::Qr> range_normals(const Path& path, const FaceRows& rows)
 {
     std::size_t n = rows.free.size();

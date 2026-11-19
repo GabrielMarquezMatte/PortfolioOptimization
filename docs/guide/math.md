@@ -174,6 +174,10 @@ Its optimum `w(t)` is piecewise affine in
    the lower end:
    - the weights off the face's free coordinates are fixed exactly: 0 where the active sign vectors disagree, and the
      bound of each active bound row;
+   - a remaining row that depends over the free coordinates on the rows before it (by the rank decision of the
+     Householder QR) is left out: it is active, so they imply it on the face. Rows independent over all weights can
+     depend there: with the leverage at 1 and no cash, the budget `1'w = 1` and the generated row with the sign 1 on a
+     positive support differ only on the zeros. The multipliers still come from every active row over all weights;
    - the tangent `dw = Z H_r^-1 Z'v` of the face, by the null space `Z` of the remaining active rows over the free
      coordinates (Householder QR) and the QR of `L'Z` for the reduced Hessian `H_r = Z'Sigma Z`, in the frame of the
      point's shift `v`, anchored at a solve of the face at `t_a` (`w_a`), never at the QP solution itself, whose
