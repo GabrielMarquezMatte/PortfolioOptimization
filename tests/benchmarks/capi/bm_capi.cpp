@@ -198,7 +198,7 @@ void register_sized(const std::string& name, void (*body)(benchmark::State&))
 
 void register_solve(const std::string& name, const Family& family)
 {
-    for (auto [suffix, body] : {std::pair{"c", run_solve_c}, std::pair{"cpp", run_solve_cpp}})
+    for (auto [suffix, body] : {std::pair{"c", &run_solve_c}, std::pair{"cpp", &run_solve_cpp}})
     {
         benchmark::internal::Benchmark* registered = benchmark::RegisterBenchmark(
             name + "_" + suffix, [family, body](benchmark::State& state) { body(state, family); });
