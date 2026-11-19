@@ -69,7 +69,8 @@ typedef struct po_result po_result;
      KELLY           f = w' Sigma w / (2 (1 + rate)) - mu~' w, UTILITY with delta = 1 / (1 + rate); needs
                      1 + rate > 0
      TRACKING_ERROR  f = |R~ w + rate * 1 - b|^2 with R~ = R - rate * 1 1', R the returns (T x n) and b the
-                     benchmark; without cash R~ = R and the rate term vanishes
+                     benchmark; without cash R~ = R and the rate term vanishes. R~ must have full column
+                     rank numerically (so T >= n), or po_solve returns PO_INVALID_ARGUMENT
      MAX_DIVERSIFICATION
                      f = -sigma' w / sqrt(w' Sigma w), the diversification ratio negated
      RISK_PARITY     f = sum_i (c_i - b_i)^2 over the risky weights, with c_i = w_i (Sigma w)_i / w' Sigma w
@@ -238,9 +239,11 @@ PO_API void po_data_free(po_data* d);
 /* Solves the spec on the data; both are copied, so the result does not depend on them afterwards. Every
    objective is solved, so PO_UNSUPPORTED does not occur for a valid objective. It checks, in this order, and
    returns PO_INVALID_ARGUMENT at the first failure: a setter outside the objective's row, data the objective
-   requires, per-asset bounds that do not match the weight count. The core
-   does not range-check the values: the setters are the trust boundary. Infeasibility is reported in the
-   result. Safe in parallel with the same read-only spec and data. */
+   requires, per-asset bounds that do not match the weight count. PO_OBJECTIVE_TRACKING_ERROR is then also
+   PO_INVALID_ARGUMENT when the returns minus the risk-free rate do not have full column rank numerically,
+   fewer periods than assets included. The core does not range-check the values: the setters are the trust
+   boundary. Infeasibility is reported in the result. Safe in parallel with the same read-only spec and
+   data. */
 PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
 
 /* Result, immutable. The weights, the bound multipliers, the multipliers of the named constraints and the
