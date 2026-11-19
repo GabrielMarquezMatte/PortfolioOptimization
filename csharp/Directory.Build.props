@@ -1,0 +1,35 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>All</AnalysisMode>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+    <WarningLevel>9999</WarningLevel>
+    <!-- As in ExcelReader: CA1062 (nullable annotations already say it), RS0026 (optional parameters on
+         overloads are accepted for ergonomics), CA1819 (records of copied arrays are the API), CA1515, MA0048.
+         IDE1006 is off only for Interop/Native (.editorconfig). CA1814: the covariance and the return series are
+         rectangular double[,], pinned and handed to the native library without a copy. -->
+    <NoWarn>$(NoWarn);CA1062;RS0026;CA1819;CA1515;MA0048;CA1814</NoWarn>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+  </PropertyGroup>
+  <!-- The style analyzers of ExcelReader's STYLEGUIDE, in every project; PrivateAssets keeps them out of the package's
+       dependencies. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="11.0.100">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Meziantou.Analyzer" Version="3.0.325">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+</Project>

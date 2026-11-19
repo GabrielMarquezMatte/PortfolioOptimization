@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PortOpt.Tests</RootNamespace>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <!-- As in ExcelReader's tests: CA1707 (test names use underscores), CA2007 (no synchronization context),
+         CA1515/CA1034/CA1812 (xUnit classes), MA0004. -->
+    <NoWarn>$(NoWarn);CA2007;CA1707;MA0004;CA1034;CA1812</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="PortOpt" />
+    <Using Include="PortOpt.Interop" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/PortOpt/PortOpt.csproj" />
+  </ItemGroup>
+</Project>

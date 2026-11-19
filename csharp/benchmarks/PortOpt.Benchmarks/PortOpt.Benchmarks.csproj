@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>PortOpt.Benchmarks</RootNamespace>
+    <!-- BenchmarkDotNet derives from the benchmark class, so it stays public and unsealed (CA1852 does not apply), and
+         its methods are instance methods by contract (CA1822). -->
+    <NoWarn>$(NoWarn);CA1822;CA1001</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/PortOpt/PortOpt.csproj" />
+  </ItemGroup>
+</Project>

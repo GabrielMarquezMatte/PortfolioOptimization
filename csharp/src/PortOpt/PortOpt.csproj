@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>PortOpt</RootNamespace>
+    <PackageId>PortOpt</PackageId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <PropertyGroup>
+    <Description>Portfolio optimization on a native C++23 engine: minimum variance, maximum return, maximum Sharpe,
+utility, Kelly, tracking error, maximum diversification and risk parity, with bounds, leverage and cash.</Description>
+    <Authors>Gabriel Matte</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/GabrielMarquezMatte/PortfolioOptimization</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/GabrielMarquezMatte/PortfolioOptimization</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>portfolio;optimization;markowitz;risk-parity;finance</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- No baseline before 1.0: 0.x breaks the ABI between minor versions (PackageValidationBaselineVersion). -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <!-- The native libraries: PortOptNativeAssets is a folder of portopt-native-<rid>.<ext> files (the release
+         artifacts); each RID below becomes runtimes/<rid>/native/libportopt.<ext>. -->
+    <PortOptNativeRids Condition="'$(PortOptNativeRids)' == ''">linux-x64;linux-arm64;linux-musl-x64;linux-musl-arm64;osx-arm64;osx-x64;win-x64</PortOptNativeRids>
+    <BeforePack>$(BeforePack);AddPortOptNatives</BeforePack>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <!-- A package never ships without its native libraries: a missing folder or file fails the pack. -->
+  <Target Name="AddPortOptNatives">
+    <Error Condition="'$(PortOptNativeAssets)' == ''"
+           Text="Set PortOptNativeAssets to the folder with the portopt-native-&lt;rid&gt;.&lt;ext&gt; libraries to pack PortOpt." />
+    <ItemGroup>
+      <_PortOptRid Include="$(PortOptNativeRids)" NativeExt="so" />
+      <_PortOptRid NativeExt="dll" Condition="$([System.String]::Copy('%(Identity)').StartsWith('win-'))" />
+      <_PortOptRid NativeExt="dylib" Condition="$([System.String]::Copy('%(Identity)').StartsWith('osx-'))" />
+      <_PortOptNative Include="$(PortOptNativeAssets)/portopt-native-%(_PortOptRid.Identity).%(_PortOptRid.NativeExt)"
+                      Rid="%(_PortOptRid.Identity)" NativeExt="%(_PortOptRid.NativeExt)" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_PortOptNative.Identity)')" Text="Missing native library %(_PortOptNative.Identity)" />
+    <ItemGroup>
+      <None Include="@(_PortOptNative)" Pack="true" PackagePath="runtimes/%(_PortOptNative.Rid)/native/libportopt.%(_PortOptNative.NativeExt)" />
+    </ItemGroup>
+  </Target>
+</Project>

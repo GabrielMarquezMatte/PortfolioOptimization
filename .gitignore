@@ -6,3 +6,6 @@ __pycache__/
 python/src/portopt/_lib/*
 dist/
 out/
+csharp/**/bin/
+csharp/**/obj/
+BenchmarkDotNet.Artifacts/

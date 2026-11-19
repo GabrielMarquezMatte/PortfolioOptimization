@@ -1,0 +1,54 @@
+# The C# style of ExcelReader's STYLEGUIDE.md, which the binding follows, plus the repository's own limits
+# (STYLEGUIDE.md: never `else`, at most 5 parameters, at most 8 modules per folder).
+
+[*.cs]
+indent_style = space
+indent_size = 4
+
+# Every method, constructor, operator and local function has a block body. Properties may forward in one line.
+csharp_style_expression_bodied_methods = false:warning
+csharp_style_expression_bodied_constructors = false:warning
+csharp_style_expression_bodied_operators = false:warning
+csharp_style_expression_bodied_local_functions = false:warning
+
+# Braces on every `if`, even a one-line body.
+csharp_prefer_braces = true:warning
+
+# The ternary rule (one line, single values on both sides) has no analyzer id; converting between `if` and
+# ternary would fight it.
+dotnet_diagnostic.IDE0045.severity = none
+dotnet_diagnostic.IDE0046.severity = none
+
+# Native handles are created by one method and handed to the object that frees them (a Fit takes its FitHandle,
+# a batch hands every fit handle to its Fit); CA2000 cannot follow ownership across that transfer.
+dotnet_diagnostic.CA2000.severity = none
+
+# Method length: the review target is 60 lines (repository STYLEGUIDE.md); the build backstop is ExcelReader's.
+dotnet_diagnostic.MA0051.severity = warning
+MA0051.maximum_lines_per_method = 90
+MA0051.maximum_statements_per_method = 50
+
+# Naming: private fields _camelCase, private consts PascalCase.
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+dotnet_naming_style.pascal_case.capitalization = pascal_case
+
+dotnet_naming_symbols.private_consts.applicable_kinds = field
+dotnet_naming_symbols.private_consts.applicable_accessibilities = private
+dotnet_naming_symbols.private_consts.required_modifiers = const
+
+dotnet_naming_rule.private_consts_pascal_case.symbols = private_consts
+dotnet_naming_rule.private_consts_pascal_case.style = pascal_case
+dotnet_naming_rule.private_consts_pascal_case.severity = warning
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_fields.required_modifiers =
+
+dotnet_naming_rule.private_fields_underscore_camel_case.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore_camel_case.style = underscore_camel_case
+dotnet_naming_rule.private_fields_underscore_camel_case.severity = warning
+
+# The native declarations keep their C names (po_result_weights), checked against include/portopt/portopt.abi.
+[src/PortOpt/Interop/Native/*.cs]
+dotnet_diagnostic.IDE1006.severity = none

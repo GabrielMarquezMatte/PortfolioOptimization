@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/PortOpt.Benchmarks/PortOpt.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/PortOpt/PortOpt.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PortOpt.Tests/PortOpt.Tests.csproj" />
+  </Folder>
+</Solution>

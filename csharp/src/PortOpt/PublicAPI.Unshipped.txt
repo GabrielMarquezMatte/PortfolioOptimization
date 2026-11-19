@@ -1,0 +1,111 @@
+#nullable enable
+PortOpt.AssetBounds
+PortOpt.AssetBounds.<Clone>$() -> PortOpt.AssetBounds!
+PortOpt.AssetBounds.AssetBounds(System.Collections.Generic.IReadOnlyList<double>! lower, System.Collections.Generic.IReadOnlyList<double>! upper) -> void
+PortOpt.AssetBounds.Equals(PortOpt.AssetBounds? other) -> bool
+PortOpt.AssetBounds.Lower.get -> System.Collections.Generic.IReadOnlyList<double>!
+PortOpt.AssetBounds.Upper.get -> System.Collections.Generic.IReadOnlyList<double>!
+PortOpt.Bounds
+PortOpt.Bounds.Bounds() -> void
+PortOpt.Bounds.Bounds(double Lower, double Upper) -> void
+PortOpt.Bounds.Deconstruct(out double Lower, out double Upper) -> void
+PortOpt.Bounds.Equals(PortOpt.Bounds other) -> bool
+PortOpt.Bounds.Lower.get -> double
+PortOpt.Bounds.Lower.init -> void
+PortOpt.Bounds.Upper.get -> double
+PortOpt.Bounds.Upper.init -> void
+PortOpt.MarketData
+PortOpt.MarketData.AssetCount.get -> int
+PortOpt.MarketData.Dispose() -> void
+PortOpt.MarketData.DiversificationRatio(System.ReadOnlySpan<double> weights) -> double
+PortOpt.MarketData.MarketData(double[]? mu = null, double[,]? covariance = null, double? riskFree = null, double[,]? returns = null, double[]? benchmark = null) -> void
+PortOpt.MarketData.PortfolioReturn(System.ReadOnlySpan<double> weights) -> double
+PortOpt.MarketData.RiskContributions(System.ReadOnlySpan<double> weights) -> double[]!
+PortOpt.MarketData.SharpeRatio(System.ReadOnlySpan<double> weights) -> double
+PortOpt.MarketData.TrackingError(System.ReadOnlySpan<double> weights) -> double
+PortOpt.MarketData.Utility(System.ReadOnlySpan<double> weights, double riskAversion) -> double
+PortOpt.MarketData.Volatility(System.ReadOnlySpan<double> weights) -> double
+PortOpt.MarketData.WeightCount.get -> int
+PortOpt.NativeAbi
+PortOpt.Objective
+PortOpt.Objective.Importance = 4 -> PortOpt.Objective
+PortOpt.Objective.Kelly = 5 -> PortOpt.Objective
+PortOpt.Objective.MaxDiversification = 7 -> PortOpt.Objective
+PortOpt.Objective.MaxReturn = 1 -> PortOpt.Objective
+PortOpt.Objective.MaxSharpe = 2 -> PortOpt.Objective
+PortOpt.Objective.MinVariance = 0 -> PortOpt.Objective
+PortOpt.Objective.RiskParity = 8 -> PortOpt.Objective
+PortOpt.Objective.TrackingError = 6 -> PortOpt.Objective
+PortOpt.Objective.Utility = 3 -> PortOpt.Objective
+PortOpt.Optimizer
+PortOpt.PortOptException
+PortOpt.PortOptException.PortOptException() -> void
+PortOpt.PortOptException.PortOptException(PortOpt.Status status, string! message) -> void
+PortOpt.PortOptException.PortOptException(string! message) -> void
+PortOpt.PortOptException.PortOptException(string! message, System.Exception! innerException) -> void
+PortOpt.PortOptException.Status.get -> PortOpt.Status
+PortOpt.Result
+PortOpt.Result.BoundMultipliers.get -> double[]!
+PortOpt.Result.BudgetMultiplier.get -> double
+PortOpt.Result.Iterations.get -> int
+PortOpt.Result.LeverageMultiplier.get -> double
+PortOpt.Result.Residual.get -> double
+PortOpt.Result.Status.get -> PortOpt.SolveStatus
+PortOpt.Result.TargetReturnMultiplier.get -> double
+PortOpt.Result.VolatilityMultiplier.get -> double
+PortOpt.Result.Weights.get -> double[]!
+PortOpt.SolveStatus
+PortOpt.SolveStatus.Infeasible = 1 -> PortOpt.SolveStatus
+PortOpt.SolveStatus.MaxIter = 3 -> PortOpt.SolveStatus
+PortOpt.SolveStatus.Optimal = 0 -> PortOpt.SolveStatus
+PortOpt.SolveStatus.Unbounded = 2 -> PortOpt.SolveStatus
+PortOpt.Spec
+PortOpt.Spec.<Clone>$() -> PortOpt.Spec!
+PortOpt.Spec.AssetBounds.get -> PortOpt.AssetBounds?
+PortOpt.Spec.AssetBounds.init -> void
+PortOpt.Spec.Bounds.get -> PortOpt.Bounds?
+PortOpt.Spec.Bounds.init -> void
+PortOpt.Spec.Equals(PortOpt.Spec? other) -> bool
+PortOpt.Spec.Importance.get -> double?
+PortOpt.Spec.Importance.init -> void
+PortOpt.Spec.Leverage.get -> double?
+PortOpt.Spec.Leverage.init -> void
+PortOpt.Spec.MaxVolatility.get -> double?
+PortOpt.Spec.MaxVolatility.init -> void
+PortOpt.Spec.Objective.get -> PortOpt.Objective
+PortOpt.Spec.Objective.init -> void
+PortOpt.Spec.RiskAversion.get -> double?
+PortOpt.Spec.RiskAversion.init -> void
+PortOpt.Spec.RiskBudget.get -> System.Collections.Generic.IReadOnlyList<double>?
+PortOpt.Spec.RiskBudget.init -> void
+PortOpt.Spec.Spec() -> void
+PortOpt.Spec.TargetReturn.get -> double?
+PortOpt.Spec.TargetReturn.init -> void
+PortOpt.Spec.TargetVolatility.get -> double?
+PortOpt.Spec.TargetVolatility.init -> void
+PortOpt.Spec.Validate() -> void
+PortOpt.Status
+PortOpt.Status.InternalError = 5 -> PortOpt.Status
+PortOpt.Status.InvalidArgument = 1 -> PortOpt.Status
+PortOpt.Status.InvalidHandle = 2 -> PortOpt.Status
+PortOpt.Status.Ok = 0 -> PortOpt.Status
+PortOpt.Status.OutOfMemory = 4 -> PortOpt.Status
+PortOpt.Status.Unsupported = 3 -> PortOpt.Status
+override PortOpt.AssetBounds.Equals(object? obj) -> bool
+override PortOpt.AssetBounds.GetHashCode() -> int
+override PortOpt.AssetBounds.ToString() -> string!
+override PortOpt.Bounds.GetHashCode() -> int
+override PortOpt.Spec.Equals(object? obj) -> bool
+override PortOpt.Spec.GetHashCode() -> int
+override PortOpt.Spec.ToString() -> string!
+static PortOpt.AssetBounds.operator !=(PortOpt.AssetBounds? left, PortOpt.AssetBounds? right) -> bool
+static PortOpt.AssetBounds.operator ==(PortOpt.AssetBounds? left, PortOpt.AssetBounds? right) -> bool
+static PortOpt.Bounds.operator !=(PortOpt.Bounds left, PortOpt.Bounds right) -> bool
+static PortOpt.Bounds.operator ==(PortOpt.Bounds left, PortOpt.Bounds right) -> bool
+static PortOpt.NativeAbi.LibraryVersion.get -> string!
+static PortOpt.NativeAbi.Version.get -> int
+static PortOpt.Optimizer.Solve(PortOpt.Spec! spec, PortOpt.MarketData! data) -> PortOpt.Result!
+static PortOpt.Spec.operator !=(PortOpt.Spec? left, PortOpt.Spec? right) -> bool
+static PortOpt.Spec.operator ==(PortOpt.Spec? left, PortOpt.Spec? right) -> bool
+~override PortOpt.Bounds.Equals(object obj) -> bool
+~override PortOpt.Bounds.ToString() -> string
