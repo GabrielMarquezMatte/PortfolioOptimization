@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "fuzz/known_shape_fixture.hpp"
 #include "fuzz/random_problems.hpp"
 #include "fuzz/sign_pattern_reference.hpp"
 #include "kkt.hpp"
@@ -563,6 +564,30 @@ TEST(GoldfarbIdnani, FamilyRowHeldAsEquality)
     problem.equality_rhs.push_back(-*shape.leverage);
     problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(n, 0.0), -*shape.leverage};
     po::testing::expect_kkt(problem, po::qp::solve(problem), 1e-9);
+}
+
+// A point of the MAX_RETURN path of the known shape under its Linux covariance (n = 24, cond(Sigma) = 1e8, nearly
+// equal means, cash, the leverage only): Q(t) at the t of the climb where 22 generated rows end active, after
+// generated rows have entered and left many times. It takes more iterations than a family counted as n rows allows.
+TEST(GoldfarbIdnani, GrossExposureFamilyWithManyExchanges)
+{
+    po::testing::GeneratedProblem fixture = po::testing::fixture_problem(po::testing::known_shape_linux());
+    const po::Data& data = fixture.data;
+    std::size_t n = data.asset_count();
+    constexpr double t = 0x1.0bf0eddf334c2p+43;
+    Problem problem;
+    problem.n = n;
+    problem.hessian.assign(data.covariance().begin(), data.covariance().end());
+    problem.hessian_factor.assign(data.covariance_factor().begin(), data.covariance_factor().end());
+    for (double value : po::testing::excess_mu(data))
+    {
+        problem.linear.push_back(-t * value);
+    }
+    problem.gross_exposure = po::qp::GrossExposure{std::vector<double>(n, 0.0), -*fixture.spec.leverage};
+    Solution solution = po::qp::solve(problem);
+    ASSERT_EQ(solution.status, Status::Optimal);
+    EXPECT_EQ(solution.gross_exposure_multipliers.size(), 22U);
+    po::testing::expect_kkt(problem, solution, 1e-9);
 }
 
 bool same_bits(const std::vector<double>& a, const std::vector<double>& b)

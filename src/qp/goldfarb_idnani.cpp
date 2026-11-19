@@ -222,8 +222,9 @@ State initial_state(const Problem& problem, std::span<const double> factor, Acti
     std::size_t constraint_count = problem.equality_rhs.size() + problem.inequality_rhs.size();
     if (problem.gross_exposure.has_value())
     {
-        // At most n generated rows are active at once: the family counts as n rows.
-        constraint_count += n;
+        // At most n generated rows are active at once, but a generated row can leave and be generated again: the
+        // family counts as 2n rows.
+        constraint_count += 2 * n;
     }
     state.iteration_limit = static_cast<int>(10 * (n + constraint_count) + 10);
     return state;
