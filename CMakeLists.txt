@@ -138,9 +138,14 @@ if(PO_INSTALL)
     install(EXPORT PortOptTargets NAMESPACE PortOpt:: DESTINATION "${PO_CONFIG_DIR}")
     configure_package_config_file(cmake/PortOptConfig.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfig.cmake"
         INSTALL_DESTINATION "${PO_CONFIG_DIR}")
-    # Until 1.0 the ABI may break between minor versions (PO_ABI_VERSION 0): only the same x.y is compatible.
+    # 0.x could break the ABI between minor versions, so only the same x.y is compatible; from 1.0 the contract only
+    # grows (docs/guide/versioning.md), so any 1.y satisfies a request for 1.x.
+    set(PO_PACKAGE_COMPATIBILITY SameMajorVersion)
+    if(PROJECT_VERSION_MAJOR EQUAL 0)
+        set(PO_PACKAGE_COMPATIBILITY SameMinorVersion)
+    endif()
     write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/PortOptConfigVersion.cmake"
-        VERSION "${PROJECT_VERSION}" COMPATIBILITY SameMinorVersion)
+        VERSION "${PROJECT_VERSION}" COMPATIBILITY ${PO_PACKAGE_COMPATIBILITY})
     install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfig.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/PortOptConfigVersion.cmake"
