@@ -90,12 +90,21 @@ class Data:
             _native.check(lib.po_data_set_risk_free(self.pointer, float(risk_free)))
         if series is not None:
             self._set_returns(*series)
-        self.asset_count: int = _native.read_scalar(ctypes.c_size_t, lib.po_data_asset_count, self.pointer)
-        self.weight_count: int = _native.read_scalar(ctypes.c_size_t, lib.po_data_weight_count, self.pointer)
+        self._asset_count: int = _native.read_scalar(ctypes.c_size_t, lib.po_data_asset_count, self.pointer)
+        self._weight_count: int = _native.read_scalar(ctypes.c_size_t, lib.po_data_weight_count, self.pointer)
 
     @property
     def pointer(self) -> int:
         return self._handle.pointer
+
+    @property
+    def asset_count(self) -> int:
+        return self._asset_count
+
+    @property
+    def weight_count(self) -> int:
+        """The asset count, plus one with a risk-free asset."""
+        return self._weight_count
 
     def _set_returns(self, returns: NDArray[np.float64], benchmark: NDArray[np.float64]) -> None:
         periods = returns.shape[0]

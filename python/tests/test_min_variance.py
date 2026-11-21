@@ -31,7 +31,7 @@ def test_long_only_weights_nonnegative_and_sum_to_one() -> None:
     assert result.weights.sum() == pytest.approx(1.0, abs=1e-12)
 
 
-def test_asset_bounds_vector_and_mixed_scalar() -> None:
+def test_weight_bounds_vector_and_mixed_scalar() -> None:
     data = po.Data(MU, COV)
     upper = np.array([0.5, 1.0, 1.0])
     vectors = min_variance(data, bounds=(np.zeros(3), upper))
@@ -62,6 +62,8 @@ def test_cash_weight_is_last() -> None:
     data = po.Data(MU, COV, risk_free=0.02)
     result = min_variance(data, bounds=(0.0, 1.0))
     assert data.weight_count == 4
+    with pytest.raises(AttributeError):
+        data.weight_count = 3  # type: ignore[misc]
     assert result.weights.size == 4
     assert result.weights[-1] == pytest.approx(1.0, abs=1e-9)
     assert np.isnan(result.budget_multiplier)
