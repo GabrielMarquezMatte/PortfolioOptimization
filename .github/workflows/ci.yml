@@ -137,6 +137,27 @@ jobs:
           PORTOPT_LIB: ${{ github.workspace }}/${{ matrix.library }}
         run: uv run --project python --python 3.14 mypy --config-file python/pyproject.toml python/src python/tests python/benchmarks
 
+  # From 1.0 the contract only grows: every line of the last stable release must still be in the header's contract.
+  # Before the first v1.x tag base-ref prints nothing and there is nothing to compare.
+  abi-base:
+    name: ABI contract against the last release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare with the last stable tag
+        run: |
+          base=$(python3 scripts/abi_contract.py base-ref)
+          if [ -z "$base" ]; then
+            echo "no stable v1.x tag yet"
+            exit 0
+          fi
+          git show "$base:include/portopt/portopt.abi" > "$RUNNER_TEMP/base.abi"
+          python3 scripts/abi_contract.py check --base "$RUNNER_TEMP/base.abi"
+
   clang-tidy:
     name: clang-tidy
     runs-on: ubuntu-24.04

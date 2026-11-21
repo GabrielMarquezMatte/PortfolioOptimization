@@ -9,9 +9,9 @@
                                                                  differ from the contract
 
 A line is `define NAME value`, `typedef ...` or `function RETURN name(PARAMETER TYPES)`. Comments, parameter names and
-the PO_API platform macro are not part of it, so renaming a parameter is not an ABI change. Until 1.0 a line may
-change (PO_ABI_VERSION is 0); from 1.0 the contract only grows: removing or changing a line is what `check --base`
-rejects.
+the PO_API platform macro are not part of it, so renaming a parameter is not an ABI change. Before 1.0 a line could
+change (PO_ABI_VERSION was 0); from 1.0 the contract only grows: removing or changing a line is what `check --base`
+rejects (the abi-base job of ci.yml).
 """
 
 import argparse
