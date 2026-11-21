@@ -14,7 +14,7 @@ TEST(Abi, VersionMatchesHeader)
 
 TEST(Abi, VersionStringIsProjectVersion)
 {
-    EXPECT_STREQ(po_version(), "0.1.0");
+    EXPECT_STREQ(po_version(), PO_PROJECT_VERSION);
 }
 
 // A fresh thread, because earlier tests in the same process may have left an error on this one.

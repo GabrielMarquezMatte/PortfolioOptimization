@@ -203,7 +203,7 @@ if(PO_BUILD_TESTS)
         tests/unit/solve/solve_test.cpp
         tests/unit/metrics/portfolio_test.cpp)
     target_include_directories(portopt_tests PRIVATE tests/unit)
-    target_compile_definitions(portopt_tests PRIVATE PO_BUILDING)
+    target_compile_definitions(portopt_tests PRIVATE PO_BUILDING PO_PROJECT_VERSION="${PROJECT_VERSION}")
     target_link_libraries(portopt_tests PRIVATE portopt_capi GTest::gtest_main)
     target_compile_options(portopt_tests PRIVATE ${PO_WARNING_FLAGS})
     # The test oracle (compensated_dot_of in tests/unit/fuzz/risk_parity) needs the same rounding as the core.
