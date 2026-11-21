@@ -10,7 +10,7 @@ internal static unsafe partial class NativeMethods
     // libportopt.dll, libportopt.so and libportopt.dylib.
     internal const string LibraryName = "libportopt";
 
-    internal const int AbiVersion = 0;
+    internal const int AbiVersion = 1;
 
     [LibraryImport(LibraryName)] internal static partial int po_abi_version();
     [LibraryImport(LibraryName)] internal static partial nint po_version();
@@ -20,7 +20,7 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(LibraryName)] internal static partial int po_spec_set_bounds(SpecHandle spec, double lower, double upper);
 
     [LibraryImport(LibraryName)]
-    internal static partial int po_spec_set_asset_bounds(SpecHandle spec, double* lower, double* upper, nuint count);
+    internal static partial int po_spec_set_weight_bounds(SpecHandle spec, double* lower, double* upper, nuint count);
 
     [LibraryImport(LibraryName)] internal static partial int po_spec_set_target_return(SpecHandle spec, double value);
     [LibraryImport(LibraryName)] internal static partial int po_spec_set_risk_aversion(SpecHandle spec, double value);

@@ -101,7 +101,7 @@ def test_cash_and_leverage_raise_value_error() -> None:
 def test_unreachable_volatility_is_max_iter_with_nan() -> None:
     data = po.Data(None, np.diag([0.04, 0.09]))
     result = run(data, bounds=(0.0, 1.0), target_volatility=0.5)
-    assert result.status == po.SolveStatus.MAX_ITER
+    assert result.status == po.SolveStatus.NOT_CONVERGED
     assert np.isnan(result.weights).all()
     assert np.isnan(result.bound_multipliers).all()
     assert np.isnan(result.residual)

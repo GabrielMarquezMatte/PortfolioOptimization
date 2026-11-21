@@ -62,3 +62,62 @@ The wrapper takes the Python names in `snake_case`, so one vocabulary serves bot
 ## Status
 
 Approved by the author on 2026-11-17 as proposed; every other item is kept. Done: C9, P3, P7, P8.
+
+# API review before the 1.0 freeze
+
+The four surfaces (C, Python, C++ and the .NET binding, unreleased), reviewed for what the 1.0 freeze makes
+permanent. From 1.0 the contract only grows (`abi_contract.py check --base`, the libabigail dump, .NET package
+validation against the last release), so a name or a shape that is wrong at 1.0 stays wrong. The question for each
+item is not "does it work" but "can it grow without a break, and is its name true".
+
+Already right, and kept: no public struct (configuration is setters on opaque handles, so a new option is a new
+function); `int32_t` enums with `#define` values; one status type and a thread-local message; independent handles; an
+immutable result; the enforcement above. Every future feature in sight fits additively: a tolerance, an iteration
+limit, a warm start or a new objective is a new setter or a new `PO_OBJECTIVE_*`; a new scalar constraint is a new
+`PO_CONSTRAINT_*` of `po_result_multiplier`; vector constraints (linear or group rows) would need a new accessor, which
+is a new function.
+
+## Growth rules (missing)
+
+| Id | Item | Finding | Decision | Breaks | Migration |
+|---|---|---|---|---|---|
+| G1 | When the freeze starts | ARCHITECTURE.md says "freezes at 1.0"; nothing says which release is 1.0. Until then `check --base` has no base and the .NET package has no validation baseline. | change | — | the release after this review is `1.0.0`, with `PO_ABI_VERSION 1` |
+| G2 | What a minor version may add | ExcelReader has `docs/guide/versioning.md`; here a user cannot tell what a 1.x may change. | add | no | a versioning guide: a minor version adds functions, setters, `#define` values and result fields (appended); it never removes, renames or changes a signature or a meaning; a new export does not change `PO_ABI_VERSION`; the bindings check the exact ABI version |
+| G3 | Enum values the library *returns* (`po_status`, `PO_SOLVE_*`) | `PO_OBJECTIVE_*` and `PO_CONSTRAINT_*` grow safely: a caller only meets a value it chose. A new `PO_SOLVE_*` value is different: an old caller receives it. Python's `SolveStatus(value)` raises `ValueError` on an unknown value, so an old wheel loaded on a newer library (through `PORTOPT_LIB`) would fail a solve that succeeded. | add (rule) | no | rule: a new `PO_SOLVE_*` value is returned only to a request that uses something new (a setter or an objective an older caller cannot have set); any other new status is an ABI version change. A new `po_status` code is safe: every binding maps an unknown one to its generic error |
+| G4 | Error messages | The header quotes messages ("`<setter> does not apply to <OBJECTIVE>`"), which reads as a promise. A message that is a contract cannot be improved. | change (doc) | no | one sentence in the header: messages are for people and may change in any version; the status is the contract |
+
+## C interface
+
+| Id | Item | Finding | Decision | Breaks | Migration |
+|---|---|---|---|---|---|
+| C16 | `po_spec_set_asset_bounds` (C6 kept it) | The same word names two counts: `po_data_asset_count` and `po_spec_set_risk_budget` count assets without cash, while `asset_bounds` takes one pair per *weight*, cash included. C6 judged the rename not worth it while the name could still change; at the freeze it becomes permanent. Python is not affected (it picks the function from the shape of `bounds`). | change | yes (C, C++, C#) | `po_spec_set_asset_bounds` → `po_spec_set_weight_bounds`; C++ `po::AssetBounds` → `po::WeightBounds`; C# `AssetBounds` → `WeightBounds` |
+| C17 | `PO_SOLVE_MAX_ITER` | The header gives it a wider meaning than the name: "did not end at a point it can vouch for", including an unreachable target volatility and a gross exposure above 4.5e3. The name suggests a remedy (more iterations) the API does not offer: there is no iteration-limit setter. | change | yes (names only; the value 3 stays) | `PO_SOLVE_MAX_ITER` → `PO_SOLVE_NOT_CONVERGED` (Python `SolveStatus.NOT_CONVERGED`, C++ `not_converged`, C# `NotConverged`) |
+
+## Python
+
+| Id | Item | Finding | Decision | Breaks | Migration |
+|---|---|---|---|---|---|
+| P10 | `Data.asset_count`, `Data.weight_count` | Plain instance attributes: `data.weight_count = 3` is accepted and then lies. `Spec` and `Result` are frozen. | change | no | read-only properties |
+
+## C++ wrapper
+
+| Id | Item | Finding | Decision | Breaks | Migration |
+|---|---|---|---|---|---|
+| X6 | `po::Spec`, `po::Result` (aggregates) | Grow by a new member, which breaks no designated initializer as long as it is appended and the existing order stays. | keep (rule in G2) | — | — |
+| X7 | `Data::create(assets, mu, cov)` plus `set_risk_free`, `set_returns` | Unlike Python and C#, inputs after the first two come through setters; that is also how a new input arrives without a break. | keep | — | — |
+
+## .NET binding (unreleased: every change here is free)
+
+| Id | Item | Finding | Decision | Breaks | Migration |
+|---|---|---|---|---|---|
+| N1 | `MarketData(double[]? mu = null, double[,]? covariance = null, double? riskFree = null, double[,]? returns = null, double[]? benchmark = null)` | Optional parameters are compiled into the caller. A sixth input changes the signature, so a consumer built against 1.0 fails with `MissingMethodException`; a second overload with optional parameters makes calls ambiguous. The constructor cannot grow. `Spec` already grows the right way (init properties). | change | no (unreleased) | `new MarketData(mu, cov, riskFree: r)` → `new MarketData(new MarketInputs { Mu = mu, Covariance = cov, RiskFree = r })`; `MarketInputs` is a record with init properties, and a new input is a new property |
+| N2 | `Result.Weights`, `Result.BoundMultipliers` as `double[]` | Mutable arrays on an immutable result, but each `Result` owns a fresh copy, and an array passes straight to the `ReadOnlySpan<double>` metrics (`data.Volatility(result.Weights)`); `IReadOnlyList` would lose that. | keep | — | — |
+| N3 | `Spec.Bounds` and `Spec.AssetBounds`, both settable | Both set is an `InvalidOperationException` at `Validate` or `Solve`. A closed hierarchy would make it unrepresentable at the cost of two more public types. | keep (renamed by C16) | — | — |
+| N4 | `MarketData` where Python and C++ say `Data` | `Data` is too generic next to `System.Data` in .NET. | keep | — | — |
+
+## Status
+
+Approved by the author on 2026-11-21: the next release is 1.0.0 (G1), C16 and C17 renamed, N1 as proposed; every
+other item as proposed. Done: G1 (`PO_ABI_VERSION` 1), G2 ([versioning.md](versioning.md)), G3, G4, C16, C17, P10, N1.
+The review also found that `check --base` ran nowhere; the `abi-base` job of `ci.yml` runs it from the first v1.x
+tag.

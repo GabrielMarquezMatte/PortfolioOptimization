@@ -106,5 +106,5 @@ class Spec:
             raise ValueError("bounds must be scalars or 1-D arrays")
         low, high = as_doubles(low), as_doubles(high)
         _native.check(
-            lib.po_spec_set_asset_bounds(self.pointer, doubles_pointer(low), doubles_pointer(high), low.size)
+            lib.po_spec_set_weight_bounds(self.pointer, doubles_pointer(low), doubles_pointer(high), low.size)
         )

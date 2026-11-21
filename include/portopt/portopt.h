@@ -19,7 +19,7 @@ extern "C"
 {
 #endif
 
-#define PO_ABI_VERSION 0
+#define PO_ABI_VERSION 1
 
 PO_API int32_t po_abi_version(void);
 
@@ -35,7 +35,8 @@ typedef int32_t po_status;
 #define PO_INTERNAL_ERROR 5
 
 /* Message of the last failed call on the calling thread ("" after a success). The pointer stays valid
-   until the next PortOpt call on that thread. */
+   until the next PortOpt call on that thread. Messages are for people and may change in any version; the
+   status is the contract. */
 PO_API const char* po_last_error(void);
 
 /* Handles are opaque. A null handle is PO_INVALID_HANDLE; a null output pointer or a null required input
@@ -133,7 +134,7 @@ typedef struct po_result po_result;
    (multipliers measured up to 0.25 off, weights up to 1.5e-2). Such a solve is also slow: about 10 s at
    n = 50, cond(Sigma) = 1e8, no box and a target volatility, and at most about 0.15 s for n <= 20.
    The Spinu point is computed before the feasibility check, so a Spinu iteration that does not converge
-   reports PO_SOLVE_MAX_ITER even for an infeasible problem. */
+   reports PO_SOLVE_NOT_CONVERGED even for an infeasible problem. */
 #define PO_OBJECTIVE_MIN_VARIANCE 0
 #define PO_OBJECTIVE_MAX_RETURN 1
 #define PO_OBJECTIVE_MAX_SHARPE 2
@@ -147,17 +148,18 @@ typedef struct po_result po_result;
 /* Solve status of a result. An infeasible problem is a result with this status, not an error of po_solve.
    PO_SOLVE_INFEASIBLE is certified: incompatible linear constraints, a target return outside the achievable
    range or, for PO_OBJECTIVE_RISK_PARITY, a target volatility below the minimum volatility of the feasible
-   set. PO_SOLVE_MAX_ITER means the solver did not end at a point it can vouch for, and it carries no point
-   (see po_result below). For PO_OBJECTIVE_RISK_PARITY that includes a target volatility the iteration cannot
-   reach (for example above every volatility of a bounded set), a target return without a minimizer (no
+   set. PO_SOLVE_NOT_CONVERGED means the solver did not end at a point it can vouch for, and it carries no
+   point (see po_result below). For PO_OBJECTIVE_RISK_PARITY that includes a target volatility the iteration
+   cannot reach (for example above every volatility of a bounded set), a target return without a minimizer (no
    bounds), and a solution whose gross exposure sum_i |w_i| is above about 4.5e3, where the budget row 1'w = 1
    is no longer resolved in double (except at s = sigma_min, where the minimum-variance portfolio is returned
    without this check). A bounded problem with the budget row only (n = 20, cond(Sigma) = 1e8) can also end
-   here: a known limitation. */
+   here: a known limitation. Values only grow, and a new one is returned only to a request that uses something
+   added with it (a setter or an objective), so a caller never meets a status newer than its header. */
 #define PO_SOLVE_OPTIMAL 0
 #define PO_SOLVE_INFEASIBLE 1
 #define PO_SOLVE_UNBOUNDED 2 /* the supremum exists but is not attained; weights and multipliers are NaN */
-#define PO_SOLVE_MAX_ITER 3
+#define PO_SOLVE_NOT_CONVERGED 3
 
 /* Named constraints, for po_result_multiplier. */
 #define PO_CONSTRAINT_BUDGET 0
@@ -171,14 +173,14 @@ typedef struct po_result po_result;
 PO_API po_status po_spec_create(int32_t objective, po_spec** out);
 
 /* Bounds on every weight, cash included. lower may be -inf and upper +inf; NaN, lower > upper, lower = +inf
-   and upper = -inf are PO_INVALID_ARGUMENT and leave the spec unchanged. Clears any per-asset bounds: the
-   last call of po_spec_set_bounds or po_spec_set_asset_bounds is the one that applies. */
+   and upper = -inf are PO_INVALID_ARGUMENT and leave the spec unchanged. Clears any per-weight bounds: the
+   last call of po_spec_set_bounds or po_spec_set_weight_bounds is the one that applies. */
 PO_API po_status po_spec_set_bounds(po_spec* s, double lower, double upper);
 
 /* One bound per weight: n must be the weight count of the data given to po_solve (the asset count, plus one
    for cash, which comes last), checked by po_solve. Each pair follows the rules of po_spec_set_bounds, and
    nothing is changed unless every pair is valid. Replaces the scalar bounds; n = 0 is PO_INVALID_ARGUMENT. */
-PO_API po_status po_spec_set_asset_bounds(po_spec* s, const double* lower, const double* upper, size_t n);
+PO_API po_status po_spec_set_weight_bounds(po_spec* s, const double* lower, const double* upper, size_t n);
 
 /* Required portfolio return. r must be finite. */
 PO_API po_status po_spec_set_target_return(po_spec* s, double r);
@@ -239,7 +241,7 @@ PO_API void po_data_free(po_data* d);
 /* Solves the spec on the data; both are copied, so the result does not depend on them afterwards. Every
    objective is solved, so PO_UNSUPPORTED does not occur for a valid objective. It checks, in this order, and
    returns PO_INVALID_ARGUMENT at the first failure: a setter outside the objective's row, data the objective
-   requires, per-asset bounds that do not match the weight count. PO_OBJECTIVE_TRACKING_ERROR is then also
+   requires, per-weight bounds that do not match the weight count. PO_OBJECTIVE_TRACKING_ERROR is then also
    PO_INVALID_ARGUMENT when the returns minus the risk-free rate do not have full column rank numerically,
    fewer periods than assets included. The core does not range-check the values: the setters are the trust
    boundary. Infeasibility is reported in the result. Safe in parallel with the same read-only spec and
@@ -248,8 +250,8 @@ PO_API po_status po_solve(const po_spec* s, const po_data* d, po_result** out);
 
 /* Result, immutable. The weights, the bound multipliers, the multipliers of the named constraints and the
    residual are NaN when the status provides no point: always for PO_SOLVE_INFEASIBLE and PO_SOLVE_UNBOUNDED,
-   and for PO_SOLVE_MAX_ITER of every objective (the dual iterate of the QP solver is not primal feasible, and
-   the iterate of RISK_PARITY is not a point the solver can vouch for).
+   and for PO_SOLVE_NOT_CONVERGED of every objective (the dual iterate of the QP solver is not primal
+   feasible, and the iterate of RISK_PARITY is not a point the solver can vouch for).
 
    Multiplier convention. Let f be the objective in minimization form, as written for each objective above:
    for PO_OBJECTIVE_MIN_VARIANCE f(w) = w' Sigma w, without the factor 1/2, and a maximized objective enters

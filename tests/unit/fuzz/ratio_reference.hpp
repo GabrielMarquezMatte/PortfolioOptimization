@@ -84,8 +84,8 @@ inline po::Spec with_cash_fixed(po::Spec spec, const po::Data& data)
     }
     lower.push_back(0.0);
     upper.push_back(0.0);
-    spec.asset_lower = std::move(lower);
-    spec.asset_upper = std::move(upper);
+    spec.weight_lower = std::move(lower);
+    spec.weight_upper = std::move(upper);
     return spec;
 }
 
@@ -110,13 +110,13 @@ inline RatioFrontier risky_frontier(const po::Spec& spec, const po::Data& data, 
     RatioFrontier frontier{po::Spec{}, po::Data::create(n, v, data.covariance()).value()};
     frontier.spec.lower = spec.lower;
     frontier.spec.upper = spec.upper;
-    if (!spec.asset_lower.empty())
+    if (!spec.weight_lower.empty())
     {
-        frontier.spec.asset_lower.assign(spec.asset_lower.begin(), spec.asset_lower.begin() + n);
+        frontier.spec.weight_lower.assign(spec.weight_lower.begin(), spec.weight_lower.begin() + n);
     }
-    if (!spec.asset_upper.empty())
+    if (!spec.weight_upper.empty())
     {
-        frontier.spec.asset_upper.assign(spec.asset_upper.begin(), spec.asset_upper.begin() + n);
+        frontier.spec.weight_upper.assign(spec.weight_upper.begin(), spec.weight_upper.begin() + n);
     }
     frontier.spec.leverage = spec.leverage;
     return frontier;

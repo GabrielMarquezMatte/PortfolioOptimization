@@ -39,7 +39,7 @@ With cash, the budget disappears (the cash weight absorbs it) and the target ret
 and without a target return the minimum is all cash, `w = 0`.
 
 With a box, each weight (cash included) has bounds `lower_k <= w_k <= upper_k`, either one pair for all weights
-(`po_spec_set_bounds`) or one pair per weight (`po_spec_set_asset_bounds`, cash last); an infinite bound is no
+(`po_spec_set_bounds`) or one pair per weight (`po_spec_set_weight_bounds`, cash last); an infinite bound is no
 bound. Infeasibility, such as an upper bound of 0.2 on three assets that must sum to 1, is a result with status
 `PO_SOLVE_INFEASIBLE`, not an error.
 
@@ -162,7 +162,7 @@ Its optimum `w(t)` is piecewise affine in
 `t*` where the volatility reaches `s`:
 
 1. At `t = 0` it solves the minimum-variance point. `s` below `sigma_min` is `PO_SOLVE_INFEASIBLE`. Feasibility is
-   decided there, once: a `Q(t)` that fails at `t > 0` has broken down along the path and is `PO_SOLVE_MAX_ITER`,
+   decided there, once: a `Q(t)` that fails at `t > 0` has broken down along the path and is `PO_SOLVE_NOT_CONVERGED`,
    never `PO_SOLVE_INFEASIBLE`.
 2. It doubles `t`, from `t_1 = sigma_min^2 / |v|max` (with `sigma_min = 0`, all cash, from
    `min(s^2, max_i Sigma_ii) / |v|max`, so that a large cap does not start far past the last breakpoint; `|v|max` is
@@ -198,7 +198,7 @@ Its optimum `w(t)` is piecewise affine in
    that does not depend on the sign vectors chosen. The dual tolerance is `16 n eps (t* |v|max + |Sigma|max |w|max)`.
    A crossing that does not certify (the face ends before `vol = s`) leaves the bisection to go on. A bracket whose
    ends are adjacent doubles takes the certified crossing of the face of either end, the lower first; when neither
-   certifies the path has broken down (`PO_SOLVE_MAX_ITER`).
+   certifies the path has broken down (`PO_SOLVE_NOT_CONVERGED`).
 
 The reported point is the crossing: `vol(w*) = s` to the rounding of its evaluation, and `(w*, u)` solves `Q(t*)` to
 the tolerances of the certificate.
@@ -236,7 +236,7 @@ Special cases:
   box and `lambda_vol = 0`; the other multipliers are the slopes `b` (the budget's minus `c`).
 - **`s = sigma_min`** (to `1e-12` relative). Let `t_b = sup{t : w(t) = w(0)}`; `t` is halved from `t_1` until `w(t)` is
   constant with `w(0)`. If `t_b` is infinite (no decrease), `lambda_vol = 0` when the limit certificate holds there,
-  and `PO_SOLVE_MAX_ITER` when it does not. If `t_b` is finite (a vertex exit),
+  and `PO_SOLVE_NOT_CONVERGED` when it does not. If `t_b` is finite (a vertex exit),
   `lambda_vol = -s / t_b`. The efficient frontier is vertical at `sigma_min` (`t_b = 0`) only when the weights moved
   beyond their rounding at a larger `t` on the active set of `w(0)` and no exit comes before that `t`: then
   `lambda_vol = -inf` and the budget multiplier (when present), the bound multipliers and the leverage multiplier (when a
@@ -425,12 +425,12 @@ stopping factor inside the solver is 2). The noise is that of the compensated do
   other multiplier NaN. The gradients of the constraints are dependent, the LICQ fails, and in general no KKT multipliers
   exist (`df*/ds = -inf`); the same convention as `MAX_RETURN` on a vertical frontier. A target return that fixes `w` in
   two assets is another case: there the LICQ holds and the multipliers exist.
-- `PO_SOLVE_MAX_ITER` in every other case, and it carries **no point**: weights, multipliers and `po_result_residual` are
+- `PO_SOLVE_NOT_CONVERGED` in every other case, and it carries **no point**: weights, multipliers and `po_result_residual` are
   NaN (a rule that is now uniform for every objective). Its causes are a target volatility the iteration cannot reach (above
   the volatility of every vertex it reaches; the largest volatility of a polyhedron has no cheap certificate), a target
   return with no bounds (`f` is homogeneous of degree 0 and has no minimizer along the line the two equalities leave), a
   solution whose gross exposure makes the budget row unresolvable in double (`eps (sum_i |w_i| + 1) > 1e-12`, a gross
-  exposure above about 4500, which is `MAX_ITER` even when it is stationary), and a bounded budget-only problem the
+  exposure above about 4500, which is `NOT_CONVERGED` even when it is stationary), and a bounded budget-only problem the
   solver does not solve (Capped box, equal budget, `N = 20`, `cond(Sigma) = 1e8`, seed 31696: documented, not fixed).
 
 **Multipliers.** The stationarity condition is that of the [convention below](#multiplier-convention),
@@ -486,7 +486,7 @@ Any other combination is `PO_INVALID_ARGUMENT`:
 
 `leverage` is accepted by every objective except `RISK_PARITY` (`"leverage does not apply to RISK_PARITY"`), which also
 takes no cash (`"risk_free does not apply to RISK_PARITY"`). Every objective is solved, so `PO_UNSUPPORTED` no longer
-occurs for a valid objective. `po_solve` checks, in this order: every set setter applies to the objective, the data it requires is present, and per-asset bounds match the weight count. The
+occurs for a valid objective. `po_solve` checks, in this order: every set setter applies to the objective, the data it requires is present, and per-weight bounds match the weight count. The
 messages are `"<setter> does not apply to <OBJECTIVE>"`, `"<OBJECTIVE> requires <item>"` (the items are `mu`,
 `covariance`, `returns` and `max_volatility`), `"KELLY requires risk_free > -1"` and `"risk_budget has k entries;
 expected n"`. The setters are the trust
@@ -557,7 +557,7 @@ is
 - When the constraints are dependent (a target-return row parallel to the budget row, two equal bounds), the
   multipliers are not unique; one valid set is returned.
 - The weights and all multipliers are NaN when the status provides no point: always for `PO_SOLVE_INFEASIBLE` and
-  `PO_SOLVE_UNBOUNDED`, and for `PO_SOLVE_MAX_ITER` of every objective (the dual iterate of the QP solver is not primal
+  `PO_SOLVE_UNBOUNDED`, and for `PO_SOLVE_NOT_CONVERGED` of every objective (the dual iterate of the QP solver is not primal
   feasible, and the iterate of `RISK_PARITY` is not a point the solver can vouch for). `po_result_residual` is then NaN
   too; otherwise it is 0 for every objective but `PO_OBJECTIVE_RISK_PARITY`, where it is `sum_i (c_i - b_i)^2`.
 - For `RISK_PARITY` with `s = sigma_min` the volatility multiplier is `-inf` and the others NaN (see its section).

@@ -15,7 +15,7 @@ using po::capi::set_error;
 static_assert(PO_SOLVE_OPTIMAL == static_cast<int32_t>(po::SolveStatus::Optimal));
 static_assert(PO_SOLVE_INFEASIBLE == static_cast<int32_t>(po::SolveStatus::Infeasible));
 static_assert(PO_SOLVE_UNBOUNDED == static_cast<int32_t>(po::SolveStatus::Unbounded));
-static_assert(PO_SOLVE_MAX_ITER == static_cast<int32_t>(po::SolveStatus::MaxIterations));
+static_assert(PO_SOLVE_NOT_CONVERGED == static_cast<int32_t>(po::SolveStatus::NotConverged));
 
 namespace
 {

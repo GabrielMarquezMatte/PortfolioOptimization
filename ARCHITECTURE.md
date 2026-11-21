@@ -6,7 +6,7 @@ behind a decision (measurements, rejected approaches); that lives in `docs/`, an
 [STYLEGUIDE.md](STYLEGUIDE.md#comments) says why.
 
 This document describes what exists today: nine objectives (`MIN_VARIANCE`, `MAX_RETURN`, `MAX_SHARPE`, `UTILITY`,
-`IMPORTANCE`, `KELLY`, `TRACKING_ERROR`, `MAX_DIVERSIFICATION` and `RISK_PARITY`) with scalar or per-asset weight
+`IMPORTANCE`, `KELLY`, `TRACKING_ERROR`, `MAX_DIVERSIFICATION` and `RISK_PARITY`) with scalar or per-weight
 bounds, an optional gross exposure limit (the leverage) and an optional risk-free asset (cash; `RISK_PARITY` takes
 neither), eight of them reduced to a dense Goldfarb-Idnani quadratic program behind a C API (`MAX_RETURN` along a
 parametric family of them, `MAX_SHARPE` and `MAX_DIVERSIFICATION` through a homogeneous one), and `RISK_PARITY`, a
@@ -82,7 +82,7 @@ Build targets (`CMakeLists.txt`):
 | `src/capi/error.hpp`, `error.cpp` | Thread-local `po_last_error()`, `set_error`, and `guard`, the one place exceptions are caught |
 | `src/capi/spec_api.cpp`, `data_api.cpp`, `solve_api.cpp`, `result_api.cpp`, `metrics_api.cpp`, `version_api.cpp` | The `extern "C"` functions, one file per handle family |
 | `src/core/objective.hpp` | `po::Objective`, matching the `PO_OBJECTIVE_*` values |
-| `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-asset bounds, optional target return, risk aversion, importance, maximum volatility, leverage, target volatility and risk budget; a copyable value |
+| `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-weight bounds, optional target return, risk aversion, importance, maximum volatility, leverage, target volatility and risk budget; a copyable value |
 | `src/core/data.hpp`, `data.cpp` | `po::Data`: mu, covariance, its Cholesky factor, the optional risk-free rate and the optional return series with its benchmark; `Data::create` validates and symmetrizes the covariance and factors it once |
 | `src/core/result.hpp` | `po::Result` and `SolveStatus`: weights, status, multipliers, iterations; the multiplier convention is stated there |
 | `src/core/failure.hpp` | `Failure` (kind and message), the error type of `std::expected` below the C API |
@@ -99,8 +99,8 @@ Build targets (`CMakeLists.txt`):
 | `src/riskparity/kkt.*` | The KKT system of `RISK_PARITY` at a point (`evaluate_kkt`: the gradients of the equalities, the Hessian of the Lagrangian, the stationarity and the gaps), each residual with its noise (how far one rounding of every weight and of every term moves it), `residual_of` in units of that noise and `is_kkt_point`, the one decision of what counts as a KKT point |
 | `src/riskparity/newton_polish.*` | `newton_polish`: Newton on the KKT system with the exact Hessian of the Lagrangian over the free weights (Householder QR of the system), the multipliers estimated again by least squares at every step, a bound released when its multiplier has the wrong sign, and a step taken only when it decreases the KKT residual in noise units |
 | `src/riskparity/augmented_lagrangian.*` | `augmented_lagrangian`: the multiplier method of Andreani, Birgin, Martinez and Schuverdt (2007, Algorithm 3.1) for the row `vol(w) = s` alone, each subproblem a `descend` over the polyhedron; penalty and multiplier in the units of the relative gap `vol(w) / s - 1` |
-| `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, the policy: the Spinu point (the answer when it is inside the box and no target is set), the minimum-variance QP for feasibility and `sigma_min` (`INFEASIBLE`, or the case `s = sigma_min` with `lambda_vol = -inf`), then the descent or the augmented Lagrangian from the point of the polyhedron nearest to the Spinu point, the polish, and `is_kkt_point` deciding `OPTIMAL` against `MAX_ITER` |
-| `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-asset bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
+| `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, the policy: the Spinu point (the answer when it is inside the box and no target is set), the minimum-variance QP for feasibility and `sigma_min` (`INFEASIBLE`, or the case `s = sigma_min` with `lambda_vol = -inf`), then the descent or the augmented Lagrangian from the point of the polyhedron nearest to the Spinu point, the polish, and `is_kkt_point` deciding `OPTIMAL` against `NOT_CONVERGED` |
+| `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-weight bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
 | `src/problems/parametric_path.*` | The path `Q(t)` of `MAX_RETURN`: the shift of the means along a face (the budget, a cash bound or a row of the leverage) and its sign certificate, solving at `t`, the segment (active set) and constant-weight decisions with their rounding bounds, the multiplier slope by least squares, the limit certificate of an inactive cap, the vertex exit, the crossing on a segment |
@@ -111,7 +111,7 @@ Build targets (`CMakeLists.txt`):
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
 | `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds, `leverage`, `target_volatility` and `risk_budget` included; the bounds and the budget canonicalized to tuples so that equality and hash work); `Data` and its metrics (`risk_contributions` too); `SolveStatus`, `Result` and `solve` |
 | `csharp/src/PortOpt/Interop` | `NativeMethods` (one hand-written `LibraryImport` per contract function, C names), the `SafeHandle` of each handle, library discovery (`PORTOPT_LIB`) and the ABI check, status to `PortOptException` |
-| `csharp/src/PortOpt` | `Spec` and `Bounds`/`AssetBounds` (records, the native spec built at the solve), `MarketData` (owns the `po_data` handle; the metrics), `Optimizer.Solve`, `Result` (copied values), the enums |
+| `csharp/src/PortOpt` | `Spec` and `Bounds`/`WeightBounds` (records, the native spec built at the solve), `MarketData` (owns the `po_data` handle; the metrics), `Optimizer.Solve`, `Result` (copied values), the enums |
 | `csharp/tests/PortOpt.Tests` | The contract check (every `function` and `define` of `portopt.abi` against the declarations and the enums), the coverage check (every function called by the library), and the tests of the layer |
 | `csharp/tests/PortOpt.Consumer`, `csharp/scripts/check_package.sh` | A clean consumer restored from a built package, run without `PORTOPT_LIB` and published with Native AOT |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
@@ -126,6 +126,7 @@ Build targets (`CMakeLists.txt`):
 | `docs/performance/measuring.md` | How to measure: the `gcc-bench` and `msvc-profile` presets, the quick suite, A/B by medians against noise, the comparison of solutions, the uProf recipe and the guards an optimization must keep green |
 | `docs/performance/max-return-crossing.md`, `portable-math.md` | What the tangent crossing of `MAX_RETURN` and the portable `hypot` and `log` cost against what they replaced, with the machine and the method |
 | `docs/performance/benchmarks.md`, `baseline.md`, `profile-1.md`, `profile-2.md`, `python-vs-arch.md` | Results of the suite and the machine they come from; the plan 6 baseline (every case by objective, variant and size, and the kernels); where the time goes before plan 6 (uProf shares, calls per solve, assembly) and the hot-spot hypotheses it confirms or refutes |
+| `docs/guide/versioning.md` | What a minor version may add, the rules for returned enum values and error messages, the ABI version and how the freeze is enforced |
 | `docs/guide/validation.md` | Validation policy, tolerances, the numerical decisions of the solver and of each objective, and the fuzz battery |
 
 ## Stability rules of the C API
@@ -141,14 +142,16 @@ VolEngine).
 | An exception crossing the boundary | None does: `guard` (`src/capi/error.cpp`) turns `std::bad_alloc` into `PO_OUT_OF_MEMORY` and anything else into `PO_INTERNAL_ERROR`. |
 | Mutable global state | None. Handles are independent: freeing one never invalidates another. A `po_result` is immutable. |
 | A convention assumed silently | One multiplier convention, written in the header and in [docs/guide/math.md](docs/guide/math.md#multiplier-convention). |
-| ABI drift | Semantic versioning, with `PO_ABI_VERSION` in the header and `po_abi_version()` at run time; the contract freezes at 1.0 and 0.x releases may break it. |
+| ABI drift | Semantic versioning, with `PO_ABI_VERSION` in the header and `po_abi_version()` at run time. The contract is frozen from 1.0 (`PO_ABI_VERSION` 1): it only grows, by the rules of [docs/guide/versioning.md](docs/guide/versioning.md). |
+| An enum value returned to a caller that cannot know it | A new `PO_SOLVE_*` value is returned only to a request that uses something added with it; a new `po_status` code is the generic error of every binding. |
 
 Types on the boundary are `int32_t`, `size_t`, `double` and pointers. A null handle is `PO_INVALID_HANDLE`, a null
 output pointer or a null required input array `PO_INVALID_ARGUMENT` (the one exception: `mu` and `cov` of
 `po_data_create` may be `NULL`), and every `*_free` accepts `NULL`.
 
 `include/portopt/portopt.abi` is the contract written out, one normalized line per declaration of the header
-(`scripts/abi_contract.py`); `ctest` fails when the two differ, so an ABI change is a reviewed change to that file.
+(`scripts/abi_contract.py`); `ctest` fails when the two differ, so an ABI change is a reviewed change to that file,
+and the `abi-base` job of `ci.yml` fails when a line of the last stable tag is gone.
 The Windows export list of the MSVC import library comes from it, and the release checks that the DLL exports
 exactly its functions and that the Linux and macOS libraries export `po_*` and nothing else.
 
@@ -178,7 +181,7 @@ The Python `solve` builds the handles below and then makes one call; any C clien
 2. **Validation.** `po_solve` (`src/capi/solve_api.cpp`) sets `*out` to NULL, checks the handles inside `guard` and
    calls `po::solve` (`src/solve/solve.cpp`). Its `check_request` (`src/solve/requirements.cpp`) rejects, in
    this order, a setter outside the objective's row of the matrix, data the objective requires (`RISK_PARITY` rejects
-   cash too) and per-asset bounds whose size is not the weight count, cash included, or a risk budget whose size is not
+   cash too) and per-weight bounds whose size is not the weight count, cash included, or a risk budget whose size is not
    the asset count (`PO_INVALID_ARGUMENT`; a core `Unsupported` failure remains for an objective without a row, which no
    valid objective is). Each is an error status, not a result. `solve` then dispatches on the objective.
 3. **Translation to a QP.** `mean_variance_problem` (`src/problems/mean_variance.cpp`) takes the risky weights as
@@ -216,7 +219,7 @@ The Python `solve` builds the handles below and then makes one call; any C clien
    equality rows (NaN when the constraint does not exist); each bound multiplier is the lower-row multiplier minus the
    upper-row multiplier, 0 for a weight with no finite bound. A status other than `Optimal` (for a QP, `Infeasible`
    or `MaxIterations`, whose dual iterate is not primal feasible) gives NaN weights, NaN multipliers and a NaN
-   residual, never a partial point; the same rule holds for the `MaxIterations` of `RISK_PARITY`. The QP objective equals the user's minimization form up to a constant, so
+   residual, never a partial point; the same rule holds for the `NOT_CONVERGED` of `RISK_PARITY`. The QP objective equals the user's minimization form up to a constant, so
    the multipliers need no rescaling, with one exception: `MAX_RETURN` divides the multipliers of `Q(t*)` by `t*`
    (`multiplier_scale`) and sets the volatility multiplier to `-s / t*`; for an inactive cap the multipliers are
    the slope `b` of `N b = -mu~`, with scale 1. The leverage multiplier is `-sum_j zeta_j` over the multipliers of the

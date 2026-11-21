@@ -257,9 +257,9 @@ TEST(NewtonPolish, ReleasesABoundWhoseMultiplierHasTheWrongSign)
         ++k;
     }
     Spec shifted = spec;
-    shifted.asset_lower.assign(n, spec.lower);
-    shifted.asset_upper.assign(n, spec.upper);
-    shifted.asset_lower[k] = solution.least_squares_point.weights[k] - 1e-4;
+    shifted.weight_lower.assign(n, spec.lower);
+    shifted.weight_upper.assign(n, spec.upper);
+    shifted.weight_lower[k] = solution.least_squares_point.weights[k] - 1e-4;
     KktProblem shifted_problem{shifted, data, shifted.risk_budget};
     KktPoint start = solution.least_squares_point;
     start.bound_multipliers[k] = 1.0;
@@ -268,7 +268,7 @@ TEST(NewtonPolish, ReleasesABoundWhoseMultiplierHasTheWrongSign)
     EXPECT_TRUE(polished.improved);
     EXPECT_GE(polished.steps, 1);
     EXPECT_EQ(polished.least_squares_point.bound_multipliers[k], 0.0);
-    EXPECT_GT(polished.least_squares_point.weights[k], shifted.asset_lower[k]);
+    EXPECT_GT(polished.least_squares_point.weights[k], shifted.weight_lower[k]);
     EXPECT_LE(polished.residual, 1.0);
     for (std::size_t i = 0; i < n; ++i)
     {
@@ -504,10 +504,10 @@ TEST(Kkt, WeightsThatDoNotResolveTheBudgetAreNotAKktPoint)
         Spec spec;
         spec.objective = po::Objective::RiskParity;
         spec.risk_budget = {0.5, 0.5};
-        spec.asset_lower = {1.0 + size, -size};
-        spec.asset_upper = spec.asset_lower;
+        spec.weight_lower = {1.0 + size, -size};
+        spec.weight_upper = spec.weight_lower;
         KktProblem problem{spec, data, spec.risk_budget};
-        KktPoint point{spec.asset_lower, {0.0}, {0.0, 0.0}};
+        KktPoint point{spec.weight_lower, {0.0}, {0.0, 0.0}};
         point.bound_multipliers = evaluate_kkt(problem, point).linearization.gradient;
         double residual = largest(residual_of(problem, point, evaluate_kkt(problem, point)));
         EXPECT_LE(residual, 1.0);

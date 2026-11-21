@@ -372,9 +372,9 @@ TEST(Requirements, SetterCheckComesBeforeData)
 TEST(Requirements, DataCheckComesBeforeBoundSizes)
 {
     Spec spec = spec_of(Objective::Utility);
-    spec.asset_lower.assign(kAssets + 1, 0.0);
+    spec.weight_lower.assign(kAssets + 1, 0.0);
     expect_invalid(spec, without_mu(), "UTILITY requires mu");
-    expect_invalid(spec, full_data(), "asset_lower has 4 entries; expected 3");
+    expect_invalid(spec, full_data(), "weight_lower has 4 entries; expected 3");
 }
 
 TEST(Requirements, SolveReportsTheFailure)

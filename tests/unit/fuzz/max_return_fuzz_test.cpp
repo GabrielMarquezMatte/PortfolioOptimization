@@ -151,10 +151,10 @@ GeneratedProblem with_riskless_asset(const GeneratedProblem& problem, double var
         data.set_risk_free(*problem.data.risk_free());
     }
     Spec spec = problem.spec;
-    if (!spec.asset_lower.empty())
+    if (!spec.weight_lower.empty())
     {
-        spec.asset_lower.insert(spec.asset_lower.begin() + static_cast<std::ptrdiff_t>(n), 0.0);
-        spec.asset_upper.insert(spec.asset_upper.begin() + static_cast<std::ptrdiff_t>(n), 1.0);
+        spec.weight_lower.insert(spec.weight_lower.begin() + static_cast<std::ptrdiff_t>(n), 0.0);
+        spec.weight_upper.insert(spec.weight_upper.begin() + static_cast<std::ptrdiff_t>(n), 1.0);
     }
     return GeneratedProblem{spec, data};
 }
@@ -169,11 +169,11 @@ void expect_within_bounds(const Spec& spec, const Result& result, double toleran
     }
 }
 
-// OPTIMAL only when the reference agrees, inside the bounds and the cap; MAX_ITER otherwise.
+// OPTIMAL only when the reference agrees, inside the bounds and the cap; NOT_CONVERGED otherwise.
 void expect_correct_or_stopped(const GeneratedProblem& problem, double cap, double tolerance)
 {
     Result result = po::solve(max_return(problem.spec, cap), problem.data).value();
-    if (result.status == SolveStatus::MaxIterations)
+    if (result.status == SolveStatus::NotConverged)
     {
         return;
     }

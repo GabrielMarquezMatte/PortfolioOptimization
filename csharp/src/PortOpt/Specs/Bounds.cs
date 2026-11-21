@@ -9,10 +9,10 @@ namespace PortOpt;
 public readonly record struct Bounds(double Lower, double Upper);
 
 /// <summary>
-/// One pair of bounds per weight, cash last (<c>po_spec_set_asset_bounds</c>): as many pairs as the weight count of
+/// One pair of bounds per weight, cash last (<c>po_spec_set_weight_bounds</c>): as many pairs as the weight count of
 /// the data. The values are copied; equality compares them.
 /// </summary>
-public sealed record AssetBounds
+public sealed record WeightBounds
 {
     private readonly double[] _lower;
     private readonly double[] _upper;
@@ -21,7 +21,7 @@ public sealed record AssetBounds
     /// <param name="lower">The lower bound of each weight.</param>
     /// <param name="upper">The upper bound of each weight, as many as <paramref name="lower"/>.</param>
     /// <exception cref="ArgumentException">The two sides have different lengths.</exception>
-    public AssetBounds(IReadOnlyList<double> lower, IReadOnlyList<double> upper)
+    public WeightBounds(IReadOnlyList<double> lower, IReadOnlyList<double> upper)
     {
         if (lower.Count != upper.Count)
         {
@@ -38,7 +38,7 @@ public sealed record AssetBounds
     public IReadOnlyList<double> Upper => _upper;
 
     /// <inheritdoc/>
-    public bool Equals(AssetBounds? other)
+    public bool Equals(WeightBounds? other)
     {
         return other is not null && Values.Same(_lower, other._lower) && Values.Same(_upper, other._upper);
     }

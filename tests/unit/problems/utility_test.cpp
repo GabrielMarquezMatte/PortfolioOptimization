@@ -214,12 +214,12 @@ TEST(Utility, LargeRiskAversionApproachesMinVariance)
     expect_near_relative(result.weights, minimum.weights, 1e-6);
 }
 
-Spec with_asset_bounds(Spec spec, std::size_t count, double fixed)
+Spec with_weight_bounds(Spec spec, std::size_t count, double fixed)
 {
-    spec.asset_lower.assign(count, 0.0);
-    spec.asset_upper.assign(count, 1.0);
-    spec.asset_lower[0] = fixed;
-    spec.asset_upper[0] = fixed;
+    spec.weight_lower.assign(count, 0.0);
+    spec.weight_upper.assign(count, 1.0);
+    spec.weight_lower[0] = fixed;
+    spec.weight_upper[0] = fixed;
     return spec;
 }
 
@@ -234,7 +234,7 @@ TEST(Utility, FixedWeightAtSmallRiskAversion)
     {
         SCOPED_TRACE(seed);
         Data data = random_data(n, seed);
-        Result result = solve_checked(with_asset_bounds(utility(kSmallDelta), n, 0.2), data,
+        Result result = solve_checked(with_weight_bounds(utility(kSmallDelta), n, 0.2), data,
                                       Scales{kSmallDelta, 1.0});
         ASSERT_EQ(result.status, SolveStatus::Optimal);
         EXPECT_NEAR(result.weights[0], 0.2, 1e-12);
@@ -252,10 +252,10 @@ TEST(Utility, FixedCashAtSmallRiskAversion)
         Data data = random_data(n, seed);
         data.set_risk_free(kRiskFree);
         Spec spec = utility(kSmallDelta);
-        spec.asset_lower.assign(n + 1, 0.0);
-        spec.asset_upper.assign(n + 1, 1.0);
-        spec.asset_lower[n] = 0.15;
-        spec.asset_upper[n] = 0.15;
+        spec.weight_lower.assign(n + 1, 0.0);
+        spec.weight_upper.assign(n + 1, 1.0);
+        spec.weight_lower[n] = 0.15;
+        spec.weight_upper[n] = 0.15;
         Result result = solve_checked(spec, data, Scales{kSmallDelta, 1.0});
         ASSERT_EQ(result.status, SolveStatus::Optimal);
         EXPECT_NEAR(result.weights[n], 0.15, 1e-12);

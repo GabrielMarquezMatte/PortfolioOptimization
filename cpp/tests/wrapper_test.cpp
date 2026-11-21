@@ -110,7 +110,8 @@ TEST(Wrapper, SpanSizeMismatchIsInvalidArgument)
     EXPECT_EQ(series.error().message, "returns has 7 entries, expected 2 x 3 = 6");
 
     const po::Expected<po::Result> bounds = po::solve(
-        po::Spec{.objective = po::Objective::min_variance, .bounds = po::AssetBounds{{0.0, 0.0, 0.0}, {1.0, 1.0}}},
+        po::Spec{.objective = po::Objective::min_variance,
+                 .bounds = po::WeightBounds{{0.0, 0.0, 0.0}, {1.0, 1.0}}},
         data);
     ASSERT_FALSE(bounds.has_value());
     EXPECT_EQ(bounds.error().message, "the lower bounds have 3 entries and the upper bounds 2");

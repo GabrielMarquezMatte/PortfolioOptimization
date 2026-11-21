@@ -528,12 +528,12 @@ Spec partial_spec(std::size_t n)
 {
     constexpr double kInfinity = std::numeric_limits<double>::infinity();
     Spec spec = unbounded_spec(Objective::MaxSharpe);
-    spec.asset_lower.assign(n + 1, -kInfinity);
-    spec.asset_upper.assign(n + 1, kInfinity);
+    spec.weight_lower.assign(n + 1, -kInfinity);
+    spec.weight_upper.assign(n + 1, kInfinity);
     for (std::size_t i = n - kBoundedAssets; i < n; ++i)
     {
-        spec.asset_lower[i] = 0.0;
-        spec.asset_upper[i] = 1.0;
+        spec.weight_lower[i] = 0.0;
+        spec.weight_upper[i] = 1.0;
     }
     return spec;
 }

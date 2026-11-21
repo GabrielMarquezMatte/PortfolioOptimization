@@ -50,13 +50,13 @@ bool is_all_nan(const Result& result)
            std::ranges::all_of(result.bound_multipliers, is_nan);
 }
 
-// Without a point: MAX_ITER or INFEASIBLE, every number NaN. With one: KKT at the band of cond(Sigma).
+// Without a point: NOT_CONVERGED or INFEASIBLE, every number NaN. With one: KKT at the band of cond(Sigma).
 void expect_never_silently_wrong(const po::Spec& spec, const po::Data& data, const Result& result,
                                  double condition)
 {
     if (result.status != SolveStatus::Optimal)
     {
-        EXPECT_TRUE(result.status == SolveStatus::MaxIterations || result.status == SolveStatus::Infeasible);
+        EXPECT_TRUE(result.status == SolveStatus::NotConverged || result.status == SolveStatus::Infeasible);
         EXPECT_TRUE(is_all_nan(result));
         return;
     }
@@ -218,7 +218,7 @@ TEST(RiskParityFuzz, UnevenBudgetsAndConditioning)
 
 // The descents of the polyhedral-descent sweep that the polish did not turn into a KKT point on the instances before
 // plan 8, through po::solve: OPTIMAL and KKT at the band, or no point (docs/guide/validation.md). The shape of seed
-// 31696 was MAX_ITER at both scales then; on the present instances both are OPTIMAL.
+// 31696 was NOT_CONVERGED at both scales then; on the present instances both are OPTIMAL.
 TEST(RiskParityFuzz, UnrepairedDescentShapesThroughSolve)
 {
     for (double scale : {1.0, 1e-4})

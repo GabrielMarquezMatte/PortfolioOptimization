@@ -203,8 +203,8 @@ void count(const SolveRun& run, Tally& tally)
     tally.seconds += run.seconds;
     tally.longest = std::fmax(tally.longest, run.seconds);
     tally.infeasible += run.result.status == SolveStatus::Infeasible;
-    tally.max_iterations += run.result.status == SolveStatus::MaxIterations;
-    if (run.result.status == SolveStatus::MaxIterations)
+    tally.max_iterations += run.result.status == SolveStatus::NotConverged;
+    if (run.result.status == SolveStatus::NotConverged)
     {
         tally.max_iteration_seconds += run.seconds;
     }

@@ -1,4 +1,4 @@
-define PO_ABI_VERSION 0
+define PO_ABI_VERSION 1
 function int32_t po_abi_version(void)
 function const char* po_version(void)
 typedef int32_t po_status
@@ -24,14 +24,14 @@ define PO_OBJECTIVE_RISK_PARITY 8
 define PO_SOLVE_OPTIMAL 0
 define PO_SOLVE_INFEASIBLE 1
 define PO_SOLVE_UNBOUNDED 2
-define PO_SOLVE_MAX_ITER 3
+define PO_SOLVE_NOT_CONVERGED 3
 define PO_CONSTRAINT_BUDGET 0
 define PO_CONSTRAINT_TARGET_RETURN 1
 define PO_CONSTRAINT_VOLATILITY 2
 define PO_CONSTRAINT_LEVERAGE 3
 function po_status po_spec_create(int32_t, po_spec**)
 function po_status po_spec_set_bounds(po_spec*, double, double)
-function po_status po_spec_set_asset_bounds(po_spec*, const double*, const double*, size_t)
+function po_status po_spec_set_weight_bounds(po_spec*, const double*, const double*, size_t)
 function po_status po_spec_set_target_return(po_spec*, double)
 function po_status po_spec_set_risk_aversion(po_spec*, double)
 function po_status po_spec_set_importance(po_spec*, double)

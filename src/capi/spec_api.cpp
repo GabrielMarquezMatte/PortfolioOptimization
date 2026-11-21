@@ -112,13 +112,13 @@ extern "C" po_status po_spec_set_bounds(po_spec* s, double lower, double upper)
             }
             s->spec.lower = lower;
             s->spec.upper = upper;
-            s->spec.asset_lower.clear();
-            s->spec.asset_upper.clear();
+            s->spec.weight_lower.clear();
+            s->spec.weight_upper.clear();
             return PO_OK;
         });
 }
 
-extern "C" po_status po_spec_set_asset_bounds(po_spec* s, const double* lower, const double* upper, size_t n)
+extern "C" po_status po_spec_set_weight_bounds(po_spec* s, const double* lower, const double* upper, size_t n)
 {
     return guard(
         [&]
@@ -141,8 +141,8 @@ extern "C" po_status po_spec_set_asset_bounds(po_spec* s, const double* lower, c
             }
             std::vector<double> lower_copy(lower, lower + n);
             std::vector<double> upper_copy(upper, upper + n);
-            s->spec.asset_lower = std::move(lower_copy);
-            s->spec.asset_upper = std::move(upper_copy);
+            s->spec.weight_lower = std::move(lower_copy);
+            s->spec.weight_upper = std::move(upper_copy);
             s->spec.lower = -kInfinity;
             s->spec.upper = kInfinity;
             return PO_OK;

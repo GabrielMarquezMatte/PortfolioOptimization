@@ -37,7 +37,7 @@ std::size_t add_unit_inequality(qp::Problem& problem, std::size_t n, std::size_t
 
 // Room for the bound rows of n assets and the two of the cash weight, so that adding them does not reallocate the
 // rows (nothing reserved when no asset has a bound, so that such a problem does not allocate more than before).
-void reserve_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
+void reserve_weight_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
 {
     std::size_t count = 0;
     for (std::size_t i = 0; i < n; ++i)
@@ -75,9 +75,9 @@ void add_equalities(const Spec& spec, const Data& data, qp::Problem& problem, Co
     rows.target_return = add_equality(problem, excess, *spec.target_return - rate);
 }
 
-void add_asset_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
+void add_weight_bounds(const Spec& spec, std::size_t n, qp::Problem& problem, ConstraintRows& rows)
 {
-    reserve_asset_bounds(spec, n, problem, rows);
+    reserve_weight_bounds(spec, n, problem, rows);
     for (std::size_t i = 0; i < n; ++i)
     {
         double lower = lower_of(spec, i);
@@ -116,7 +116,7 @@ SolveStatus status_of(qp::Status status)
     case qp::Status::Infeasible:
         return SolveStatus::Infeasible;
     case qp::Status::MaxIterations:
-        return SolveStatus::MaxIterations;
+        return SolveStatus::NotConverged;
     }
     std::unreachable();
 }
@@ -207,27 +207,27 @@ Result at_point(const Data& data, const ConstraintRows& rows, const qp::Solution
 
 double lower_of(const Spec& spec, std::size_t weight)
 {
-    if (spec.asset_lower.empty())
+    if (spec.weight_lower.empty())
     {
         return spec.lower;
     }
-    return spec.asset_lower[weight];
+    return spec.weight_lower[weight];
 }
 
 double upper_of(const Spec& spec, std::size_t weight)
 {
-    if (spec.asset_upper.empty())
+    if (spec.weight_upper.empty())
     {
         return spec.upper;
     }
-    return spec.asset_upper[weight];
+    return spec.weight_upper[weight];
 }
 
 ConstraintRows add_constraint_rows(const Spec& spec, const Data& data, qp::Problem& problem)
 {
     ConstraintRows rows;
     add_equalities(spec, data, problem, rows);
-    add_asset_bounds(spec, data.asset_count(), problem, rows);
+    add_weight_bounds(spec, data.asset_count(), problem, rows);
     if (data.risk_free().has_value())
     {
         add_cash_bounds(spec, data.asset_count(), problem, rows);

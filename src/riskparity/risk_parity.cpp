@@ -207,7 +207,7 @@ Stage stage_of(const KktProblem& problem, std::span<const double> start, const E
 // Each stage takes the descent to its tolerance, from where the last one stopped, and polishes the point by
 // Newton on the KKT system. Only a KKT point to the noise of the problem is an answer, judged with the
 // least-squares multipliers of the polish; the answer carries its corrected multipliers. When no stage ends
-// at one, the answer is MaxIterations, without a point.
+// at one, the answer is NotConverged, without a point.
 Result stationary_point(const KktProblem& problem, std::vector<double> start, int iterations)
 {
     for (const Effort& effort : kStages)
@@ -227,7 +227,7 @@ Result stationary_point(const KktProblem& problem, std::vector<double> start, in
         }
         start = std::move(stage.point.weights);
     }
-    return no_point(start.size(), SolveStatus::MaxIterations, iterations);
+    return no_point(start.size(), SolveStatus::NotConverged, iterations);
 }
 
 // The general path, from a minimum-variance portfolio that exists: the certificates of the target
@@ -256,7 +256,7 @@ Result constrained(const KktProblem& problem, const Result& minimum, const Spinu
     qp::Solution start = nearest_in_polyhedron(problem.spec, problem.data, spinu_result.weights);
     if (start.status != qp::Status::Optimal)
     {
-        return no_point(n, SolveStatus::MaxIterations, iterations);
+        return no_point(n, SolveStatus::NotConverged, iterations);
     }
     return stationary_point(problem, std::move(start.x), iterations);
 }
@@ -278,7 +278,7 @@ std::expected<Result, Failure> solve_risk_parity(const Spec& spec, const Data& d
     SpinuResult spinu_result = spinu(data, budget);
     if (!spinu_result.converged)
     {
-        return no_point(data.asset_count(), SolveStatus::MaxIterations, spinu_result.iterations);
+        return no_point(data.asset_count(), SolveStatus::NotConverged, spinu_result.iterations);
     }
     bool has_target = spec.target_return.has_value() || spec.target_volatility.has_value();
     if (!has_target && inside_box(spec, spinu_result.weights))

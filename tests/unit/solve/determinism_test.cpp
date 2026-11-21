@@ -198,7 +198,7 @@ TEST(Determinism, UtilityHasTheCommittedBits)
     spec.objective = Objective::Utility;
     spec.risk_aversion = 4.0;
     spec.lower = 0.0;
-    spec.asset_upper = {0.25, 0.35, 0.3, 0.4, 1.0};
+    spec.weight_upper = {0.25, 0.35, 0.3, 0.4, 1.0};
     const Golden golden{
         .status = SolveStatus::Optimal,
         .iterations = 2,

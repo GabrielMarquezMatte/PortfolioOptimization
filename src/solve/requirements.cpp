@@ -161,8 +161,8 @@ std::optional<Failure> check_bound_size(const char* name, std::size_t size, std:
 std::optional<Failure> check_bound_sizes(const Spec& spec, const Data& data)
 {
     std::size_t expected = data.weight_count();
-    return check_bound_size("asset_lower", spec.asset_lower.size(), expected)
-        .or_else([&] { return check_bound_size("asset_upper", spec.asset_upper.size(), expected); })
+    return check_bound_size("weight_lower", spec.weight_lower.size(), expected)
+        .or_else([&] { return check_bound_size("weight_upper", spec.weight_upper.size(), expected); })
         .or_else([&] {
             return check_bound_size("risk_budget", spec.risk_budget.size(), data.asset_count());
         });

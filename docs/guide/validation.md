@@ -166,7 +166,7 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   large `t`.
   - Where the rows hold `1'w = 1` (no cash) the budget is the face of every point, with no certificate: every
     feasible `w` lies on it. The volatility of `Q(t)` jumped by 1 to 5% between adjacent doubles at `t` from 1e12
-    to 1e14 without it; on the fuzz battery it turned 7 of the 8 such cases from `MAX_ITER` into `OPTIMAL` within
+    to 1e14 without it; on the fuzz battery it turned 7 of the 8 such cases from `NOT_CONVERGED` into `OPTIMAL` within
     their band (earlier instances). `MaxReturn.BudgetMultiplierFollowsCommonMean` checks the mapping through `expect_user_kkt` and
     against means lifted by 1.
   - Without a budget (cash) the common mean falls on the inequality face that holds the portfolio once it binds: the
@@ -174,7 +174,7 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
     certified last, then the active face of largest multiplier in `Q(t)` itself, and keeps `Q(t)` unshifted when the
     certificate fails (next decision). Without the shift, in `MaxReturnFuzz.LeverageFuzz` the leverage binds at `t`
     near 1 and the spread of the means (1e-8 to 1e-5 relative) moves `w` along it until the cap at `t` from 1e4 to
-    beyond 1e15: on the earlier instances 41 cases of 15 shapes, all cash with nearly equal means, failed (25 `MAX_ITER`, 16 accepted at an
+    beyond 1e15: on the earlier instances 41 cases of 15 shapes, all cash with nearly equal means, failed (25 `NOT_CONVERGED`, 16 accepted at an
     adjacent end with `|vol - s| / s` from 3.4e-10 to 6e-6, above their band; at `t = 2.6e10` on one shape
     `vol(Q(t))` moved by 1.9e-5 between `t` 2e-9 apart). With it, one case remained (the known residual below),
     solved since by the tangent crossing.
@@ -232,7 +232,7 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   1e8, and a stationarity of 2.5e-10 for an inactive cap at 1e7.
 - **The crossing.** The rounding of the volatility of one QP solution `Q(t*)` was measured (earlier instances) at about
   `1e-15 cond(Sigma)` relative (up to 1e-8 at 1e7 and 1e-7 at 1e8), so a test `|vol(w(t*)) - s| <= 1e-12 s` on a QP
-  solution fails on ill-conditioned problems (4% of long-only problems at 1e4, 50% at 1e7, ending `MAX_ITER`). The
+  solution fails on ill-conditioned problems (4% of long-only problems at 1e4, 50% at 1e7, ending `NOT_CONVERGED`). The
   Goldfarb-Idnani solution of `Q(t)` starts from `t Sigma^-1 v`, and on the known residual below that is 6.9e8, whose
   `eps` is the 1.5e-7 of noise in `vol(Q(t))`; the error lies along the path (the solution of a `t` wrong by 1.8e-7),
   not off the face. The crossing therefore comes from the exact tangent of the face, anchored at a solve of the face
@@ -247,7 +247,7 @@ decisions, each pinned by a test in `tests/unit/problems/max_return_test.cpp` or
   direction wrong by 1e6 to 1e7 relative near the crossing, and an end is accepted only through a certified crossing.
   Identifying a segment by the sign vectors of the generated rows also went: on the known residual the solver
   alternates between two sets of sign vectors of the same face, so no bracket ever held one "active set".
-- **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `MAX_ITER`, never
+- **Breakdown.** Feasibility is decided at `t = 0`; a `Q(t)` that fails at `t > 0` is `NOT_CONVERGED`, never
   `INFEASIBLE`.
 
 ## Numerical decisions of the QP solver
@@ -704,7 +704,7 @@ weight is rounded once (`abs(dw_j) <= eps abs(w_j)`) and each of its terms is ro
   `eps (sum_i abs(w_i p_i) / vol + s)`;
 - a bound: `eps max(abs(bound), max abs(w))`.
 
-`is_kkt_point` is the one decision of `OPTIMAL` against `MAX_ITER`: the largest ratio is at most
+`is_kkt_point` is the one decision of `OPTIMAL` against `NOT_CONVERGED`: the largest ratio is at most
 `kKktNoiseFactor = 16`, and the budget row is resolved, `eps (sum_i abs(w_i) + 1) <= 1e-12` (the feasibility
 tolerance of the QP solver, `qp::kRelativeTolerance`). Measurements (Windows, GCC 16.2, MSYS2 UCRT64):
 
@@ -736,10 +736,10 @@ tolerance of the QP solver, `qp::kRelativeTolerance`). Measurements (Windows, GC
   falls inside the gap: 146 times above the largest accepted and `6.7e7` times below the smallest rejected. `1e-12`
   is also the tolerance to which the QP solver holds `1'w = 1`, so a point beyond it no longer resolves the row the
   polyhedron was built on. The rule is in the contract of `solve_risk_parity` (`src/riskparity/risk_parity.hpp`): a
-  legitimate portfolio with a gross exposure above about 4.5e3 is `MAX_ITER`. Without the rule 7 of those 28 are
+  legitimate portfolio with a gross exposure above about 4.5e3 is `NOT_CONVERGED`. Without the rule 7 of those 28 are
   `OPTIMAL`, with `sum_i abs(w_i)` between 3.0e11 and 3.7e13 (uneven budgets at `n` 10 and 20, an equal one at
-  `n = 5`); the other 21 are `MAX_ITER` either way. With it all 28 are `MAX_ITER`
-  (`RiskParity.TargetReturnWithoutMinimizerIsMaxIter`, `Kkt.WeightsThatDoNotResolveTheBudgetAreNotAKktPoint`).
+  `n = 5`); the other 21 are `NOT_CONVERGED` either way. With it all 28 are `NOT_CONVERGED`
+  (`RiskParity.TargetReturnWithoutMinimizerIsNotConverged`, `Kkt.WeightsThatDoNotResolveTheBudgetAreNotAKktPoint`).
 
 **The stationarity band is not reached with a target volatility and free weights.** The noise above is in the
 units of the residual, not of the gradient. Where the weights are held by bounds, or the point is the Spinu
@@ -843,7 +843,7 @@ On the seeds of this sweep the weights are right at the band, by a factor of at 
 (`n <= 20` stays under 6e-12 there); the 24 results of that class are the conditioning limit of the next paragraph.
 That is not true of the class in general.
 `RiskParitySolveSweep.OptimalRunsAreKkt` requires, on its grid of 576 shapes, that every `OPTIMAL` passes
-`expect_risk_parity_kkt`, that at least 540 of the 576 are `OPTIMAL` (the 36 others are `MAX_ITER` without a point: 8 at
+`expect_risk_parity_kkt`, that at least 540 of the 576 are `OPTIMAL` (the 36 others are `NOT_CONVERGED` without a point: 8 at
 `n = 3` with a target return and no box, 12 at `n = 3` long only with both targets and 16 at `n = 5` capped with both
 targets), and that every one above the band has a weight error at most the band and a value
 error at most `band (1 + f)` against a refined point within `1e-2` of the floor. The refinement needs a `long
@@ -861,7 +861,7 @@ is `2.8e-5`, below), while its objective value is right to its band. Measured ov
 | 20 | 199 / 200 | 7.2e-13 | 4.7e-12 | 6.8e-7 | 1.3e-5 | 3 | 2.2e-5 |
 | 50 | 30 / 30 | 2.0e-12 | 6.6e-10 | 2.9e-6 | 2.8e-5 | 2 | 7.8e-5 |
 
-(All 30 seeds at `n = 50` ran within the 240 s cap; seed 27 of `n = 20` is `MAX_ITER` with every number NaN.) The worst
+(All 30 seeds at `n = 50` ran within the 240 s cap; seed 27 of `n = 20` is `NOT_CONVERGED` with every number NaN.) The worst
 of the class at `n = 20` is seed 135: weight error `1.3e-5`, a refined point at `2.7e-5` of the floor and
 `abs(f(w) - f(w_ref)) = 2.2e-12`; at `n = 50` it is seed 18, with `2.8e-5` (a refined point at `6.0e-5` of the floor). On the earlier instances seed 31696
 (`n = 20`) was the one first seen, with a weight error of `2.3e-5` (`5.2e-5` with the augmented Lagrangian stopping
@@ -1087,7 +1087,7 @@ descent (the signs of `beta`) and iterates Newton on the KKT system over the fre
   weights (Householder QR of the gradients), and those of the held weights are what their rows leave. With the
   multipliers of the Newton system itself, a target volatility near the minimum was not solved (earlier instances): at
   `s = sigma_min (1 + 1e-9)` (`n = 5`, `cond(Sigma) = 1e4`), where `lambda_vol s = -2.5e5`, the polish refused
-  its first step from every point the augmented Lagrangian reached and the result was `MAX_ITER`; with the
+  its first step from every point the augmented Lagrangian reached and the result was `NOT_CONVERGED`; with the
   estimate it takes 4 to 8 steps to a residual of 0.3.
 - **The multipliers are corrected once more at the end** (`corrected_multipliers`): at the point the polish
   ends at, one more Newton solve at the same weights gives `dlambda`, added to the multipliers of the kept
@@ -1157,7 +1157,7 @@ stated above holds for `s` at least `1e-3` relative above `sigma_min`. Nearer, i
 corrected or not, because the gradients of the budget and of the volatility turn parallel (the LICQ nearly fails).
 Measured with `po::solve` against the KKT point refined in `long double` (no box, equal budget, `n` in {5, 8},
 seeds 7, 11 and 13, `s = sigma_min (1 + delta)` with `sigma_min` from `frontier_point`; largest over the `OPTIMAL`
-results, one run; of the 180 solves, 168 are `OPTIMAL`, 10 `MAX_ITER` (all at `delta <= 1e-7`)
+results, one run; of the 180 solves, 168 are `OPTIMAL`, 10 `NOT_CONVERGED` (all at `delta <= 1e-7`)
 and 2 `INFEASIBLE`, at `1e8` and `1e-10`, where the reference `sigma_min` is above the solver's, as before the
 corrections of plan 5):
 
@@ -1264,13 +1264,13 @@ seconds are indicative):
   there the gap stops halving, and ending the effort after `k` such outer iterations lets the second effort
   start afresh sooner. `k = 1` and `k = 3` give the same statuses and nearly the same cost; 3 is kept as the
   less aggressive of the two. The stall does not cap iterations: the most used by an `OPTIMAL` is still
-  46 064. The 110 `MAX_ITER` of the sweep were already cheap (0.15 s for all of them; `s` out of reach of a box,
+  46 064. The 110 `NOT_CONVERGED` of the sweep were already cheap (0.15 s for all of them; `s` out of reach of a box,
   where the penalty reaches its ceiling within a few outer iterations of small descents), so the stall changes
   their cost by nothing measurable (`AugmentedLagrangian.UnreachableTargetDoesNotConverge`: at most 15 outer
   iterations, against the 60 allowed, on its two-asset case).
 - **Not carried: the multiplier and the penalty between efforts** (earlier instances; not remeasured). Starting the
   second effort from the `(lambda, rho)` where the first stopped, instead of from `lambda = 0` and the first penalty,
-  turned 9 or 10 of the 72 `OPTIMAL` into `MAX_ITER` (all `n = 50`; carrying only `lambda` did the same; 63, 62 and
+  turned 9 or 10 of the 72 `OPTIMAL` into `NOT_CONVERGED` (all `n = 50`; carrying only `lambda` did the same; 63, 62 and
   62 `OPTIMAL` in the three variants), because the second effort then begins near the multiplier and the penalty at
   which the first one stalled. The restart stays.
 - **Above `n = 50`.** The same class at `n = 100`, one seed (8 solves): all `OPTIMAL`, largest residual 1.84 of
@@ -1289,7 +1289,7 @@ Lagrangian with a target volatility) followed by the polish, the second from whe
 | first | 1e-6 | 200 |
 | second | 1e-11 | 2000 |
 
-and `is_kkt_point` on the polished point decides: `OPTIMAL`, or, after the second effort, `MAX_ITER` with NaN
+and `is_kkt_point` on the polished point decides: `OPTIMAL`, or, after the second effort, `NOT_CONVERGED` with NaN
 weights, multipliers and residual. The short first effort is what bounds the cost: on the earlier instances, with 2000 iterations per
 descent at both efforts the grid below at `n <= 20` and one seed (768 runs, measured before the rule on the
 budget row) gave the same count of each status in every row, with a longest solve of 1.00 s against 0.12 s
@@ -1305,7 +1305,7 @@ checks of the results come on top, 145 s in all). Every combination of `cond(Sig
 passes by its rounding floor and not by the band (the section on the noise), "KKT failed" any failure of the
 check:
 
-| constraints | OPTIMAL | MAX_ITER | above the band | KKT failed | iterations, mean (max) | seconds, total (longest) |
+| constraints | OPTIMAL | NOT_CONVERGED | above the band | KKT failed | iterations, mean (max) | seconds, total (longest) |
 |---|---|---|---|---|---|---|
 | Capped | 240 / 240 | 0 | 0 | 0 | 25.3 (68) | 0.30 (0.020) |
 | Capped + return | 240 / 240 | 0 | 0 | 0 | 22.9 (76) | 0.31 (0.014) |
@@ -1320,7 +1320,7 @@ check:
 | None + return + volatility | 240 / 240 | 0 | 72 | 0 | 1611.3 (46064) | 9.26 (0.670) |
 | None + volatility | 240 / 240 | 0 | 118 | 0 | 1559.4 (43618) | 7.76 (0.584) |
 
-| n | OPTIMAL | MAX_ITER | above the band | iterations, mean (max) | seconds, total (longest) |
+| n | OPTIMAL | NOT_CONVERGED | above the band | iterations, mean (max) | seconds, total (longest) |
 |---|---|---|---|---|---|
 | 3 | 520 / 576 | 56 | 17 | 52.8 (778) | 0.10 (0.002) |
 | 5 | 548 / 576 | 28 | 36 | 73.2 (2220) | 0.17 (0.006) |
@@ -1329,13 +1329,13 @@ check:
 | 50 | 574 / 576 | 2 | 52 | 262.4 (4618) | 14.73 (0.435) |
 
 No result is `INFEASIBLE` (the shapes are built feasible) and none fails the check.
-The 110 `MAX_ITER`:
+The 110 `NOT_CONVERGED`:
 
 - 82 with a target volatility and a target return, LongOnly (16) or Capped (66). On each of them the augmented
   Lagrangian, run again from the start of the solver with 2000 iterations per descent, ends not converged with
   `vol(w)` below `s` by at least `4.4e-3 s`: `s` is above the volatility of the vertex the iteration reaches. The
-  largest volatility of a polyhedron has no cheap certificate, so this is `MAX_ITER` and not `INFEASIBLE`
-  (`RiskParity.UnreachableVolatilityIsMaxIter`).
+  largest volatility of a polyhedron has no cheap certificate, so this is `NOT_CONVERGED` and not `INFEASIBLE`
+  (`RiskParity.UnreachableVolatilityIsNotConverged`).
 - 28 with a target return and no box, the unbounded line of the section on the noise.
 
 The descents that did not converge in the sweep of the polyhedral descent above (66 of 2000, with a box or at
@@ -1345,11 +1345,11 @@ the polish turns all 66 of those descents into points that `is_kkt_point` accept
 (`RiskParityDescentFuzz.DISABLED_MeasurePolishOfUnconverged`). On the earlier instances it turned 66 of 70: the other 4
 were two shapes at both scales, `cond(Sigma) = 1e8`: `n = 10`, no box and no target (which the solver answers with
 the Spinu point and never descends), and `n = 20`, Capped, equal budget, seed 31696, which through `po::solve` was
-`MAX_ITER` with every number NaN at both scales. That is a bounded problem without a target that the solver did not
+`NOT_CONVERGED` with every number NaN at both scales. That is a bounded problem without a target that the solver did not
 solve: **a known limitation**, documented and not fixed. On the instances of plan 8 the shape of seed 31696 is
 `OPTIMAL` at both scales (`RiskParityFuzz.UnrepairedDescentShapesThroughSolve`), and no instance of the repository
 reproduces the limitation now; the solver is a local method, and a bounded problem without a target can still end
-`MAX_ITER` without a point.
+`NOT_CONVERGED` without a point.
 
 **Cost.** One solve at `n = 20`, `cond(Sigma) = 1e8`, no box and a target volatility takes up to 0.67 s and
 46 064 iterations (0.44 s and 4618 at `n = 50`; 7.4 s and 23 362 at `n = 100`): every subproblem of the augmented
@@ -1373,7 +1373,7 @@ cover:
   test fails if there are more.
 - `RiskParityFuzz.UnevenBudgetsAndConditioning`: `b_i` log-spaced from `1e-6` to 1, `cond(Sigma)` 1e2 to 1e8,
   scales 1 and `1e-4`, the budget row alone and with the Capped box, `n` in {5, 20}, 3 seeds: 96 of 96
-  `OPTIMAL`, all passing `expect_risk_parity_kkt` at the band; any other status must be `MAX_ITER` or
+  `OPTIMAL`, all passing `expect_risk_parity_kkt` at the band; any other status must be `NOT_CONVERGED` or
   `INFEASIBLE` with every number NaN. `Spinu.UnevenBudgetsConditioningSweep` covers Spinu alone; the solve sweep
   covers uneven budgets with the targets at `n <= 10` in the enabled grid; this adds the extreme budget through
   `po::solve` with a box at `n = 20`. The rule "no point without `OPTIMAL`, no `OPTIMAL` outside KKT" is checked
@@ -1437,8 +1437,8 @@ cover:
   riskless asset appended (variance log-uniform in [1e-10, 1e-6], mean 0.4 times the smallest), caps at 0.1, 0.5 and
   0.9 of the way to the largest asset volatility and at 1.01, 2 and 10 times `sigma_min`. The covariance solved has a
   condition number from about 6e2 to 2e16, so most cases take the 1e-7 band. The result must be `OPTIMAL` with the
-  return of the reference, every weight within its bounds and `vol <= s (1 + tol)`, or `MAX_ITER`. Of the 528 cases,
-  440 are `OPTIMAL` (worst agreement 1.1e-8, at a band of 1e-7) and 88 `MAX_ITER`.
+  return of the reference, every weight within its bounds and `vol <= s (1 + tol)`, or `NOT_CONVERGED`. Of the 528 cases,
+  440 are `OPTIMAL` (worst agreement 1.1e-8, at a band of 1e-7) and 88 `NOT_CONVERGED`.
 - **`LeverageFuzz.AgainstSignPatterns`**: `fuzz_shapes(256, 4, 8)` (every combination once, n from 3 to 8) with
   `with_leverage`, for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE`, `KELLY` and `TRACKING_ERROR` (`MAX_RETURN` is checked by
   `MaxReturnFuzz.LeverageFuzz`), each at the shape's leverage and, where the optimum without leverage is above the least gross exposure the
@@ -1464,7 +1464,7 @@ cover:
 - **`MaxReturnFuzz.LeverageOfOneWithoutCashOrBox`**: the shapes of `fuzz_shapes(400, 4)` without cash or box and with
   `cond(Sigma) <= 1e4` (32), at the leverage 1, so that the feasible set is the simplex, with caps 1.1, 1.5 and 2 times
   `sigma_min` under the leverage; the checks are those of `AgainstFrontierReference`. All 96 cases are `OPTIMAL`.
-  Before the face rows left out a row dependent over the free weights, 32 of them were `MAX_ITER`: on a face whose
+  Before the face rows left out a row dependent over the free weights, 32 of them were `NOT_CONVERGED`: on a face whose
   active sign vectors disagree on the zeros, the budget and the generated row are opposite over the free weights, so
   no crossing was certified and the bisection ended at adjacent doubles with both ends refused.
 - **`RatioFuzz.AgainstFrontierReference`**: `fuzz_shapes(300, 3)` for `MAX_SHARPE` and `MAX_DIVERSIFICATION`, at each
@@ -1493,7 +1493,7 @@ cover:
   (`GoldfarbIdnani.GrossExposureFamilyWithManyExchanges`). The case ran in `gcc-release` only (the debug run has no
   cap fraction
   0.7). Task 0's pinned case of `AgainstFrontierReference` (shape seed
-  11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `MAX_ITER`
+  11394049047870518593, cap fraction 0.9, cash, long-only, nearly equal means, `cond(Sigma) = 1e8` daily, `NOT_CONVERGED`
   where `Q(t)` was lost near `t = 1.2e12`) is solved by the shift along the cash bound and is no longer pinned.
 - **Other platforms.** The generators and the library give the same bits on Windows (MinGW and MSVC), Linux and macOS,
   so a test instance is the same instance everywhere. Verified locally on Windows (MinGW and MSVC: the full suite, 371
@@ -1508,7 +1508,7 @@ cover:
   [docs/performance/portable-math.md](../performance/portable-math.md). Before plan 8 the generators built `Sigma` with
   `std::log`, `std::exp` and `std::cos`, which glibc rounds differently from the Windows UCRT: on Linux 561 of the 576
   covariance entries of the known residual's shape differed, by up to 1856 ulp (3.6e-13 relative; `mu` was the same),
-  and with that covariance the case was `MAX_ITER` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, before
+  and with that covariance the case was `NOT_CONVERGED` at cap fractions 0.3 to 0.9, on Linux and on Windows alike, before
   the tangent crossing; both covariances are now `OPTIMAL` at every fraction (the known residual above). The Linux
   covariance of the fixture comes from the `manylinux_2_28` image (GCC 14.2.1, glibc 2.28). Before the tangent crossing
   `MaxReturnFuzz.LeverageFuzz` failed on Linux and macOS; `RiskParityDescentFuzz.ConvergedRunsAreKkt`,
@@ -1543,7 +1543,7 @@ thresholds are stricter than the bands: stationarity 1e-8, feasibility 1e-9, ret
   - one case with fixed weights (n = 30, one weight fixed) at `s = sigma_min (1 + 1e-9)`: return gap 2.1e-5 against a
     Clarabel solution marked `AlmostSolved`, with stationarity 9.2e-12 and feasibility 3.5e-18; the same gap as on
     HEAD, from the reference.
-- `MAX_ITER`: 1 case (n = 30, variance 1e-10, means spread by 1e-9, `s = 10 sigma_min`), also `MAX_ITER` on HEAD, where
+- `NOT_CONVERGED`: 1 case (n = 30, variance 1e-10, means spread by 1e-9, `s = 10 sigma_min`), also `NOT_CONVERGED` on HEAD, where
   Clarabel reports `AlmostSolved`; HEAD had 3.
 - The broader fuzz scripts are unchanged or better: 300 of 300 correct with a nearly riskless asset; 400 of 400
   `OPTIMAL` against Clarabel, worst stationarity 2.3e-9 (2.6e-9 on HEAD) and the same entries flagged against
@@ -1580,7 +1580,7 @@ Verified means the text was read for the claim it supports. The full list, with 
 | `tests/unit/core/generators_test.cpp` | The test generators by their bits (the normals, `exp10`, the integers, `random_covariance`): a test instance is the same on every platform |
 | `tests/unit/core/portable_math_test.cpp` | `po::portable::exp`, `log` and `hypot` against committed values, each checked against a 60-digit reference, branch by branch |
 | `tests/unit/core/data_test.cpp` | Rejection of non-finite, asymmetric, indefinite, singular (a duplicated asset, a sample covariance of fewer periods than assets) and mismatched input; symmetrization within tolerance; the stored factor |
-| `tests/unit/problems/min_variance_test.cpp` | KKT in the user's variables, the closed forms, the frontier and the capital market line, per-asset bounds, cash bounds, an ill-conditioned covariance |
+| `tests/unit/problems/min_variance_test.cpp` | KKT in the user's variables, the closed forms, the frontier and the capital market line, per-weight bounds, cash bounds, an ill-conditioned covariance |
 | `tests/unit/problems/utility_test.cpp` | `UTILITY`, `IMPORTANCE` and `KELLY`: closed forms, defaults, KKT, and the identities between them and `MIN_VARIANCE` |
 | `tests/unit/problems/tracking_error_test.cpp` | Exact replication, constrained least squares, cash, target return and long-only KKT, a rank-deficient series rejected, an ill-conditioned one (`cond(R) = 1e8`) accepted with the objective of an independent least squares, no covariance needed |
 | `tests/unit/problems/max_return_test.cpp` | Frontier and capital market line, an infeasible cap, the cap at the minimum (including a vertex of the box), an inactive cap, equal means, the multiplier against finite differences, daily scale, random long-only problems, a conditioning sweep (`cond(Sigma)` 1e2 to 1e7), a risk-free rate above every mean (all cash), equal means with tight upper bounds or with cash, the budget multiplier under a common shift of the means, the leverage along the path (the vertex of the leverage in closed form, both caps binding against finite differences in s and L), and the multipliers mapped back from the shift along the leverage and the cash bound in closed form |
@@ -1588,9 +1588,9 @@ Verified means the text was read for the claim it supports. The full list, with 
 | `tests/unit/problems/max_sharpe_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION`: the tangency and the most diversified portfolio in closed form, the cash weight exactly 0 with `beta_0` (0 at the tangency, not under an active cap; bit for bit the no-cash weights for `MAX_DIVERSIFICATION`), cash bounds that exclude 0 and `rf` above every mean long-only `INFEASIBLE`, `1' Sigma^-1 mu~ < 0` without bounds `UNBOUNDED` with NaN weights and multipliers, the boundary `1' Sigma^-1 v = 0` exact in the data (`rf` at the minimum-variance return and a few ulps away for `MAX_SHARPE`, a covariance with `1' Sigma^-1 sigma = 0` for `MAX_DIVERSIFICATION`, over `cond(Sigma)` 1e2 to 1e8 and both scales: `UNBOUNDED`, or `OPTIMAL` against an extended-precision reference), the same boundary with three assets bounded and their lower rows active (no exact `kappa <= 0` missed, none decided by the data `UNBOUNDED`), bounded cones at `cond(Sigma)` 1e12 and 1e14 always `OPTIMAL` (status, budget, bounds and leverage; the whole KKT for long-only at 1e12), long-only and leverage KKT, and no sharper portfolio among 10 000 feasible ones |
 | `tests/unit/fuzz/ratio_fuzz_test.cpp` | `MAX_SHARPE` and `MAX_DIVERSIFICATION` over the fuzz battery, without and with a leverage, against the frontier reference: the status, the ratio and KKT |
 | `tests/unit/fuzz/leverage_fuzz_test.cpp` | The five QP objectives with a leverage over the fuzz battery (n <= 8) against the sign-pattern brute force |
-| `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `MAX_ITER`, never silently wrong |
+| `tests/unit/fuzz/max_return_fuzz_test.cpp` | `MAX_RETURN` over the fuzz battery against the frontier reference, without and with a leverage, and nearly equal means with a nearly riskless asset: correct or `NOT_CONVERGED`, never silently wrong |
 | `tests/unit/riskparity/spinu_test.cpp` | Spinu against the diagonal and the two-asset closed forms (1e-12), the contributions against an equal budget (n up to 100, `cond(Sigma)` 1e2 to 1e6, 20 seeds) and an uneven one (`b_i` from 1e-6 to 1, `cond(Sigma)` up to 1e8, both scales), in the bands of the table above |
-| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `MAX_ITER` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers at `cond(Sigma)` 1e4 and 1e6; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s`; `s = sigma_min (1 + delta)` for `delta` from `1e-2` to `1e-10` with the safeguard of the multiplier correction; the multipliers of the target-return path never farther from the refined point than the least-squares fit, at `1e8` |
+| `tests/unit/riskparity/risk_parity_test.cpp` | `RISK_PARITY` through `po::solve`: the Spinu point (multipliers 0 and NaN, a box that holds it, a negative lower bound); a target return and a target volatility against the scan of the feasible curve (`n = 3`); two assets with a target return (the 2 x 2 system); `s = sigma_min` (`lambda_vol = -inf`, the rest NaN) and just above it; `INFEASIBLE` (volatility below the minimum, return out of range, bounds); `NOT_CONVERGED` without a point (a volatility out of reach, a line without a minimizer); equal means with a redundant and an inconsistent target; active bounds with both targets; the identity of the multipliers at `cond(Sigma)` 1e4 and 1e6; the change of units of `Sigma`; the multipliers against central differences of the optimal `f` in `r` and `s`; `s = sigma_min (1 + delta)` for `delta` from `1e-2` to `1e-10` with the safeguard of the multiplier correction; the multipliers of the target-return path never farther from the refined point than the least-squares fit, at `1e8` |
 | `tests/unit/riskparity/newton_polish_test.cpp` | The polish from a point at `1e-6` to the rounding floor in at most two steps and no step from there; the multipliers settled without a step; the result independent of the equality multipliers of the start; a bound whose multiplier has the wrong sign released; the KKT residual in noise units sees an error of `1e-9` of a weight, a weight outside the box, a multiplier of the wrong sign and a NaN; weights that do not resolve the budget row are no KKT point; the Newton correction of the multipliers against the refined KKT point at `cond(Sigma)` 1e6 and 1e8, and a correction that does not contract or that changes the side of a held bound refused |
 | `tests/unit/riskparity/augmented_lagrangian_test.cpp` | The augmented Lagrangian to a KKT point at the band with and without a target return; multiplier and penalty bounded at `s = sigma_min (1 + 1e-6)`; the outer and inner caps reported; a volatility out of reach not converged |
 | `tests/unit/fuzz/risk_parity/risk_parity_fuzz_test.cpp` | `n = 3` against the global minimum of the scan (18 other local minima of 93, verified and counted); budgets from `1e-6` to 1 with `cond(Sigma)` up to `1e8` through `po::solve` (96 of 96 `OPTIMAL` and KKT); the two descent shapes the polish does not repair, through `po::solve`; the value and the weights of the thinnest class at `cond(Sigma) = 1e8` against the refined point (value at the band, weights within their measured limit); the multipliers of the target-volatility path against the refined point by `cond(Sigma)` (1e4 to 1e8), without a box and with LongOnly and Capped, the bound multipliers of the held weights by value, within measured ceilings |

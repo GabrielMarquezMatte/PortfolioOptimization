@@ -15,8 +15,8 @@ struct Spec
     double lower = -std::numeric_limits<double>::infinity();
     double upper = std::numeric_limits<double>::infinity();
     // Non-empty replaces the scalar bound; one entry per weight, cash last.
-    std::vector<double> asset_lower;
-    std::vector<double> asset_upper;
+    std::vector<double> weight_lower;
+    std::vector<double> weight_upper;
     std::optional<double> target_return;
     std::optional<double> risk_aversion;
     std::optional<double> importance;

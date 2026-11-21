@@ -29,9 +29,9 @@ std::vector<double> risk_budget_of(const Spec& spec, const Data& data);
 //   system.
 // Optimal is a point whose KKT residual, feasibility included, is within the noise of the problem. When the
 // iteration does not end at one (a target return on an unbounded line where f has no minimizer, a target
-// volatility out of reach) the status is MaxIterations, with NaN weights, multipliers and residual. So is a
+// volatility out of reach) the status is NotConverged, with NaN weights, multipliers and residual. So is a
 // point whose budget row 1'w = 1 is not resolved by its own rounding, eps (sum_i |w_i| + 1) > 1e-12: a gross
-// exposure sum_i |w_i| above about 4.5e3 is MaxIterations even when it is stationary.
+// exposure sum_i |w_i| above about 4.5e3 is NotConverged even when it is stationary.
 // With a target volatility and few or no active bounds at cond(Sigma) around 1e8 the weights are determined
 // only to the rounding of the KKT residual amplified by the conditioning of the problem: an Optimal result
 // can be up to about 1e-4 relative from the exact KKT point (measured up to 2.8e-5), while its objective

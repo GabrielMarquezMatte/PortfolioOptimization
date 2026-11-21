@@ -566,7 +566,7 @@ TEST(CapiSolve, RiskParityResidualAndMultipliers)
 
 void expect_no_point(const po_result* result, std::size_t count)
 {
-    EXPECT_EQ(po::testing::status_of(result), PO_SOLVE_MAX_ITER);
+    EXPECT_EQ(po::testing::status_of(result), PO_SOLVE_NOT_CONVERGED);
     for (double weight : po::testing::weights_of(result))
     {
         EXPECT_TRUE(std::isnan(weight));
@@ -584,7 +584,7 @@ void expect_no_point(const po_result* result, std::size_t count)
 }
 
 // Sigma = diag(0.04, 0.09), long only: no portfolio has a volatility above 0.3, so s = 0.5 is out of reach.
-TEST(CapiSolve, MaxIterHasNoPoint)
+TEST(CapiSolve, NotConvergedHasNoPoint)
 {
     const std::vector<double> covariance = {0.04, 0.0, 0.0, 0.09};
     DataPtr data = po::testing::make_data(2, {}, covariance);
@@ -649,7 +649,7 @@ TEST(CapiSolve, NullHandles)
     po_result* out = nullptr;
 
     EXPECT_EQ(po_spec_set_bounds(nullptr, 0.0, 1.0), PO_INVALID_HANDLE);
-    EXPECT_EQ(po_spec_set_asset_bounds(nullptr, values, values, kAssets), PO_INVALID_HANDLE);
+    EXPECT_EQ(po_spec_set_weight_bounds(nullptr, values, values, kAssets), PO_INVALID_HANDLE);
     EXPECT_EQ(po_spec_set_target_return(nullptr, 0.1), PO_INVALID_HANDLE);
     EXPECT_EQ(po_spec_set_risk_aversion(nullptr, 2.0), PO_INVALID_HANDLE);
     EXPECT_EQ(po_spec_set_importance(nullptr, 0.5), PO_INVALID_HANDLE);
@@ -728,7 +728,7 @@ TEST(CapiSolve, ParallelSolvesShareReadOnlyHandles)
 // No QP objective reaches its iteration limit on a test-sized problem, so the rule is checked where it is made:
 // a QP that stops at its limit becomes a result with NaN weights, multipliers and residual, for every shape
 // of data (with cash too), which po_solve hands to the caller unchanged.
-TEST(CapiSolve, MaxIterHasNoPointForQpObjectives)
+TEST(CapiSolve, NotConvergedHasNoPointForQpObjectives)
 {
     constexpr int kIterations = 17;
     for (bool with_cash : {false, true})
@@ -739,7 +739,7 @@ TEST(CapiSolve, MaxIterHasNoPointForQpObjectives)
         solution.status = po::qp::Status::MaxIterations;
         solution.iterations = kIterations;
         po::Result result = po::problems::to_result(pair.core, po::problems::ConstraintRows{}, solution);
-        EXPECT_EQ(result.status, po::SolveStatus::MaxIterations);
+        EXPECT_EQ(result.status, po::SolveStatus::NotConverged);
         EXPECT_EQ(result.iterations, kIterations);
         ASSERT_EQ(result.weights.size(), pair.core.weight_count());
         ASSERT_EQ(result.bound_multipliers.size(), pair.core.weight_count());

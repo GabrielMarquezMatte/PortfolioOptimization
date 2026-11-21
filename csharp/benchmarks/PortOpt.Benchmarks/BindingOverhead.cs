@@ -30,7 +30,7 @@ public class BindingOverhead
                 covariance[i, j] = (i == j ? 0.04 : 0.0) + (0.01 / (1 + Math.Abs(i - j)));
             }
         }
-        _data = new MarketData(mu, covariance);
+        _data = new MarketData(new MarketInputs { Mu = mu, Covariance = covariance });
         _spec = new Spec { Bounds = new Bounds(0, 1) };
         _weights = new double[Assets];
     }

@@ -25,7 +25,7 @@ class SolveStatus(enum.IntEnum):
     OPTIMAL = 0
     INFEASIBLE = 1
     UNBOUNDED = 2
-    MAX_ITER = 3
+    NOT_CONVERGED = 3
 
 
 @dataclass(frozen=True)

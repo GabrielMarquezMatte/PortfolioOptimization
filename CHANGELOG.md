@@ -4,8 +4,8 @@ All notable changes to this project are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Until 1.0 the C ABI may break between 0.x releases (`PO_ABI_VERSION` is 0 and the Python package refuses a
-library whose ABI version differs).
+From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.md)); 0.x releases could break it
+(`PO_ABI_VERSION` 0).
 
 ## [Unreleased]
 
@@ -17,6 +17,31 @@ library whose ABI version differs).
   `csharp.yml` tests it on Linux, macOS and Windows; `release.yml` packs it, checks it with a clean consumer and a
   Native AOT publish on the three systems, and publishes it to nuget.org by Trusted Publishing after the GitHub
   Release. `release_version.py nuget` gives the SemVer version of a tag.
+- [docs/guide/versioning.md](docs/guide/versioning.md): what a minor version may add, the rule for new
+  `PO_SOLVE_*` values (returned only to a request that uses something added with them), and that error messages are
+  not part of the contract.
+- The `abi-base` job of `ci.yml`: from the first v1.x tag, a line of the last stable contract that is gone from
+  `portopt.abi` fails CI.
+- Python: `Data.asset_count` and `Data.weight_count` are read-only properties (an assignment used to be accepted).
+
+### Changed
+
+The API review before the 1.0 freeze ([docs/guide/api-review.md](docs/guide/api-review.md)); every migration is a
+rename, and no result changes by a bit.
+
+- `PO_ABI_VERSION` is 1: the bindings refuse a 0.x library, and a 0.x binding refuses this one.
+- `po_spec_set_asset_bounds` → `po_spec_set_weight_bounds`: it takes one pair per weight, cash included, while
+  `po_data_asset_count` and the risk budget count assets without cash. C++ `po::AssetBounds` → `po::WeightBounds`;
+  .NET `AssetBounds` → `WeightBounds` and `Spec.AssetBounds` → `Spec.WeightBounds`. Python is unchanged (`bounds`
+  picks the function from its shape). The size error of `po_solve` names `weight_lower` and `weight_upper`.
+- `PO_SOLVE_MAX_ITER` → `PO_SOLVE_NOT_CONVERGED` (value 3 unchanged): it means the solver did not end at a point it
+  can vouch for, which is wider than an iteration limit, and there is no iteration-limit setter to raise. Python
+  `SolveStatus.MAX_ITER` → `SolveStatus.NOT_CONVERGED`, C++ `po::SolveStatus::max_iter` → `not_converged`, .NET
+  `SolveStatus.MaxIter` → `NotConverged`.
+- .NET: `new MarketData(mu, covariance, riskFree: r)` → `new MarketData(new MarketInputs { Mu = mu, Covariance =
+  covariance, RiskFree = r })`, so that a new input is a new property and not a new constructor signature.
+- The CMake package of a 1.y release satisfies `find_package(PortOpt 1.x)` (`SameMajorVersion`; 0.x stays
+  `SameMinorVersion`).
 
 ## [0.1.0] - 2026-11-17
 

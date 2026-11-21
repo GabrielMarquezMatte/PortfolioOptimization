@@ -59,7 +59,7 @@ enum class SolveStatus : std::int32_t
     optimal = PO_SOLVE_OPTIMAL,
     infeasible = PO_SOLVE_INFEASIBLE,
     unbounded = PO_SOLVE_UNBOUNDED,
-    max_iter = PO_SOLVE_MAX_ITER,
+    not_converged = PO_SOLVE_NOT_CONVERGED,
 };
 
 // One pair for every weight, cash included (po_spec_set_bounds).
@@ -69,8 +69,8 @@ struct Bounds
     double upper;
 };
 
-// One pair per weight, cash last (po_spec_set_asset_bounds).
-struct AssetBounds
+// One pair per weight, cash last (po_spec_set_weight_bounds).
+struct WeightBounds
 {
     std::vector<double> lower;
     std::vector<double> upper;
@@ -81,7 +81,7 @@ struct AssetBounds
 struct Spec
 {
     Objective objective = Objective::min_variance;
-    std::variant<std::monostate, Bounds, AssetBounds> bounds{};
+    std::variant<std::monostate, Bounds, WeightBounds> bounds{};
     std::optional<double> target_return{};
     std::optional<double> risk_aversion{};
     std::optional<double> importance{};
@@ -173,13 +173,14 @@ using SpecHandle = std::unique_ptr<po_spec, Deleter<po_spec, po_spec_free>>;
 using DataHandle = std::unique_ptr<po_data, Deleter<po_data, po_data_free>>;
 using ResultHandle = std::unique_ptr<po_result, Deleter<po_result, po_result_free>>;
 
-inline Expected<void> set_bounds(po_spec* spec, const std::variant<std::monostate, Bounds, AssetBounds>& bounds)
+inline Expected<void> set_bounds(po_spec* spec,
+                                 const std::variant<std::monostate, Bounds, WeightBounds>& bounds)
 {
     if (const auto* scalar = std::get_if<Bounds>(&bounds))
     {
         return check(po_spec_set_bounds(spec, scalar->lower, scalar->upper));
     }
-    const auto* per_weight = std::get_if<AssetBounds>(&bounds);
+    const auto* per_weight = std::get_if<WeightBounds>(&bounds);
     if (per_weight == nullptr)
     {
         return {};
@@ -189,7 +190,7 @@ inline Expected<void> set_bounds(po_spec* spec, const std::variant<std::monostat
         return invalid("the lower bounds have " + std::to_string(per_weight->lower.size()) +
                        " entries and the upper bounds " + std::to_string(per_weight->upper.size()));
     }
-    return check(po_spec_set_asset_bounds(spec, per_weight->lower.data(), per_weight->upper.data(),
+    return check(po_spec_set_weight_bounds(spec, per_weight->lower.data(), per_weight->upper.data(),
                                           per_weight->lower.size()));
 }
 

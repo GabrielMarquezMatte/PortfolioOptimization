@@ -9,7 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, cast
 
-PO_ABI_VERSION = 0
+PO_ABI_VERSION = 1
 PO_OK = 0
 PO_INVALID_ARGUMENT = 1
 PO_UNSUPPORTED = 3
@@ -35,7 +35,7 @@ PROTOTYPES: dict[str, tuple[Any, list[Any]]] = {
     "po_last_error": (ctypes.c_char_p, []),
     "po_spec_create": (_STATUS, [_I32, _OUT_HANDLE]),
     "po_spec_set_bounds": (_STATUS, [_HANDLE, _DOUBLE, _DOUBLE]),
-    "po_spec_set_asset_bounds": (_STATUS, [_HANDLE, _IN_DOUBLES, _IN_DOUBLES, _SIZE]),
+    "po_spec_set_weight_bounds": (_STATUS, [_HANDLE, _IN_DOUBLES, _IN_DOUBLES, _SIZE]),
     "po_spec_set_target_return": (_STATUS, [_HANDLE, _DOUBLE]),
     "po_spec_set_risk_aversion": (_STATUS, [_HANDLE, _DOUBLE]),
     "po_spec_set_importance": (_STATUS, [_HANDLE, _DOUBLE]),

@@ -204,7 +204,7 @@ TEST(RiskParityReference, ScanDiscardsPointsOutsideTheBox)
     std::vector<double> known = diagonal_solution(sigma, budget);
     Spec spec;
     spec.target_return = po::testing::dot(known, data.mu());
-    spec.asset_lower = {known[0] + 0.05, -1.0, -1.0};
+    spec.weight_lower = {known[0] + 0.05, -1.0, -1.0};
     ScanResult scan = scan_reference(spec, data, budget);
     ASSERT_FALSE(std::isnan(scan.value));
     EXPECT_GT(scan.value, 1e-9);
@@ -212,7 +212,7 @@ TEST(RiskParityReference, ScanDiscardsPointsOutsideTheBox)
     {
         EXPECT_GT(weight, -1.0 - 1e-12);
     }
-    EXPECT_GE(scan.weights[0], spec.asset_lower[0] - 1e-12);
+    EXPECT_GE(scan.weights[0], spec.weight_lower[0] - 1e-12);
 }
 
 TEST(RiskParityReference, ScanWithoutAFeasiblePointIsNaN)
@@ -244,8 +244,8 @@ TEST(RiskParityReference, KktAcceptsAPinnedStationaryPoint)
         constexpr double kVolatilityMultiplier = 0.3;
         Spec spec;
         spec.risk_budget = budget;
-        spec.asset_lower = weights;
-        spec.asset_upper = weights;
+        spec.weight_lower = weights;
+        spec.weight_upper = weights;
         Result result;
         result.status = SolveStatus::Optimal;
         result.weights = weights;
@@ -290,8 +290,8 @@ TEST(RiskParityReference, KktRejectsAStationarityErrorAwayFromTheFloor)
     std::vector<double> gradient = risk_parity_gradient(data, budget, weights);
     double largest = 0.0;
     Spec spec;
-    spec.asset_lower = weights;
-    spec.asset_upper = weights;
+    spec.weight_lower = weights;
+    spec.weight_upper = weights;
     Result result;
     result.status = SolveStatus::Optimal;
     result.weights = weights;
@@ -335,9 +335,9 @@ LowerBoundPoint lower_bound_point(bool with_target_return)
     std::vector<double> weights = normalized(random_vector(n, 13, 0.1, 1.0));
     Spec spec;
     spec.risk_budget = normalized(random_vector(n, 11, 0.2, 1.0));
-    spec.asset_lower = weights;
-    spec.asset_upper = weights;
-    for (double& upper : spec.asset_upper)
+    spec.weight_lower = weights;
+    spec.weight_upper = weights;
+    for (double& upper : spec.weight_upper)
     {
         upper += 1.0;
     }
@@ -422,8 +422,8 @@ TEST(RiskParityReference, KktRejectsAWrongSignBoundMultiplier)
 TEST(RiskParityReference, KktRejectsANaNBoundMultiplierAtAnInfiniteBound)
 {
     LowerBoundPoint point = lower_bound_point(false);
-    point.spec.asset_lower[0] = -std::numeric_limits<double>::infinity();
-    point.spec.asset_upper[0] = std::numeric_limits<double>::infinity();
+    point.spec.weight_lower[0] = -std::numeric_limits<double>::infinity();
+    point.spec.weight_upper[0] = std::numeric_limits<double>::infinity();
     point.result.bound_multipliers[0] = std::numeric_limits<double>::quiet_NaN();
     expect_rejected(point.spec, point.data, point.result, "tolerance");
 }

@@ -10,7 +10,7 @@ public sealed class MarketDataTests
     public void Counts_follow_the_inputs_and_the_cash()
     {
         using var risky = Samples.Data();
-        using var withCash = new MarketData(Samples.Mu, Samples.Covariance, riskFree: 0.02);
+        using var withCash = new MarketData(new MarketInputs { Mu = Samples.Mu, Covariance = Samples.Covariance, RiskFree = 0.02 });
         Assert.Equal((3, 3), (risky.AssetCount, risky.WeightCount));
         Assert.Equal((3, 4), (withCash.AssetCount, withCash.WeightCount));
     }
@@ -41,7 +41,7 @@ public sealed class MarketDataTests
     {
         double[,] returns = { { 0.01, 0.02 }, { -0.01, 0.03 }, { 0.02, -0.02 } };
         double[] benchmark = [0.01, -0.01, 0.02];
-        using var data = new MarketData(returns: returns, benchmark: benchmark);
+        using var data = new MarketData(new MarketInputs { Returns = returns, Benchmark = benchmark });
         Assert.Equal(0.0, data.TrackingError([1.0, 0.0]));
         Assert.True(data.TrackingError([0.0, 1.0]) > 0);
     }
@@ -57,17 +57,18 @@ public sealed class MarketDataTests
     [Fact]
     public void Shapes_the_native_side_cannot_see_are_argument_errors()
     {
-        Assert.Throws<ArgumentException>(() => new MarketData());
-        Assert.Throws<ArgumentException>(() => new MarketData([0.1, 0.2], Samples.Covariance));
-        Assert.Throws<ArgumentException>(() => new MarketData(covariance: new double[2, 3]));
-        Assert.Throws<ArgumentException>(() => new MarketData(returns: new double[4, 3]));
-        Assert.Throws<ArgumentException>(() => new MarketData(returns: new double[4, 3], benchmark: new double[3]));
+        Assert.Throws<ArgumentNullException>(() => new MarketData(null!));
+        Assert.Throws<ArgumentException>(() => new MarketData(new MarketInputs()));
+        Assert.Throws<ArgumentException>(() => new MarketData(new MarketInputs { Mu = [0.1, 0.2], Covariance = Samples.Covariance }));
+        Assert.Throws<ArgumentException>(() => new MarketData(new MarketInputs { Covariance = new double[2, 3] }));
+        Assert.Throws<ArgumentException>(() => new MarketData(new MarketInputs { Returns = new double[4, 3] }));
+        Assert.Throws<ArgumentException>(() => new MarketData(new MarketInputs { Returns = new double[4, 3], Benchmark = new double[3] }));
     }
 
     [Fact]
     public void A_covariance_that_is_not_positive_definite_is_refused()
     {
-        var error = Assert.Throws<PortOptException>(() => new MarketData(covariance: new[,] { { 1.0, 2.0 }, { 2.0, 1.0 } }));
+        var error = Assert.Throws<PortOptException>(() => new MarketData(new MarketInputs { Covariance = new[,] { { 1.0, 2.0 }, { 2.0, 1.0 } } }));
         Assert.Equal(Status.InvalidArgument, error.Status);
     }
 

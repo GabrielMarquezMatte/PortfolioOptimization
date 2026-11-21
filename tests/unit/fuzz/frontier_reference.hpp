@@ -39,8 +39,8 @@ inline po::Result frontier_point(const po::Spec& spec, const po::Data& data, std
     po::Spec frontier;
     frontier.lower = spec.lower;
     frontier.upper = spec.upper;
-    frontier.asset_lower = spec.asset_lower;
-    frontier.asset_upper = spec.asset_upper;
+    frontier.weight_lower = spec.weight_lower;
+    frontier.weight_upper = spec.weight_upper;
     frontier.leverage = spec.leverage;
     frontier.target_return = target;
     return po::solve(frontier, data).value();

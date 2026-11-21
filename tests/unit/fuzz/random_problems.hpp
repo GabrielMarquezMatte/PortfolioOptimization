@@ -128,14 +128,14 @@ inline po::Data shape_data(const ProblemShape& shape)
 inline po::Spec fixed_box(const ProblemShape& shape, std::size_t weight_count)
 {
     po::Spec spec;
-    spec.asset_lower.assign(weight_count, 0.0);
-    spec.asset_upper.assign(weight_count, 1.0);
+    spec.weight_lower.assign(weight_count, 0.0);
+    spec.weight_upper.assign(weight_count, 1.0);
     std::size_t fixed = std::max<std::size_t>(1, shape.n / 3);
     double value = 0.5 / static_cast<double>(shape.n);
     for (std::size_t i = 0; i < fixed; ++i)
     {
-        spec.asset_lower[i] = value;
-        spec.asset_upper[i] = value;
+        spec.weight_lower[i] = value;
+        spec.weight_upper[i] = value;
     }
     return spec;
 }

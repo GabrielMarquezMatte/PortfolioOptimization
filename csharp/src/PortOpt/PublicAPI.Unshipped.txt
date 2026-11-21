@@ -1,10 +1,4 @@
 #nullable enable
-PortOpt.AssetBounds
-PortOpt.AssetBounds.<Clone>$() -> PortOpt.AssetBounds!
-PortOpt.AssetBounds.AssetBounds(System.Collections.Generic.IReadOnlyList<double>! lower, System.Collections.Generic.IReadOnlyList<double>! upper) -> void
-PortOpt.AssetBounds.Equals(PortOpt.AssetBounds? other) -> bool
-PortOpt.AssetBounds.Lower.get -> System.Collections.Generic.IReadOnlyList<double>!
-PortOpt.AssetBounds.Upper.get -> System.Collections.Generic.IReadOnlyList<double>!
 PortOpt.Bounds
 PortOpt.Bounds.Bounds() -> void
 PortOpt.Bounds.Bounds(double Lower, double Upper) -> void
@@ -18,7 +12,7 @@ PortOpt.MarketData
 PortOpt.MarketData.AssetCount.get -> int
 PortOpt.MarketData.Dispose() -> void
 PortOpt.MarketData.DiversificationRatio(System.ReadOnlySpan<double> weights) -> double
-PortOpt.MarketData.MarketData(double[]? mu = null, double[,]? covariance = null, double? riskFree = null, double[,]? returns = null, double[]? benchmark = null) -> void
+PortOpt.MarketData.MarketData(PortOpt.MarketInputs! inputs) -> void
 PortOpt.MarketData.PortfolioReturn(System.ReadOnlySpan<double> weights) -> double
 PortOpt.MarketData.RiskContributions(System.ReadOnlySpan<double> weights) -> double[]!
 PortOpt.MarketData.SharpeRatio(System.ReadOnlySpan<double> weights) -> double
@@ -26,6 +20,18 @@ PortOpt.MarketData.TrackingError(System.ReadOnlySpan<double> weights) -> double
 PortOpt.MarketData.Utility(System.ReadOnlySpan<double> weights, double riskAversion) -> double
 PortOpt.MarketData.Volatility(System.ReadOnlySpan<double> weights) -> double
 PortOpt.MarketData.WeightCount.get -> int
+PortOpt.MarketInputs
+PortOpt.MarketInputs.Benchmark.get -> double[]?
+PortOpt.MarketInputs.Benchmark.init -> void
+PortOpt.MarketInputs.Covariance.get -> double[,]?
+PortOpt.MarketInputs.Covariance.init -> void
+PortOpt.MarketInputs.MarketInputs() -> void
+PortOpt.MarketInputs.Mu.get -> double[]?
+PortOpt.MarketInputs.Mu.init -> void
+PortOpt.MarketInputs.Returns.get -> double[,]?
+PortOpt.MarketInputs.Returns.init -> void
+PortOpt.MarketInputs.RiskFree.get -> double?
+PortOpt.MarketInputs.RiskFree.init -> void
 PortOpt.NativeAbi
 PortOpt.Objective
 PortOpt.Objective.Importance = 4 -> PortOpt.Objective
@@ -56,13 +62,11 @@ PortOpt.Result.VolatilityMultiplier.get -> double
 PortOpt.Result.Weights.get -> double[]!
 PortOpt.SolveStatus
 PortOpt.SolveStatus.Infeasible = 1 -> PortOpt.SolveStatus
-PortOpt.SolveStatus.MaxIter = 3 -> PortOpt.SolveStatus
+PortOpt.SolveStatus.NotConverged = 3 -> PortOpt.SolveStatus
 PortOpt.SolveStatus.Optimal = 0 -> PortOpt.SolveStatus
 PortOpt.SolveStatus.Unbounded = 2 -> PortOpt.SolveStatus
 PortOpt.Spec
 PortOpt.Spec.<Clone>$() -> PortOpt.Spec!
-PortOpt.Spec.AssetBounds.get -> PortOpt.AssetBounds?
-PortOpt.Spec.AssetBounds.init -> void
 PortOpt.Spec.Bounds.get -> PortOpt.Bounds?
 PortOpt.Spec.Bounds.init -> void
 PortOpt.Spec.Equals(PortOpt.Spec? other) -> bool
@@ -84,6 +88,8 @@ PortOpt.Spec.TargetReturn.init -> void
 PortOpt.Spec.TargetVolatility.get -> double?
 PortOpt.Spec.TargetVolatility.init -> void
 PortOpt.Spec.Validate() -> void
+PortOpt.Spec.WeightBounds.get -> PortOpt.WeightBounds?
+PortOpt.Spec.WeightBounds.init -> void
 PortOpt.Status
 PortOpt.Status.InternalError = 5 -> PortOpt.Status
 PortOpt.Status.InvalidArgument = 1 -> PortOpt.Status
@@ -91,15 +97,21 @@ PortOpt.Status.InvalidHandle = 2 -> PortOpt.Status
 PortOpt.Status.Ok = 0 -> PortOpt.Status
 PortOpt.Status.OutOfMemory = 4 -> PortOpt.Status
 PortOpt.Status.Unsupported = 3 -> PortOpt.Status
-override PortOpt.AssetBounds.Equals(object? obj) -> bool
-override PortOpt.AssetBounds.GetHashCode() -> int
-override PortOpt.AssetBounds.ToString() -> string!
+PortOpt.WeightBounds
+PortOpt.WeightBounds.<Clone>$() -> PortOpt.WeightBounds!
+PortOpt.WeightBounds.Equals(PortOpt.WeightBounds? other) -> bool
+PortOpt.WeightBounds.Lower.get -> System.Collections.Generic.IReadOnlyList<double>!
+PortOpt.WeightBounds.Upper.get -> System.Collections.Generic.IReadOnlyList<double>!
+PortOpt.WeightBounds.WeightBounds(System.Collections.Generic.IReadOnlyList<double>! lower, System.Collections.Generic.IReadOnlyList<double>! upper) -> void
+override PortOpt.WeightBounds.Equals(object? obj) -> bool
+override PortOpt.WeightBounds.GetHashCode() -> int
+override PortOpt.WeightBounds.ToString() -> string!
 override PortOpt.Bounds.GetHashCode() -> int
 override PortOpt.Spec.Equals(object? obj) -> bool
 override PortOpt.Spec.GetHashCode() -> int
 override PortOpt.Spec.ToString() -> string!
-static PortOpt.AssetBounds.operator !=(PortOpt.AssetBounds? left, PortOpt.AssetBounds? right) -> bool
-static PortOpt.AssetBounds.operator ==(PortOpt.AssetBounds? left, PortOpt.AssetBounds? right) -> bool
+static PortOpt.WeightBounds.operator !=(PortOpt.WeightBounds? left, PortOpt.WeightBounds? right) -> bool
+static PortOpt.WeightBounds.operator ==(PortOpt.WeightBounds? left, PortOpt.WeightBounds? right) -> bool
 static PortOpt.Bounds.operator !=(PortOpt.Bounds left, PortOpt.Bounds right) -> bool
 static PortOpt.Bounds.operator ==(PortOpt.Bounds left, PortOpt.Bounds right) -> bool
 static PortOpt.NativeAbi.LibraryVersion.get -> string!

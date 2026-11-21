@@ -76,22 +76,22 @@ TEST(CapiSpec, InvalidBoundsLeaveSpecUnchanged)
 
     const double lower[kAssets] = {0.0, 0.0, 0.0};
     const double upper[kAssets] = {1.0, kNaN, 1.0};
-    EXPECT_EQ(po_spec_set_asset_bounds(spec.get(), lower, upper, kAssets), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_weight_bounds(spec.get(), lower, upper, kAssets), PO_INVALID_ARGUMENT);
     const double crossed[kAssets] = {1.0, 1.0, -1.0};
-    EXPECT_EQ(po_spec_set_asset_bounds(spec.get(), crossed, lower, kAssets), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_weight_bounds(spec.get(), crossed, lower, kAssets), PO_INVALID_ARGUMENT);
     EXPECT_EQ(po_spec_set_target_return(spec.get(), kNaN), PO_INVALID_ARGUMENT);
     EXPECT_EQ(po_spec_set_target_return(spec.get(), kInfinity), PO_INVALID_ARGUMENT);
 
     EXPECT_EQ(po::testing::weights_of(po::testing::solve_ok(spec.get(), data.get()).get()), expected);
 }
 
-TEST(CapiSpec, AssetBoundsRejectNullArraysAndZeroCount)
+TEST(CapiSpec, WeightBoundsRejectNullArraysAndZeroCount)
 {
     SpecPtr spec = po::testing::make_spec();
     const double values[kAssets] = {0.0, 0.0, 0.0};
-    EXPECT_EQ(po_spec_set_asset_bounds(spec.get(), nullptr, values, kAssets), PO_INVALID_ARGUMENT);
-    EXPECT_EQ(po_spec_set_asset_bounds(spec.get(), values, nullptr, kAssets), PO_INVALID_ARGUMENT);
-    EXPECT_EQ(po_spec_set_asset_bounds(spec.get(), values, values, 0), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_weight_bounds(spec.get(), nullptr, values, kAssets), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_weight_bounds(spec.get(), values, nullptr, kAssets), PO_INVALID_ARGUMENT);
+    EXPECT_EQ(po_spec_set_weight_bounds(spec.get(), values, values, 0), PO_INVALID_ARGUMENT);
     EXPECT_STREQ(po_last_error(), "n must be positive");
 }
 
@@ -103,7 +103,7 @@ TEST(CapiSpec, LastBoundsCallWins)
     const double upper[kAssets] = {0.2, 0.2, 0.2};
 
     ASSERT_EQ(po_spec_set_bounds(spec.get(), 0.0, 1.0), PO_OK);
-    ASSERT_EQ(po_spec_set_asset_bounds(spec.get(), lower, upper, kAssets), PO_OK);
+    ASSERT_EQ(po_spec_set_weight_bounds(spec.get(), lower, upper, kAssets), PO_OK);
     EXPECT_EQ(po::testing::status_of(po::testing::solve_ok(spec.get(), data.get()).get()), PO_SOLVE_INFEASIBLE);
 
     ASSERT_EQ(po_spec_set_bounds(spec.get(), 0.0, 1.0), PO_OK);
@@ -113,7 +113,7 @@ TEST(CapiSpec, LastBoundsCallWins)
     EXPECT_EQ(po::testing::status_of(po::testing::solve_ok(spec.get(), data.get()).get()), PO_SOLVE_INFEASIBLE);
 
     const double wide[kAssets] = {1.0, 1.0, 1.0};
-    ASSERT_EQ(po_spec_set_asset_bounds(spec.get(), lower, wide, kAssets), PO_OK);
+    ASSERT_EQ(po_spec_set_weight_bounds(spec.get(), lower, wide, kAssets), PO_OK);
     EXPECT_EQ(po::testing::status_of(po::testing::solve_ok(spec.get(), data.get()).get()), PO_SOLVE_OPTIMAL);
 }
 
@@ -123,11 +123,11 @@ TEST(CapiSpec, WrongAssetBoundCountFailsAtSolve)
     SpecPtr spec = po::testing::make_spec();
     const double lower[2] = {0.0, 0.0};
     const double upper[2] = {1.0, 1.0};
-    ASSERT_EQ(po_spec_set_asset_bounds(spec.get(), lower, upper, 2), PO_OK);
+    ASSERT_EQ(po_spec_set_weight_bounds(spec.get(), lower, upper, 2), PO_OK);
     po_result* result = nullptr;
     EXPECT_EQ(po_solve(spec.get(), data.get(), &result), PO_INVALID_ARGUMENT);
     EXPECT_EQ(result, nullptr);
-    EXPECT_STREQ(po_last_error(), "asset_lower has 2 entries; expected 3");
+    EXPECT_STREQ(po_last_error(), "weight_lower has 2 entries; expected 3");
 }
 
 using Setter = po_status (*)(po_spec*, double);

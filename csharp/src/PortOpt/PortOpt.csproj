@@ -17,7 +17,8 @@ utility, Kelly, tracking error, maximum diversification and risk parity, with bo
     <PackageTags>portfolio;optimization;markowitz;risk-parity;finance</PackageTags>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <!-- No baseline before 1.0: 0.x breaks the ABI between minor versions (PackageValidationBaselineVersion). -->
+    <!-- The first package is 1.0.0, so there is no baseline yet; once it is on nuget.org, set
+         PackageValidationBaselineVersion to 1.0.0 so that every later version is checked against it. -->
     <EnablePackageValidation>true</EnablePackageValidation>
     <!-- The native libraries: PortOptNativeAssets is a folder of portopt-native-<rid>.<ext> files (the release
          artifacts); each RID below becomes runtimes/<rid>/native/libportopt.<ext>. -->

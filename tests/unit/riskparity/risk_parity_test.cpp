@@ -519,15 +519,15 @@ TEST(RiskParity, BoundsInfeasible)
 }
 
 // Sigma = diag(0.04, 0.09), long only: no portfolio has a volatility above 0.3, which no cheap certificate
-// shows. The iteration cannot reach s = 0.5 and the answer is MAX_ITER, without a point.
-TEST(RiskParity, UnreachableVolatilityIsMaxIter)
+// shows. The iteration cannot reach s = 0.5 and the answer is NOT_CONVERGED, without a point.
+TEST(RiskParity, UnreachableVolatilityIsNotConverged)
 {
     Data data = Data::create(2, {}, std::vector<double>{0.04, 0.0, 0.0, 0.09}).value();
     Spec spec = risk_parity_spec();
     spec.lower = 0.0;
     spec.target_volatility = 0.5;
     Result result = solved(spec, data);
-    expect_no_point(result, SolveStatus::MaxIterations, 2);
+    expect_no_point(result, SolveStatus::NotConverged, 2);
     EXPECT_GT(result.iterations, 0);
 }
 
@@ -555,10 +555,11 @@ void expect_scan_minimum_at_an_end(const po::testing::GeneratedRiskParity& gener
 // it to its value at the direction of the line. On these two shapes the descent from the Spinu point follows
 // f down the line without end (on both the scan finds its minimum at an end of the scanned segment): the
 // weights grow until the budget row is lost in their rounding. That is not a portfolio, and the answer is
-// MAX_ITER, without a point. On the last two shapes every KKT residual of those weights is within its own
-// rounding, which grows with the weights: only the budget row, no longer resolved, says they are no answer.
+// NOT_CONVERGED, without a point. On the last two shapes every KKT residual of those weights is within its
+// own rounding, which grows with the weights: only the budget row, no longer resolved, says they are no
+// answer.
 // The seeds are the first of each kind with those properties, found by search.
-TEST(RiskParity, TargetReturnWithoutMinimizerIsMaxIter)
+TEST(RiskParity, TargetReturnWithoutMinimizerIsNotConverged)
 {
     using Shape = po::testing::RiskParityShape;
     constexpr Shape::Box kNone = Shape::Box::None;
@@ -570,7 +571,7 @@ TEST(RiskParity, TargetReturnWithoutMinimizerIsMaxIter)
         SCOPED_TRACE(po::testing::describe(shape));
         po::testing::GeneratedRiskParity generated = po::testing::generate(shape);
         Result result = solved(generated.spec, generated.data);
-        expect_no_point(result, SolveStatus::MaxIterations, shape.n);
+        expect_no_point(result, SolveStatus::NotConverged, shape.n);
         EXPECT_GT(result.iterations, 0);
         if (shape.n == 3)
         {

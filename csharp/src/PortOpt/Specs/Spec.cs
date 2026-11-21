@@ -15,12 +15,12 @@ public sealed record Spec
     /// <summary>What to optimize; <see cref="Objective.MinVariance"/> by default.</summary>
     public Objective Objective { get; init; }
 
-    /// <summary>One pair of bounds for every weight; at most one of this and <see cref="AssetBounds"/>. Without
+    /// <summary>One pair of bounds for every weight; at most one of this and <see cref="WeightBounds"/>. Without
     /// either every weight is free.</summary>
     public Bounds? Bounds { get; init; }
 
     /// <summary>One pair of bounds per weight, cash last; at most one of this and <see cref="Bounds"/>.</summary>
-    public AssetBounds? AssetBounds { get; init; }
+    public WeightBounds? WeightBounds { get; init; }
 
     /// <summary>The required portfolio return, finite.</summary>
     public double? TargetReturn { get; init; }
@@ -49,7 +49,7 @@ public sealed record Spec
     }
 
     /// <summary>Runs every setter on a native spec, as the solve does, without solving.</summary>
-    /// <exception cref="InvalidOperationException">Both <see cref="Bounds"/> and <see cref="AssetBounds"/> are set.</exception>
+    /// <exception cref="InvalidOperationException">Both <see cref="Bounds"/> and <see cref="WeightBounds"/> are set.</exception>
     /// <exception cref="PortOptException">A value is outside its domain.</exception>
     public void Validate()
     {
@@ -60,7 +60,7 @@ public sealed record Spec
     public bool Equals(Spec? other)
     {
         return other is not null && Objective == other.Objective && Bounds == other.Bounds
-               && Equals(AssetBounds, other.AssetBounds) && TargetReturn == other.TargetReturn
+               && Equals(WeightBounds, other.WeightBounds) && TargetReturn == other.TargetReturn
                && RiskAversion == other.RiskAversion && Importance == other.Importance
                && MaxVolatility == other.MaxVolatility && Leverage == other.Leverage
                && TargetVolatility == other.TargetVolatility && Values.Same(_riskBudget, other._riskBudget);
@@ -70,14 +70,14 @@ public sealed record Spec
     public override int GetHashCode()
     {
         var scalars = HashCode.Combine(TargetReturn, RiskAversion, Importance, MaxVolatility, Leverage, TargetVolatility);
-        return HashCode.Combine(Objective, Bounds, AssetBounds, scalars, Values.HashOf(_riskBudget));
+        return HashCode.Combine(Objective, Bounds, WeightBounds, scalars, Values.HashOf(_riskBudget));
     }
 
     internal SpecHandle CreateHandle()
     {
-        if (Bounds is not null && AssetBounds is not null)
+        if (Bounds is not null && WeightBounds is not null)
         {
-            throw new InvalidOperationException("a spec takes Bounds or AssetBounds, not both");
+            throw new InvalidOperationException("a spec takes Bounds or WeightBounds, not both");
         }
         Library.EnsureLoaded();
         Calls.Check(NativeMethods.po_spec_create((int)Objective, out var handle));
@@ -101,14 +101,14 @@ public sealed record Spec
         {
             Calls.Check(NativeMethods.po_spec_set_bounds(handle, bounds.Lower, bounds.Upper));
         }
-        if (AssetBounds is null)
+        if (WeightBounds is null)
         {
             return;
         }
-        fixed (double* lower = AssetBounds.LowerSpan)
-        fixed (double* upper = AssetBounds.UpperSpan)
+        fixed (double* lower = WeightBounds.LowerSpan)
+        fixed (double* upper = WeightBounds.UpperSpan)
         {
-            Calls.Check(NativeMethods.po_spec_set_asset_bounds(handle, lower, upper, (nuint)AssetBounds.Lower.Count));
+            Calls.Check(NativeMethods.po_spec_set_weight_bounds(handle, lower, upper, (nuint)WeightBounds.Lower.Count));
         }
     }
 

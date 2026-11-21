@@ -70,7 +70,7 @@ public enum SolveStatus
     Unbounded = 2,
 
     /// <summary>The solver did not end at a point it can vouch for; the weights are NaN.</summary>
-    MaxIter = 3,
+    NotConverged = 3,
 }
 
 // The named constraints of po_result_multiplier (PO_CONSTRAINT_*).

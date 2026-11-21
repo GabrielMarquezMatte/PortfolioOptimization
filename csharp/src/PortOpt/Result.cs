@@ -5,7 +5,7 @@ namespace PortOpt;
 /// <summary>
 /// The result of a solve, copied out of the native result, so it holds no handle. The weights, the multipliers and
 /// the residual are NaN when the status provides no point (<see cref="SolveStatus.Infeasible"/>,
-/// <see cref="SolveStatus.Unbounded"/>, <see cref="SolveStatus.MaxIter"/>); the multiplier of a constraint the
+/// <see cref="SolveStatus.Unbounded"/>, <see cref="SolveStatus.NotConverged"/>); the multiplier of a constraint the
 /// problem does not have is NaN. portopt.h has the multiplier convention.
 /// </summary>
 public sealed class Result

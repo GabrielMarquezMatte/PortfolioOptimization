@@ -15,8 +15,8 @@ public sealed class SpecTests
     [Fact]
     public void Equality_compares_the_arrays_by_value()
     {
-        var left = new Spec { Objective = Objective.RiskParity, RiskBudget = [0.5, 0.25, 0.25], AssetBounds = new([0, 0, 0], [1, 1, 1]) };
-        var right = new Spec { Objective = Objective.RiskParity, RiskBudget = [0.5, 0.25, 0.25], AssetBounds = new([0, 0, 0], [1, 1, 1]) };
+        var left = new Spec { Objective = Objective.RiskParity, RiskBudget = [0.5, 0.25, 0.25], WeightBounds = new([0, 0, 0], [1, 1, 1]) };
+        var right = new Spec { Objective = Objective.RiskParity, RiskBudget = [0.5, 0.25, 0.25], WeightBounds = new([0, 0, 0], [1, 1, 1]) };
         Assert.Equal(left, right);
         Assert.Equal(left.GetHashCode(), right.GetHashCode());
         Assert.NotEqual(left, right with { RiskBudget = [0.4, 0.3, 0.3] });
@@ -50,14 +50,14 @@ public sealed class SpecTests
     [Fact]
     public void Both_forms_of_bounds_are_refused()
     {
-        var spec = new Spec { Bounds = new Bounds(0, 1), AssetBounds = new([0, 0, 0], [1, 1, 1]) };
+        var spec = new Spec { Bounds = new Bounds(0, 1), WeightBounds = new([0, 0, 0], [1, 1, 1]) };
         Assert.Throws<InvalidOperationException>(spec.Validate);
     }
 
     [Fact]
     public void Asset_bounds_need_two_sides_of_one_length()
     {
-        Assert.Throws<ArgumentException>(() => new AssetBounds([0, 0], [1, 1, 1]));
+        Assert.Throws<ArgumentException>(() => new WeightBounds([0, 0], [1, 1, 1]));
     }
 
     [Fact]

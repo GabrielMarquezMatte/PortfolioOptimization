@@ -68,7 +68,7 @@ public sealed class SolveTests
     {
         double[,] returns = { { 0.01, 0.02 }, { -0.01, 0.03 }, { 0.02, -0.02 }, { 0.00, 0.01 } };
         double[] benchmark = [0.012, 0.0, 0.01, 0.004];
-        using var data = new MarketData(returns: returns, benchmark: benchmark, riskFree: 0.001);
+        using var data = new MarketData(new MarketInputs { Returns = returns, Benchmark = benchmark, RiskFree = 0.001 });
         var result = Optimizer.Solve(new Spec { Objective = Objective.TrackingError, Bounds = new Bounds(0, 1) }, data);
         Assert.Equal(SolveStatus.Optimal, result.Status);
         Assert.Equal(3, result.Weights.Length);
@@ -95,7 +95,7 @@ public sealed class SolveTests
     [Fact]
     public void Missing_data_is_refused()
     {
-        using var data = new MarketData(covariance: Samples.Covariance);
+        using var data = new MarketData(new MarketInputs { Covariance = Samples.Covariance });
         var error = Assert.Throws<PortOptException>(() => Optimizer.Solve(new Spec { Objective = Objective.MaxSharpe }, data));
         Assert.Equal(Status.InvalidArgument, error.Status);
     }

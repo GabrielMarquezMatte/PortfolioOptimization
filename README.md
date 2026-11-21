@@ -19,7 +19,7 @@ weight);
 `MIN_VARIANCE` and `TRACKING_ERROR` also take a target return, and `RISK_PARITY` takes neither cash nor a leverage but a
 target return and a target volatility. The result carries the weights and the multipliers of
 the budget, target-return, volatility and leverage constraints and of the bounds, under the convention in
-[docs/guide/math.md](docs/guide/math.md). A solve that ends without a point it can vouch for has status `MAX_ITER`,
+[docs/guide/math.md](docs/guide/math.md). A solve that ends without a point it can vouch for has status `NOT_CONVERGED`,
 with NaN weights, multipliers and residual, for every objective. A `MAX_SHARPE` or
 `MAX_DIVERSIFICATION` problem whose supremum is not attained, such as `MAX_SHARPE` with unbounded short selling and a
 risk-free rate above the minimum-variance return, has status `UNBOUNDED` and NaN weights. Portfolio return, volatility,
@@ -242,6 +242,7 @@ PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll dotnet test --solution csharp/
 - [docs/guide/math.md](docs/guide/math.md): notation, the QP of each objective, the leverage, the parametric path of
   `MAX_RETURN`, the homogenization of `MAX_SHARPE` and `MAX_DIVERSIFICATION`, `RISK_PARITY` and the multiplier convention
 - [docs/guide/validation.md](docs/guide/validation.md): how results are checked, the tolerances and the fuzz battery
+- [docs/guide/versioning.md](docs/guide/versioning.md): what a minor version may change, and the ABI version
 - [docs/performance/benchmarks.md](docs/performance/benchmarks.md), [measuring.md](docs/performance/measuring.md) and
   [python-vs-arch.md](docs/performance/python-vs-arch.md): the benchmark results, how to measure and the cost of the C
   and Python layers

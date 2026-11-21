@@ -151,7 +151,7 @@ TEST(MinVariance, LongOnlyBoundsKkt)
     }
 }
 
-TEST(MinVariance, AssetBounds)
+TEST(MinVariance, WeightBounds)
 {
     constexpr std::size_t n = 6;
     Data data = random_data(n, 5);
@@ -159,11 +159,11 @@ TEST(MinVariance, AssetBounds)
     auto largest = std::max_element(free.weights.begin(), free.weights.end());
     std::size_t capped = static_cast<std::size_t>(largest - free.weights.begin());
     Spec spec;
-    spec.asset_lower.assign(n, -kInfinity);
-    spec.asset_upper.assign(n, kInfinity);
-    spec.asset_upper[capped] = 0.5 * *largest;
+    spec.weight_lower.assign(n, -kInfinity);
+    spec.weight_upper.assign(n, kInfinity);
+    spec.weight_upper[capped] = 0.5 * *largest;
     Result result = solve_checked(spec, data);
-    EXPECT_NEAR(result.weights[capped], spec.asset_upper[capped], 1e-14);
+    EXPECT_NEAR(result.weights[capped], spec.weight_upper[capped], 1e-14);
     EXPECT_LT(result.bound_multipliers[capped], 0.0);
 }
 
@@ -225,18 +225,18 @@ TEST(MinVariance, CashBoundsApply)
     EXPECT_LE(result.weights[n], 1.0 + 1e-14);
 }
 
-TEST(MinVariance, AssetBoundsSizeIncludesCash)
+TEST(MinVariance, WeightBoundsSizeIncludesCash)
 {
     constexpr std::size_t n = 4;
     Data data = random_data(n, 9);
     data.set_risk_free(kRiskFree);
     Spec spec;
-    spec.asset_lower.assign(n, 0.0);
+    spec.weight_lower.assign(n, 0.0);
     std::expected<Result, po::Failure> rejected = po::solve(spec, data);
     ASSERT_FALSE(rejected.has_value());
     EXPECT_EQ(rejected.error().kind, po::FailureKind::InvalidArgument);
-    EXPECT_EQ(rejected.error().message, "asset_lower has 4 entries; expected 5");
-    spec.asset_lower.assign(n + 1, 0.0);
+    EXPECT_EQ(rejected.error().message, "weight_lower has 4 entries; expected 5");
+    spec.weight_lower.assign(n + 1, 0.0);
     solve_checked(spec, data);
 }
 
@@ -262,10 +262,10 @@ TEST(MinVariance, FixedAsset)
     constexpr std::size_t n = 6;
     Data data = random_data(n, 12);
     Spec spec;
-    spec.asset_lower.assign(n, -kInfinity);
-    spec.asset_upper.assign(n, kInfinity);
-    spec.asset_lower[0] = 0.25;
-    spec.asset_upper[0] = 0.25;
+    spec.weight_lower.assign(n, -kInfinity);
+    spec.weight_upper.assign(n, kInfinity);
+    spec.weight_lower[0] = 0.25;
+    spec.weight_upper[0] = 0.25;
     Result result = solve_checked(spec, data);
     EXPECT_NEAR(result.weights[0], 0.25, 1e-14);
 }

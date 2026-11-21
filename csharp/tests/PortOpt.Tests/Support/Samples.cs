@@ -14,6 +14,6 @@ internal static class Samples
 
     public static MarketData Data()
     {
-        return new MarketData(Mu, Covariance);
+        return new MarketData(new MarketInputs { Mu = Mu, Covariance = Covariance });
     }
 }

@@ -425,10 +425,10 @@ TEST(MaxReturn, FixedCashIllConditioned)
             Data data = Data::create(n, mu, po::testing::random_covariance(n, seed, 1e8)).value();
             data.set_risk_free(kRiskFree);
             Spec bounds;
-            bounds.asset_lower.assign(n + 1, 0.0);
-            bounds.asset_upper.assign(n + 1, 1.0);
-            bounds.asset_lower[n] = 0.1;
-            bounds.asset_upper[n] = 0.1;
+            bounds.weight_lower.assign(n + 1, 0.0);
+            bounds.weight_upper.assign(n + 1, 1.0);
+            bounds.weight_lower[n] = 0.1;
+            bounds.weight_upper[n] = 0.1;
             double cap = (1.0 + fraction) * minimum_volatility(bounds, data);
             Result result = solve_checked(max_return(bounds, cap), data, sweep_tolerance(1e8));
             ASSERT_EQ(result.status, SolveStatus::Optimal);

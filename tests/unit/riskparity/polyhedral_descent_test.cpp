@@ -59,7 +59,7 @@ DescentOptions options_with(int max_iterations)
 Result as_result(const Spec& spec, const DescentResult& descent)
 {
     Result result;
-    result.status = po::SolveStatus::MaxIterations;
+    result.status = po::SolveStatus::NotConverged;
     if (descent.stop == DescentStop::Converged)
     {
         result.status = po::SolveStatus::Optimal;

@@ -12,7 +12,7 @@ enum class SolveStatus : std::int32_t
     Optimal = 0,
     Infeasible = 1,
     Unbounded = 2,
-    MaxIterations = 3
+    NotConverged = 3
 };
 
 // For the objective f in minimization form (MIN_VARIANCE: f = w'Sigma w, without 1/2; a maximized objective

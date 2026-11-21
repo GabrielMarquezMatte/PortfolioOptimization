@@ -10,7 +10,7 @@ double[,] covariance =
     { 0.006, 0.090, 0.012 },
     { 0.010, 0.012, 0.060 },
 };
-using var data = new MarketData(mu, covariance, riskFree: 0.02);
+using var data = new MarketData(new MarketInputs { Mu = mu, Covariance = covariance, RiskFree = 0.02 });
 var result = Optimizer.Solve(new Spec { Objective = Objective.MaxSharpe, Bounds = new Bounds(0, 1) }, data);
 Console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
     $"PortOpt {NativeAbi.LibraryVersion} (ABI {NativeAbi.Version}): {result.Status}, Sharpe {data.SharpeRatio(result.Weights)}"));

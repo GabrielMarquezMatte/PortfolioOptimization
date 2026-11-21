@@ -12,32 +12,25 @@ public sealed class MarketData : IDisposable
 {
     private readonly DataHandle _handle;
 
-    /// <summary>
-    /// Data for n assets, n taken from whichever input is given; the objective decides which it needs
-    /// (portopt.h). The covariance must be symmetric positive definite and every value finite.
-    /// </summary>
-    /// <param name="mu">The expected return of each asset (n entries).</param>
-    /// <param name="covariance">The covariance, n x n.</param>
-    /// <param name="riskFree">The rate of a risk-free asset, which becomes the last weight.</param>
-    /// <param name="returns">Return series for <see cref="Objective.TrackingError"/>, t periods x n assets.</param>
-    /// <param name="benchmark">The benchmark return of each period (t entries); given with <paramref name="returns"/>.</param>
+    /// <summary>Data for n assets from its inputs; every value must be finite.</summary>
+    /// <param name="inputs">The inputs, copied.</param>
     /// <exception cref="ArgumentException">No input, sizes that do not agree, a covariance that is not square, or only
-    /// one of <paramref name="returns"/> and <paramref name="benchmark"/>.</exception>
+    /// one of <see cref="MarketInputs.Returns"/> and <see cref="MarketInputs.Benchmark"/>.</exception>
     /// <exception cref="PortOptException">The library rejects a value (non-finite, an asymmetric covariance or one
     /// that is not positive definite).</exception>
-    public MarketData(double[]? mu = null, double[,]? covariance = null, double? riskFree = null, double[,]? returns = null,
-                      double[]? benchmark = null)
+    public MarketData(MarketInputs inputs)
     {
-        var assets = Shapes.AssetCount(mu, covariance, returns, benchmark);
+        ArgumentNullException.ThrowIfNull(inputs);
+        var assets = Shapes.AssetCount(inputs);
         Library.EnsureLoaded();
-        _handle = Create(assets, mu, covariance);
+        _handle = Create(assets, inputs.Mu, inputs.Covariance);
         try
         {
-            if (riskFree is { } rate)
+            if (inputs.RiskFree is { } rate)
             {
                 Calls.Check(NativeMethods.po_data_set_risk_free(_handle, rate));
             }
-            SetReturns(returns, benchmark);
+            SetReturns(inputs.Returns, inputs.Benchmark);
             Calls.Check(NativeMethods.po_data_asset_count(_handle, out var counted));
             Calls.Check(NativeMethods.po_data_weight_count(_handle, out var weights));
             AssetCount = checked((int)counted);
