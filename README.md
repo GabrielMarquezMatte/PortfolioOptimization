@@ -8,7 +8,7 @@ no dependency besides GoogleTest (for its tests).
 
 ## Status
 
-Version 0.1.0 (pre-release). Nine objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
+Version 1.0.0. Nine objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
 volatility cap (`MAX_RETURN`), the maximum Sharpe ratio (`MAX_SHARPE`), mean-variance utility (`UTILITY`), the same
 with an importance weight between risk and return (`IMPORTANCE`), the Kelly criterion (`KELLY`), tracking error
 against a benchmark (`TRACKING_ERROR`), the maximum diversification ratio (`MAX_DIVERSIFICATION`) and risk parity with

@@ -9,6 +9,10 @@ From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-21
+
+The C ABI is frozen from this release: it only grows ([docs/guide/versioning.md](docs/guide/versioning.md)).
+
 ### Added
 
 - The .NET 10 binding `PortOpt` (`csharp/`), a NuGet package with the seven native libraries: `Spec`, `MarketData`
