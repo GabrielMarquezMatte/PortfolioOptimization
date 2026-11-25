@@ -63,6 +63,20 @@ public sealed class EstimationTests
     }
 
     [Fact]
+    public void Omegas_without_views_are_empty()
+    {
+        var none = new double[0, 3];
+        Assert.Equal(new double[0, 0], Estimation.OmegaHeLitterman(Covariance, none, Tau));
+        Assert.Equal(new double[0, 0], Estimation.OmegaIdzorek(Covariance, none, Tau, []));
+    }
+
+    [Fact]
+    public void BayesStein_rejects_a_negative_period_count()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => Estimation.BayesStein([0.001, 0.002, 0.0005], Covariance, -1));
+    }
+
+    [Fact]
     public void Posterior_matches_numpy_for_a_relative_view()
     {
         var omega = Estimation.OmegaHeLitterman(Covariance, RelativeP, Tau);

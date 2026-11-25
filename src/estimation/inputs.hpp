@@ -9,8 +9,8 @@
 namespace po::estimation
 {
 
-// Refuses a data object that has no covariance, no mu when needs_mu, or a risk-free rate: the estimation
-// utilities work on raw returns, never on excess returns.
+// Refuses a data object that has no covariance, no mu when needs_mu, or a risk-free rate: the rate has no role in
+// these formulas, so a po_data that carries one is refused rather than silently ignored.
 std::optional<Failure> check_inputs(const Data& data, bool needs_mu);
 
 // Refuses a value that is not finite and positive, with the given message.

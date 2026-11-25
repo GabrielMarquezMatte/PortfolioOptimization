@@ -146,6 +146,17 @@ TEST(CapiEstimation, EmptyViewsAcceptNullPointers)
     EXPECT_NEAR(cov[0], (1.0 + kTau) * kCovariance[0], 1e-18);
 }
 
+TEST(CapiEstimation, EmptyViewsAcceptNullOmegaPointers)
+{
+    po_views* raw = nullptr;
+    ASSERT_EQ(po_views_create(0, 2, nullptr, nullptr, &raw), PO_OK);
+    ViewsPtr views(raw);
+    DataPtr prior = po::testing::make_data(2, kMu, kCovariance);
+    EXPECT_EQ(po_bl_omega_he_litterman(prior.get(), views.get(), kTau, nullptr), PO_OK);
+    EXPECT_EQ(po_bl_omega_idzorek(prior.get(), views.get(), kTau, nullptr, nullptr), PO_OK);
+    EXPECT_EQ(po_views_set_omega(views.get(), nullptr, 0), PO_OK);
+}
+
 TEST(CapiEstimation, NullHandles)
 {
     DataPtr prior = po::testing::make_data(2, kMu, kCovariance);

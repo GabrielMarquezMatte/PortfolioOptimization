@@ -75,7 +75,7 @@ extern "C" po_status po_views_set_omega(po_views* v, const double* omega, size_t
             {
                 return null_handle("v");
             }
-            if (omega == nullptr)
+            if (omega == nullptr && k != 0)
             {
                 return null_argument("omega");
             }

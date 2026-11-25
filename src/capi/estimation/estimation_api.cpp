@@ -168,7 +168,7 @@ extern "C" po_status po_bl_omega_he_litterman(const po_data* d, const po_views* 
             {
                 return status;
             }
-            if (out_omega == nullptr)
+            if (out_omega == nullptr && v->views.view_count() != 0)
             {
                 return null_argument("out_omega");
             }
@@ -193,11 +193,11 @@ extern "C" po_status po_bl_omega_idzorek(const po_data* d, const po_views* v, do
             {
                 return status;
             }
-            if (confidence == nullptr)
+            if (confidence == nullptr && v->views.view_count() != 0)
             {
                 return null_argument("confidence");
             }
-            if (out_omega == nullptr)
+            if (out_omega == nullptr && v->views.view_count() != 0)
             {
                 return null_argument("out_omega");
             }

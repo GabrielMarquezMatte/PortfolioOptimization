@@ -224,6 +224,23 @@ TEST(Wrapper, EstimationRoundTrip)
     EXPECT_NEAR(total, 1.0, 1e-9);
 }
 
+TEST(Wrapper, EmptyViewsHaveEmptyOmegas)
+{
+    const po::Expected<po::Data> prior = po::Data::create(kAssets, std::vector<double>{0.01, 0.02, 0.03}, std::vector<double>{0.04, 0.0, 0.0, 0.0, 0.04, 0.0, 0.0, 0.0, 0.04});
+    ASSERT_TRUE(prior.has_value()) << prior.error().message;
+    const po::Expected<po::Views> views = po::Views::create(kAssets, std::vector<double>{}, std::vector<double>{});
+    ASSERT_TRUE(views.has_value()) << views.error().message;
+    const po::Expected<std::vector<double>> omega = po::bl_omega_he_litterman(*prior, *views, 0.05);
+    ASSERT_TRUE(omega.has_value()) << omega.error().message;
+    EXPECT_TRUE(omega->empty());
+    const po::Expected<std::vector<double>> idzorek = po::bl_omega_idzorek(*prior, *views, 0.05, std::vector<double>{});
+    ASSERT_TRUE(idzorek.has_value()) << idzorek.error().message;
+    EXPECT_TRUE(idzorek->empty());
+    po::Expected<po::Views> mutable_views = po::Views::create(kAssets, std::vector<double>{}, std::vector<double>{});
+    ASSERT_TRUE(mutable_views.has_value());
+    EXPECT_TRUE(mutable_views->set_omega({}).has_value());
+}
+
 TEST(Wrapper, ViewsSizeMismatch)
 {
     const po::Expected<po::Views> views =

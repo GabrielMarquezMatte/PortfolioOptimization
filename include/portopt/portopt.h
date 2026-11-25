@@ -412,7 +412,8 @@ PO_API void po_views_free(po_views* v);
 /* out_omega is k x k, diagonal, zero off the diagonal; pass it to po_views_set_omega. He and Litterman:
    omega_kk = tau p_k Sigma p_k'. Idzorek (Walters): omega_kk = ((1 - c_k) / c_k) tau p_k Sigma p_k', with
    confidence of k entries and 0 < c_k <= 1; c_k = 1 gives omega_kk = 0, the full-confidence view. d and v need
-   the same n, and tau must be finite and positive. The Omega stored in v is not read. */
+   the same n, and tau must be finite and positive. The Omega stored in v is not read. With k = 0, confidence,
+   out_omega and omega (po_views_set_omega) may be NULL. */
 PO_API po_status po_bl_omega_he_litterman(const po_data* d, const po_views* v, double tau, double* out_omega);
 PO_API po_status po_bl_omega_idzorek(const po_data* d, const po_views* v, double tau, const double* confidence,
                                      double* out_omega);
