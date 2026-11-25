@@ -188,6 +188,7 @@ if(PO_BUILD_TESTS)
         tests/unit/core/portable_math_test.cpp
         tests/unit/estimation/bayes_stein_test.cpp
         tests/unit/estimation/black_litterman_test.cpp
+        tests/unit/estimation/determinism_test.cpp
         tests/unit/estimation/moments_test.cpp
         tests/unit/estimation/views_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp
