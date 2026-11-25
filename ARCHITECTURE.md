@@ -82,7 +82,7 @@ Build targets (`CMakeLists.txt`):
 | Path | Responsibility |
 |---|---|
 | `include/portopt/portopt.h` | The C API: `po_` functions, `PO_` constants, opaque handles, no public struct |
-| `src/capi/handles.hpp` | The handle types (`po_spec`, `po_data`, `po_result`), each wrapping one core value, and the null-handle and failure helpers |
+| `src/capi/handles.hpp` | The handle types (`po_spec`, `po_data`, `po_result`, `po_views`), each wrapping one core value, and the null-handle and failure helpers |
 | `src/capi/error.hpp`, `error.cpp` | Thread-local `po_last_error()`, `set_error`, and `guard`, the one place exceptions are caught |
 | `src/capi/estimation/views_api.cpp`, `estimation_api.cpp` | The estimation entry points: `po_views_create`, `po_views_set_omega`, `po_views_free`, and the six utilities. A subfolder because `src/capi` is at the limit of 8 modules; `struct po_views` is in `handles.hpp` |
 | `src/capi/spec_api.cpp`, `data_api.cpp`, `solve_api.cpp`, `result_api.cpp`, `metrics_api.cpp`, `version_api.cpp` | The `extern "C"` functions, one file per handle family |

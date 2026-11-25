@@ -571,8 +571,9 @@ budget `b`: the optimal variance is `b^2 / A`, whose derivative at `b = 1` is 2 
 Side-effect-free functions that read arrays, a `po_data` or a `po_views` and write only their outputs
 (`include/portopt/portopt.h`, "Estimation utilities"; `src/estimation/`). They estimate the inputs of an
 optimization; `solve` never calls them. Matrices are row-major, `n` is the number of assets, `t` the number of
-periods and `k` the number of views. In `po_bayes_stein`, `po_bl_equilibrium` and `po_bl_posterior` the covariance
-comes from a `po_data` (so it is already validated, symmetrized and factored), and that `po_data` must not carry a
+periods and `k` the number of views. In `po_bayes_stein`, `po_bl_equilibrium`, `po_bl_omega_he_litterman`,
+`po_bl_omega_idzorek` and `po_bl_posterior` the covariance comes from a `po_data`
+(so it is already validated, symmetrized and factored), and that `po_data` must not carry a
 risk-free rate (`"data must not have a risk-free rate"`): the rate has no role in these formulas, and ignoring it would
 be a silent failure.
 
