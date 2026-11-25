@@ -66,6 +66,15 @@ PROTOTYPES: dict[str, tuple[Any, list[Any]]] = {
     "po_sharpe_ratio": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
     "po_diversification_ratio": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
     "po_risk_contributions": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _OUT_DOUBLE]),
+    "po_sample_moments": (_STATUS, [_SIZE, _SIZE, _IN_DOUBLES, _OUT_DOUBLE, _OUT_DOUBLE]),
+    "po_bayes_stein": (_STATUS, [_HANDLE, _SIZE, _OUT_DOUBLE, _OUT_DOUBLE, _OUT_DOUBLE]),
+    "po_bl_equilibrium": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE, _DOUBLE, _OUT_DOUBLE]),
+    "po_views_create": (_STATUS, [_SIZE, _SIZE, _IN_DOUBLES, _IN_DOUBLES, _OUT_HANDLE]),
+    "po_views_set_omega": (_STATUS, [_HANDLE, _IN_DOUBLES, _SIZE]),
+    "po_views_free": (None, [_HANDLE]),
+    "po_bl_omega_he_litterman": (_STATUS, [_HANDLE, _HANDLE, _DOUBLE, _OUT_DOUBLE]),
+    "po_bl_omega_idzorek": (_STATUS, [_HANDLE, _HANDLE, _DOUBLE, _IN_DOUBLES, _OUT_DOUBLE]),
+    "po_bl_posterior": (_STATUS, [_HANDLE, _HANDLE, _DOUBLE, _OUT_DOUBLE, _OUT_DOUBLE]),
 }
 
 
