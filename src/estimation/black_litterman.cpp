@@ -17,15 +17,6 @@ Failure invalid(std::string message)
     return Failure{FailureKind::InvalidArgument, std::move(message)};
 }
 
-std::optional<Failure> check_positive(double value, const char* message)
-{
-    if (std::isfinite(value) && value > 0.0)
-    {
-        return std::nullopt;
-    }
-    return invalid(message);
-}
-
 std::optional<Failure> check_weights(std::span<const double> w_mkt, std::size_t n)
 {
     if (w_mkt.size() != n)
@@ -46,16 +37,6 @@ std::optional<Failure> check_weights(std::span<const double> w_mkt, std::size_t 
         return invalid("w_mkt must sum to 1 within 1e-8");
     }
     return std::nullopt;
-}
-
-std::optional<Failure> check_views(const Data& data, const Views& views)
-{
-    if (views.asset_count() == data.asset_count())
-    {
-        return std::nullopt;
-    }
-    return invalid("views have " + std::to_string(views.asset_count()) + " assets; data has " +
-                   std::to_string(data.asset_count()));
 }
 
 std::optional<Failure> check_confidence(std::span<const double> confidence, std::size_t k)

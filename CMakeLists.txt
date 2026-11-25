@@ -48,6 +48,7 @@ add_library(portopt_core STATIC
     src/estimation/black_litterman.cpp
     src/estimation/inputs.cpp
     src/estimation/moments.cpp
+    src/estimation/posterior.cpp
     src/estimation/views.cpp
     src/core/portable_math.cpp
     src/problems/constraints.cpp
