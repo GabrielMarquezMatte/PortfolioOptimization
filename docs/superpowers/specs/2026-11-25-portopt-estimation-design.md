@@ -225,12 +225,15 @@ Python e C# expõem funções puras sobre arrays e criam por dentro o `po_data` 
   - `bayes_stein(mu_hat, cov, t) -> BayesStein` (named tuple `mu`, `grand_mean`, `weight`);
   - `bl_equilibrium(cov, w_mkt, delta) -> ndarray`;
   - `bl_omega_he_litterman(cov, p, tau)` e `bl_omega_idzorek(cov, p, tau, confidence)`;
-  - `bl_posterior(cov, pi, tau, p, q, omega) -> BlackLittermanPosterior` (§8.1).
+  - `Views(p, q, omega=None)`, uma dataclass congelada (`omega` só pode faltar com `k = 0`);
+  - `bl_posterior(cov, pi, tau, views) -> BlackLittermanPosterior` (§8.1).
 
-  Formas erradas dão `ValueError` antes da chamada nativa, como em `_data.py`. `p` vazio `(0, n)` representa `k = 0`.
-- **C#:** a classe estática `Estimation`, com `SampleMoments`, `BayesStein`, `BlackLittermanEquilibrium`,
-  `OmegaHeLitterman`, `OmegaIdzorek` e `BlackLittermanPosterior`. Os retornos são os records `Moments(Mu, Covariance)`,
-  `BayesSteinEstimate(Mu, GrandMean, Weight)` e `BlackLittermanPosterior(Mu, Covariance)`. As matrizes são `double[,]`,
+  As visões vão num objeto porque o STYLEGUIDE limita também o Python a 5 parâmetros. Formas erradas dão
+  `ValueError` antes da chamada nativa, como em `_data.py`. `p` vazio `(0, n)` representa `k = 0`.
+- **C#:** a classe estática `Estimation`, com `SampleMoments`, `BayesStein`, `Equilibrium`, `OmegaHeLitterman`,
+  `OmegaIdzorek` e `Posterior(covariance, pi, tau, views)`. As visões são o record `Views(P, Q, Omega)`, e os retornos
+  são os records `Moments(Mu, Covariance)`, `BayesSteinEstimate(Mu, GrandMean, Weight)` e
+  `BlackLittermanPosterior(Mu, Covariance)`. As matrizes são `double[,]`,
   como em `MarketInputs`. As entradas vão para `PublicAPI.Unshipped.txt`, as `LibraryImport` para `NativeMethods.cs` e
   o `ViewsHandle` para `Handles.cs`. Os testes de contrato e de cobertura existentes passam a cobrir as funções novas.
 - **C++ (`cpp/include/portopt/portopt.hpp`):** a classe `Views` (RAII, como `Data`) e funções livres com os nomes sem
