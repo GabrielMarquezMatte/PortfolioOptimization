@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
 #include <optional>
 #include <span>
 #include <vector>
@@ -12,6 +13,9 @@ namespace po::linalg
 // precision: a pivot at or below kPivotFactor * n * DBL_EPSILON * a_jj, relative to the original diagonal
 // entry a_jj, is rounding noise of a singular matrix and is rejected whatever its sign.
 inline constexpr double kPivotFactor = 16.0;
+
+// The factor, or the zero-based index of the first rejected pivot.
+std::expected<std::vector<double>, std::size_t> cholesky_or_pivot(std::span<const double> a, std::size_t n);
 
 std::optional<std::vector<double>> cholesky(std::span<const double> a, std::size_t n);
 

@@ -74,13 +74,13 @@ TEST(CapiData, RejectsZeroAssets)
 TEST(CapiData, RejectsNotPositiveDefiniteCovariance)
 {
     std::vector<double> covariance(kAssets * kAssets, 1.0);
-    expect_create_fails(kAssets, nullptr, covariance.data(), "covariance is not positive definite");
+    expect_create_fails(kAssets, nullptr, covariance.data(), "covariance is not positive definite: pivot 1 is not positive");
 }
 
 TEST(CapiData, RejectsDuplicatedAsset)
 {
     std::vector<double> covariance = {0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.09};
-    expect_create_fails(3, nullptr, covariance.data(), "covariance is not positive definite");
+    expect_create_fails(3, nullptr, covariance.data(), "covariance is not positive definite: pivot 1 is not positive");
 }
 
 TEST(CapiData, RejectsCountWhoseSquareOverflows)

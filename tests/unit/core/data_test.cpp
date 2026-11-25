@@ -53,7 +53,7 @@ TEST(Data, RejectsAsymmetric)
 TEST(Data, RejectsIndefinite)
 {
     std::vector<double> covariance = {1.0, 2.0, 2.0, 1.0};
-    expect_invalid(Data::create(2, {}, covariance), "covariance is not positive definite");
+    expect_invalid(Data::create(2, {}, covariance), "covariance is not positive definite: pivot 1 is not positive");
 }
 
 std::vector<double> sample_covariance(std::size_t n, std::size_t periods, std::uint64_t seed)
@@ -93,7 +93,7 @@ std::vector<double> sample_covariance(std::size_t n, std::size_t periods, std::u
 TEST(Data, RejectsDuplicatedAsset)
 {
     std::vector<double> covariance = {0.04, 0.04, 0.01, 0.04, 0.04, 0.01, 0.01, 0.01, 0.09};
-    expect_invalid(Data::create(3, {}, covariance), "covariance is not positive definite");
+    expect_invalid(Data::create(3, {}, covariance), "covariance is not positive definite: pivot 1 is not positive");
 }
 
 // With fewer periods than assets the sample covariance is singular: its last pivots are rounding noise, of
@@ -105,7 +105,12 @@ TEST(Data, RejectsRankDeficientSampleCovariance)
     {
         SCOPED_TRACE(seed);
         std::vector<double> covariance = sample_covariance(n, n - 1, seed);
-        expect_invalid(Data::create(n, {}, covariance), "covariance is not positive definite");
+        // Which of the last two pivots is rejected depends on the rounding, so either is accepted.
+        const std::expected<Data, Failure> data = Data::create(n, {}, covariance);
+        ASSERT_FALSE(data.has_value());
+        EXPECT_TRUE(data.error().message == "covariance is not positive definite: pivot 8 is not positive" ||
+                    data.error().message == "covariance is not positive definite: pivot 9 is not positive")
+            << data.error().message;
     }
 }
 

@@ -11,11 +11,14 @@
 namespace po
 {
 
+// Symmetry tolerance of a covariance, relative to its larger diagonal entry.
+inline constexpr double kSymmetryTolerance = 1e-10;
+
 class Data
 {
 public:
     // An empty mu or covariance is absent. The covariance (n x n, row-major) must be finite, symmetric
-    // within 1e-10 of the larger diagonal entry and positive definite (linalg::cholesky); it is stored
+    // within 1e-10 of the larger diagonal entry and positive definite (linalg::cholesky_or_pivot); it is stored
     // symmetrized, with its Cholesky factor, so that positive definiteness is decided once, here.
     static std::expected<Data, Failure> create(std::size_t n, std::span<const double> mu,
                                                std::span<const double> covariance);

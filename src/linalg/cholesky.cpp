@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <utility>
 
 namespace po::linalg
 {
@@ -56,43 +57,43 @@ void update_trailing_block(std::vector<double>& l, std::size_t n, std::size_t k)
     }
 }
 
-bool finish_column(std::span<const double> a, std::size_t n, std::vector<double>& l, std::size_t j,
+std::optional<std::size_t> finish_column(std::span<const double> a, std::size_t n, std::vector<double>& l, std::size_t j,
                    double relative_floor)
 {
     double pivot = l[j * n + j];
     if (!(pivot > relative_floor * a[j * n + j]))
     {
-        return false;
+        return j;
     }
     l[j * n + j] = std::sqrt(pivot);
     for (std::size_t i = j + 1; i < n; ++i)
     {
         l[i * n + j] /= l[j * n + j];
     }
-    return true;
+    return std::nullopt;
 }
 
 // Right-looking, two columns at a time: once columns k and k + 1 are final, the entries to their right
 // subtract their products. Each entry (i, j) still subtracts L_ik L_jk from a_ij in increasing k, the
 // order of the dot product of rows i and j in the left-looking form, and is divided by L_jj (or
 // square-rooted) after its last term.
-bool factor_in_place(std::span<const double> a, std::size_t n, std::vector<double>& l)
+std::optional<std::size_t> factor_in_place(std::span<const double> a, std::size_t n, std::vector<double>& l)
 {
     double relative_floor = kPivotFactor * static_cast<double>(n) * std::numeric_limits<double>::epsilon();
     for (std::size_t k = 0; k < n; k += 2)
     {
-        if (!finish_column(a, n, l, k, relative_floor))
+        if (std::optional<std::size_t> rejected = finish_column(a, n, l, k, relative_floor))
         {
-            return false;
+            return *rejected;
         }
         if (k + 1 == n)
         {
-            return true;
+            return std::nullopt;
         }
         update_next_column(l, n, k);
-        if (!finish_column(a, n, l, k + 1, relative_floor))
+        if (std::optional<std::size_t> rejected = finish_column(a, n, l, k + 1, relative_floor))
         {
-            return false;
+            return *rejected;
         }
         stage_column(l, n, k);
         stage_column(l, n, k + 1);
@@ -100,20 +101,30 @@ bool factor_in_place(std::span<const double> a, std::size_t n, std::vector<doubl
         clear_staged_column(l, n, k);
         clear_staged_column(l, n, k + 1);
     }
-    return true;
+    return std::nullopt;
 }
 
 } // namespace
 
-std::optional<std::vector<double>> cholesky(std::span<const double> a, std::size_t n)
+std::expected<std::vector<double>, std::size_t> cholesky_or_pivot(std::span<const double> a, std::size_t n)
 {
     std::span<const double> square = a.first(n * n);
-    std::optional<std::vector<double>> factor(std::in_place, square.begin(), square.end());
-    if (!factor_in_place(a, n, *factor))
+    std::vector<double> factor(square.begin(), square.end());
+    if (std::optional<std::size_t> rejected = factor_in_place(a, n, factor))
     {
-        factor.reset();
+        return std::unexpected(*rejected);
     }
     return factor;
+}
+
+std::optional<std::vector<double>> cholesky(std::span<const double> a, std::size_t n)
+{
+    std::expected<std::vector<double>, std::size_t> result = cholesky_or_pivot(a, n);
+    if (!result.has_value())
+    {
+        return std::nullopt;
+    }
+    return std::move(*result);
 }
 
 void solve_lower(std::span<const double> l, std::size_t n, std::span<double> b)
