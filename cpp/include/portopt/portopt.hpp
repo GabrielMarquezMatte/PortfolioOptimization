@@ -454,6 +454,186 @@ inline Expected<Result> solve(const Spec& spec, const Data& data)
     return detail::read_result(result.get());
 }
 
+namespace detail
+{
+
+using ViewsHandle = std::unique_ptr<po_views, Deleter<po_views, po_views_free>>;
+
+inline std::string square(std::size_t side)
+{
+    return std::to_string(side) + " x " + std::to_string(side) + " = " + std::to_string(side * side);
+}
+
+// Runs a C call that fills `out` (a vector of `size` entries) and returns it, or its error.
+template <class Call>
+Expected<std::vector<double>> fill(std::size_t size, Call call)
+{
+    std::vector<double> out(size);
+    if (auto done = check(call(out.data())); !done)
+    {
+        return std::unexpected(std::move(done.error()));
+    }
+    return out;
+}
+
+} // namespace detail
+
+// The k views of a Black-Litterman model (po_views_create). Move-only; a moved-from Views holds no handle.
+class Views
+{
+public:
+    // k is q.size() and p is k x assets (row-major); with k = 0 both may be empty.
+    static Expected<Views> create(std::size_t assets, std::span<const double> p, std::span<const double> q)
+    {
+        const std::size_t views = q.size();
+        const std::string what = std::to_string(views) + " x " + std::to_string(assets) + " = " +
+                                 std::to_string(views * assets);
+        if (auto size = detail::check_size("p", p.size(), views * assets, what); !size)
+        {
+            return std::unexpected(std::move(size.error()));
+        }
+        po_views* raw = nullptr;
+        if (auto created = detail::check(
+                po_views_create(views, assets, detail::data_or_null(p), detail::data_or_null(q), &raw));
+            !created)
+        {
+            return std::unexpected(std::move(created.error()));
+        }
+        return Views(raw, views);
+    }
+
+    // omega is k x k (row-major), the k of create.
+    Expected<void> set_omega(std::span<const double> omega)
+    {
+        if (auto size = detail::check_size("omega", omega.size(), views_ * views_, detail::square(views_)); !size)
+        {
+            return std::unexpected(std::move(size.error()));
+        }
+        return detail::check(po_views_set_omega(handle_.get(), detail::data_or_null(omega), views_));
+    }
+
+    const po_views* get() const noexcept
+    {
+        return handle_.get();
+    }
+
+    std::size_t count() const noexcept
+    {
+        return views_;
+    }
+
+private:
+    Views(po_views* handle, std::size_t views) noexcept : handle_(handle), views_(views)
+    {
+    }
+
+    detail::ViewsHandle handle_;
+    std::size_t views_;
+};
+
+struct Moments
+{
+    std::vector<double> mu;
+    std::vector<double> cov;
+};
+
+struct BayesSteinEstimate
+{
+    std::vector<double> mu;
+    double grand_mean;
+    double weight;
+};
+
+struct Posterior
+{
+    std::vector<double> mu;
+    std::vector<double> cov;
+};
+
+// Mean and covariance of a periods x assets return panel (po_sample_moments).
+inline Expected<Moments> sample_moments(std::span<const double> returns, std::size_t assets)
+{
+    if (assets == 0 || returns.size() % assets != 0)
+    {
+        return detail::invalid("returns has " + std::to_string(returns.size()) + " entries, not a multiple of " +
+                               std::to_string(assets) + " assets");
+    }
+    Moments moments{std::vector<double>(assets), std::vector<double>(assets * assets)};
+    if (auto done = detail::check(po_sample_moments(returns.size() / assets, assets, detail::data_or_null(returns),
+                                                    moments.mu.data(), moments.cov.data()));
+        !done)
+    {
+        return std::unexpected(std::move(done.error()));
+    }
+    return moments;
+}
+
+// Jorion shrinkage of the mean of data, whose covariance is the sample covariance of `periods` periods.
+inline Expected<BayesSteinEstimate> bayes_stein(const Data& data, std::size_t periods)
+{
+    Expected<std::size_t> assets = data.asset_count();
+    if (!assets)
+    {
+        return std::unexpected(std::move(assets.error()));
+    }
+    BayesSteinEstimate estimate{std::vector<double>(*assets), 0.0, 0.0};
+    if (auto done = detail::check(
+            po_bayes_stein(data.get(), periods, estimate.mu.data(), &estimate.grand_mean, &estimate.weight));
+        !done)
+    {
+        return std::unexpected(std::move(done.error()));
+    }
+    return estimate;
+}
+
+// Pi = delta Sigma w_mkt, one entry per asset of w_mkt.
+inline Expected<std::vector<double>> bl_equilibrium(const Data& data, std::span<const double> w_mkt, double delta)
+{
+    return detail::fill(w_mkt.size(), [&](double* out) {
+        return po_bl_equilibrium(data.get(), detail::data_or_null(w_mkt), w_mkt.size(), delta, out);
+    });
+}
+
+// The k x k diagonal Omega of He and Litterman, to be given to Views::set_omega.
+inline Expected<std::vector<double>> bl_omega_he_litterman(const Data& data, const Views& views, double tau)
+{
+    return detail::fill(views.count() * views.count(),
+                        [&](double* out) { return po_bl_omega_he_litterman(data.get(), views.get(), tau, out); });
+}
+
+// Idzorek's Omega; confidence has one entry per view.
+inline Expected<std::vector<double>> bl_omega_idzorek(const Data& data, const Views& views, double tau,
+                                                      std::span<const double> confidence)
+{
+    if (auto size = detail::check_size("confidence", confidence.size(), views.count(),
+                                       std::to_string(views.count()));
+        !size)
+    {
+        return std::unexpected(std::move(size.error()));
+    }
+    return detail::fill(views.count() * views.count(), [&](double* out) {
+        return po_bl_omega_idzorek(data.get(), views.get(), tau, detail::data_or_null(confidence), out);
+    });
+}
+
+// The Black-Litterman posterior mean and covariance, both in excess of the risk-free rate.
+inline Expected<Posterior> bl_posterior(const Data& data, const Views& views, double tau)
+{
+    Expected<std::size_t> assets = data.asset_count();
+    if (!assets)
+    {
+        return std::unexpected(std::move(assets.error()));
+    }
+    Posterior posterior{std::vector<double>(*assets), std::vector<double>(*assets * *assets)};
+    if (auto done = detail::check(
+            po_bl_posterior(data.get(), views.get(), tau, posterior.mu.data(), posterior.cov.data()));
+        !done)
+    {
+        return std::unexpected(std::move(done.error()));
+    }
+    return posterior;
+}
+
 } // namespace po
 
 #endif
