@@ -44,6 +44,7 @@ add_library(portopt_core STATIC
     src/linalg/qr.cpp
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
+    src/estimation/moments.cpp
     src/core/portable_math.cpp
     src/problems/constraints.cpp
     src/problems/homogeneous.cpp
@@ -177,6 +178,7 @@ if(PO_BUILD_TESTS)
         tests/unit/core/data_test.cpp
         tests/unit/core/generators_test.cpp
         tests/unit/core/portable_math_test.cpp
+        tests/unit/estimation/moments_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
         tests/unit/fuzz/ratio_fuzz_test.cpp
