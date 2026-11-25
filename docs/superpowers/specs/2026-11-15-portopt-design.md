@@ -41,7 +41,9 @@ o que o VolEngine faz.
   seção 13).
 - `pesos_carteira` (pesos aleatórios), `merton_portfolio` (simulação de consumo) e o wrapper `portfolios`: não são
   otimizações.
-- Estimar μ ou Σ, calcular retornos a partir de preços, anualizar qualquer coisa. Os dados chegam prontos.
+- Estimar μ ou Σ, calcular retornos a partir de preços, anualizar qualquer coisa. Os dados chegam prontos. Nota: o não-objetivo de estimar μ ou Σ foi revisto pelo spec de 2026-11-25
+  ([portopt-estimation-design](2026-11-25-portopt-estimation-design.md)): a estimação entra como utilidade ao lado do
+  solve, que continua recebendo os dados prontos.
 - Restrições lineares de grupo (setor), turnover, custos de transação, cardinalidade. Restrições novas entram
   depois como setters novos, sem quebra.
 - Lote com threads (entra depois, sem quebra; ver seção 6.4).

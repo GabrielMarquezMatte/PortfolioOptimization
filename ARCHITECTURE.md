@@ -12,7 +12,8 @@ neither), eight of them reduced to a dense Goldfarb-Idnani quadratic program beh
 parametric family of them, `MAX_SHARPE` and `MAX_DIVERSIFICATION` through a homogeneous one), and `RISK_PARITY`, a
 non-convex least squares, solved by Newton on the Spinu form and, with a target or a bound that cuts it off, by a
 sequence of such QPs and an augmented Lagrangian; portfolio return, volatility, utility, tracking error, the Sharpe and
-diversification ratios and the risk contributions of given weights; and a Python package and a .NET binding over the
+diversification ratios and the risk contributions of given weights; estimation utilities beside the solve (sample
+moments, Bayes-Stein, the Black-Litterman equilibrium, views and posterior), pure functions the solve never calls; and a Python package and a .NET binding over the
 C API. Every
 objective is solved: `PO_UNSUPPORTED` no longer occurs for a valid objective.
 
@@ -24,11 +25,11 @@ objective is solved: `PO_UNSUPPORTED` no longer occurs for a valid objective.
                  +------------------------------------+
         C API  include/portopt/portopt.h        <-- the only stable contract
                  |
-        src/capi   handles, error boundary
-          |                 \
-        src/solve            src/metrics
-        requirements,        portfolio return
-        dispatch             and volatility
+        src/capi   handles, error boundary (src/capi/estimation: views, utilities)
+          |                 \                 \
+        src/solve            src/metrics       src/estimation
+        requirements,        portfolio return  moments, Bayes-Stein,
+        dispatch             and volatility    Black-Litterman
           |       \              |
         src/riskparity          |
         Spinu Newton, QP        |
@@ -45,6 +46,9 @@ objective is solved: `PO_UNSUPPORTED` no longer occurs for a valid objective.
           |        |
         src/linalg   Cholesky, triangular solves, Householder QR
 ```
+
+`src/estimation` is a sibling of `solve` and `metrics`: it depends on `core` (`Data`, `Failure`) and `linalg`, and
+nothing in `solve`, `problems`, `qp`, `riskparity` or `metrics` includes it. Only `capi` calls it.
 
 Dependencies point one way, in the order `core` and `qp` <- `problems` <- `riskparity` <- `solve` <- `capi`:
 `core` (objective, spec, data, result, failure) <- `problems` (mean_variance,
@@ -64,7 +68,7 @@ Build targets (`CMakeLists.txt`):
 
 | Target | What it is |
 |---|---|
-| `portopt_core` | Static library: `linalg`, `qp`, `core`, `problems`, `riskparity`, `solve`, `metrics` |
+| `portopt_core` | Static library: `linalg`, `qp`, `core`, `problems`, `riskparity`, `solve`, `metrics`, `estimation` |
 | `portopt_capi` | OBJECT library: every `src/capi/*.cpp`, `error.cpp` included, compiled once |
 | `portopt` | The shared library, built from the `portopt_capi` objects; links `portopt_core` |
 | `portopt_tests` | GoogleTest executable; links `portopt_capi` and `portopt_core`, so a test sees the same thread-local error as the entry points it calls (static `libstdc++` on MinGW) |
@@ -80,6 +84,7 @@ Build targets (`CMakeLists.txt`):
 | `include/portopt/portopt.h` | The C API: `po_` functions, `PO_` constants, opaque handles, no public struct |
 | `src/capi/handles.hpp` | The handle types (`po_spec`, `po_data`, `po_result`), each wrapping one core value, and the null-handle and failure helpers |
 | `src/capi/error.hpp`, `error.cpp` | Thread-local `po_last_error()`, `set_error`, and `guard`, the one place exceptions are caught |
+| `src/capi/estimation/views_api.cpp`, `estimation_api.cpp` | The estimation entry points: `po_views_create`, `po_views_set_omega`, `po_views_free`, and the six utilities. A subfolder because `src/capi` is at the limit of 8 modules; `struct po_views` is in `handles.hpp` |
 | `src/capi/spec_api.cpp`, `data_api.cpp`, `solve_api.cpp`, `result_api.cpp`, `metrics_api.cpp`, `version_api.cpp` | The `extern "C"` functions, one file per handle family |
 | `src/core/objective.hpp` | `po::Objective`, matching the `PO_OBJECTIVE_*` values |
 | `src/core/spec.hpp` | `po::Spec`: objective, scalar bounds, optional per-weight bounds, optional target return, risk aversion, importance, maximum volatility, leverage, target volatility and risk budget; a copyable value |
@@ -87,7 +92,7 @@ Build targets (`CMakeLists.txt`):
 | `src/core/result.hpp` | `po::Result` and `SolveStatus`: weights, status, multipliers, iterations; the multiplier convention is stated there |
 | `src/core/failure.hpp` | `Failure` (kind and message), the error type of `std::expected` below the C API |
 | `src/core/portable_math.*` | `po::portable::exp`, `log` and `hypot` (fdlibm's `exp` and `log`, a scaled `hypot`), written with `+`, `-`, `*`, `/` and `sqrt` only, which IEEE 754 rounds correctly: `src/` calls no libm function besides `sqrt` and `fma`, so a solve returns the same bits on every platform. `hypot` is the Givens of the QP, `log` the Spinu objective; `exp` serves the test generators |
-| `src/linalg/cholesky.*` | Cholesky factor of a symmetric matrix (`nullopt` if not positive definite to working precision) and the two triangular solves; no explicit inverse |
+| `src/linalg/cholesky.*` | Cholesky factor of a symmetric matrix (`cholesky_or_pivot`: the zero-based index of the first rejected pivot if it is not positive definite to working precision) and the two triangular solves; no explicit inverse |
 | `src/linalg/qr.*` | Householder QR of a tall matrix without forming `a'a`: the rank decision on `diag(R)`, least squares, and `R'` as the lower factor of `a'a` |
 | `src/qp/problem.hpp` | `qp::Problem` (G, an optional precomputed factor of G, g, equality and inequality rows, and the optional `GrossExposure` family) and `qp::Solution` (with the sign vectors and multipliers of the active generated rows), with the stationarity convention |
 | `src/qp/goldfarb_idnani.*` | `qp::solve`: the dual active-set loop, the tolerances, the generation of the rows of the gross exposure family and the final refinement |
@@ -100,6 +105,9 @@ Build targets (`CMakeLists.txt`):
 | `src/riskparity/newton_polish.*` | `newton_polish`: Newton on the KKT system with the exact Hessian of the Lagrangian over the free weights (Householder QR of the system), the multipliers estimated again by least squares at every step, a bound released when its multiplier has the wrong sign, and a step taken only when it decreases the KKT residual in noise units |
 | `src/riskparity/augmented_lagrangian.*` | `augmented_lagrangian`: the multiplier method of Andreani, Birgin, Martinez and Schuverdt (2007, Algorithm 3.1) for the row `vol(w) = s` alone, each subproblem a `descend` over the polyhedron; penalty and multiplier in the units of the relative gap `vol(w) / s - 1` |
 | `src/riskparity/risk_parity.*` | `RISK_PARITY`: `risk_budget_of` (the setter or `1 / n`) and `solve_risk_parity`, the policy: the Spinu point (the answer when it is inside the box and no target is set), the minimum-variance QP for feasibility and `sigma_min` (`INFEASIBLE`, or the case `s = sigma_min` with `lambda_vol = -inf`), then the descent or the augmented Lagrangian from the point of the polyhedron nearest to the Spinu point, the polish, and `is_kkt_point` deciding `OPTIMAL` against `NOT_CONVERGED` |
+| `src/estimation/moments.*`, `bayes_stein.*` | `sample_moments` (two passes, divisor `t - 1`, exactly symmetric) and `bayes_stein` (Jorion, through the Cholesky factor of the data's covariance) |
+| `src/estimation/views.*`, `black_litterman.*`, `posterior.*` | `Views` (P, Q, Omega; the full-row-rank check by QR; the checks of Omega), `equilibrium`, the two Omega helpers, and the posterior (`A` by Cholesky, `Sigma_post` symmetric by construction) |
+| `src/estimation/inputs.*` | The checks the utilities share: the data has the covariance (and mu) they read and no risk-free rate, `tau` and `delta` positive, the same asset count in the data and the views |
 | `src/solve/requirements.*` | `check_request`: the objective is implemented, every setter applies to it, the data it requires is present and per-weight bounds match the weight count (the objective x setter matrix of [docs/guide/math.md](docs/guide/math.md#which-setters-and-data-each-objective-takes)) |
 | `src/problems/mean_variance.*` | One builder for `MIN_VARIANCE`, `UTILITY`, `IMPORTANCE` and `KELLY`: `G = a Sigma` with factor `sqrt(a) L` and `g = -b mu~`, `(a, b)` chosen by the objective; `solve_mean_variance` |
 | `src/problems/tracking_error.*` | `TRACKING_ERROR`: `G = 2 R~'R~` with the factor `sqrt(2) R_qr'` from one Householder QR of `R~`, which decides the column rank; `g = -2 R~'(b - rf 1)` |
@@ -109,20 +117,23 @@ Build targets (`CMakeLists.txt`):
 | `src/problems/constraints.*` | The constraint rows (budget, target return, bounds), their bookkeeping (`ConstraintRows`) and `to_result`, the remapping to the user's variables, with an optional scale for the multipliers; `lower_of` and `upper_of`, the bound of a weight, and `kMinimumVolatilityTolerance`, shared by `MAX_RETURN` and `RISK_PARITY` |
 | `src/metrics/portfolio.*` | `portfolio_return`, `portfolio_volatility`, `utility`, `sharpe_ratio`, `diversification_ratio`, `tracking_error`, `risk_contributions` and `risk_budget_residual` for a weight vector (cash last) |
 | `python/src/portopt/_native.py` | Library discovery (`PORTOPT_LIB`), ABI check, prototypes, handle ownership, status to exception |
+| `python/src/portopt/_estimation.py` | The estimation utilities as pure functions on arrays (`sample_moments`, `bayes_stein`, `bl_equilibrium`, `bl_omega_*`, `bl_posterior`), the frozen `Views`, and `BlackLittermanPosterior.to_data`, which adds the rate back to the posterior mean; handles are built and freed inside |
 | `python/src/portopt/_spec.py`, `_data.py`, `_result.py` | `Objective` and `Spec`, a frozen dataclass that builds its `po_spec` handle in `__post_init__` (bounds, `leverage`, `target_volatility` and `risk_budget` included; the bounds and the budget canonicalized to tuples so that equality and hash work); `Data` and its metrics (`risk_contributions` too); `SolveStatus`, `Result` and `solve` |
 | `csharp/src/PortOpt/Interop` | `NativeMethods` (one hand-written `LibraryImport` per contract function, C names), the `SafeHandle` of each handle, library discovery (`PORTOPT_LIB`) and the ABI check, status to `PortOptException` |
 | `csharp/src/PortOpt` | `Spec` and `Bounds`/`WeightBounds` (records, the native spec built at the solve), `MarketData` (owns the `po_data` handle; the metrics), `Optimizer.Solve`, `Result` (copied values), the enums |
+| `csharp/src/PortOpt/Estimation` | The static class `Estimation` and the records `Moments`, `BayesSteinEstimate`, `Views` and `BlackLittermanPosterior` (`ToMarketInputs` adds the rate back) |
+| `cpp/include/portopt/portopt.hpp` | The header-only C++ wrapper: `po::Views` (RAII) and the estimation functions without the `po_` prefix |
 | `csharp/tests/PortOpt.Tests` | The contract check (every `function` and `define` of `portopt.abi` against the declarations and the enums), the coverage check (every function called by the library), and the tests of the layer |
 | `csharp/tests/PortOpt.Consumer`, `csharp/scripts/check_package.sh` | A clean consumer restored from a built package, run without `PORTOPT_LIB` and published with Native AOT |
 | `python/hatch_build.py` | Tags the wheel with the platform of the bundled library |
-| `tests/unit/{capi,core,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
+| `tests/unit/{capi,core,estimation,linalg,metrics,problems,qp,riskparity,solve}` | GoogleTest suites mirroring `src/`; `capi/c_header_check.c` compiles the header as C11 |
 | `tests/unit/fuzz` | The fuzz battery: a generator of problem shapes (`random_problems.hpp`: condition number, scale, mean pattern, box, cash, leverage) and references computed by another route (`frontier_reference.hpp`, `sign_pattern_reference.hpp`, `ratio_reference.hpp`; `known_shape_fixture.hpp` freezes the covariance of the known `MAX_RETURN` shape as the Windows and the Linux libm gave it), used by the `MaxReturnFuzz`, `LeverageFuzz` and `RatioFuzz` suites; `tests/unit/fuzz/risk_parity/` holds the risk parity references (the scan of the feasible curve, the KKT check with its rounding floor, and the refinement of a result in `long double` that measures its forward error), the `RiskParityDescentFuzz` sweep of the polyhedral descent, the `RiskParitySolveSweep` of `po::solve` and the `RiskParityFuzz` battery |
 | `tests/unit/kkt.hpp`, `user_kkt.hpp`, `random_covariance.hpp`, `capi_scope.hpp` | KKT residuals of a QP (the generated rows of the family included), the KKT conditions in the user's variables for every objective, random covariances of a chosen condition number (the test generators use `po::portable::exp` and `log`, a polar method for the normals and rejection for the integers, so an instance has the same bits on every platform; `core/generators_test.cpp` checks them), RAII for C handles |
 | `tests/benchmarks` | The benchmark and profile tools: `instances.hpp` and `cases.hpp` (deterministic instances, cached, and the objective x variant x size table), `bm_solve.cpp`, `bm_kernel.cpp`, `bench_main.cpp`, `profile.cpp` (`--via capi` solves through the C interface), `capi/` (`bm_capi.cpp`, the C interface against the C++ calls, and `capi_case.hpp`, the handles of a case), `alloc_counter.*` and `quick.py` (`run`, `compare`, `compare-solutions`, `selftest`); how to use them is in [docs/performance/measuring.md](docs/performance/measuring.md) |
 | `tests/style/check_style.py` | Style rules that can be checked without a compiler; runs as the `style` ctest |
 | `python/benchmarks/bench_overhead.py` | The fixed cost of the ctypes layer (a call, `Spec`, `Data`, `solve`, `read_result`) against the native solve; results in [docs/performance/python-vs-arch.md](docs/performance/python-vs-arch.md) |
 | `python/tests` | Python tests; without the native library only `packaging/` runs (it does not load it) and the other tests are not collected, so CI first imports `portopt` to fail on a library that does not load |
-| `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION, RISK_PARITY (Spinu, the QP sequence, the augmented Lagrangian, the multipliers) and the multiplier convention |
+| `docs/guide/math.md` | Notation, the QP translation of each objective, the gross exposure family, the parametric path of MAX_RETURN, the homogenization of MAX_SHARPE and MAX_DIVERSIFICATION, RISK_PARITY (Spinu, the QP sequence, the augmented Lagrangian, the multipliers) and the multiplier convention and the estimation utilities (Bayes-Stein, Black-Litterman) |
 | `docs/performance/measuring.md` | How to measure: the `gcc-bench` and `msvc-profile` presets, the quick suite, A/B by medians against noise, the comparison of solutions, the uProf recipe and the guards an optimization must keep green |
 | `docs/performance/max-return-crossing.md`, `portable-math.md` | What the tangent crossing of `MAX_RETURN` and the portable `hypot` and `log` cost against what they replaced, with the machine and the method |
 | `docs/performance/benchmarks.md`, `baseline.md`, `profile-1.md`, `profile-2.md`, `python-vs-arch.md` | Results of the suite and the machine they come from; the plan 6 baseline (every case by objective, variant and size, and the kernels); where the time goes before plan 6 (uProf shares, calls per solve, assembly) and the hot-spot hypotheses it confirms or refutes |

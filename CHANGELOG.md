@@ -9,6 +9,26 @@ From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Estimation utilities, side-effect-free functions that the solve never calls ([math.md](docs/guide/math.md#estimation-utilities),
+  [validation.md](docs/guide/validation.md#domain-rules-of-the-estimation-utilities)). C API: `po_sample_moments`,
+  `po_bayes_stein`, `po_bl_equilibrium`, `po_views_create`, `po_views_set_omega`, `po_views_free`,
+  `po_bl_omega_he_litterman`, `po_bl_omega_idzorek` and `po_bl_posterior`; the ABI only grows and `PO_ABI_VERSION`
+  stays 1. A `po_data` with a risk-free rate is refused by every utility; `Pi`, `Q` and the posterior mean are in
+  excess of the rate.
+- Python (`sample_moments`, `bayes_stein`, `bl_equilibrium`, `bl_omega_he_litterman`, `bl_omega_idzorek`, `Views`,
+  `bl_posterior`), .NET (`Estimation`, `Views`, `BlackLittermanPosterior`) and C++ (`po::Views` and the functions
+  without the `po_` prefix) wrappers. The Python `BlackLittermanPosterior.to_data(risk_free=None)` and the .NET
+  `BlackLittermanPosterior.ToMarketInputs(riskFree = null)` turn the posterior into the input of an optimization,
+  adding the rate back to the mean.
+
+### Changed
+
+- The message of a covariance that is not positive definite names the first rejected pivot, zero-based:
+  `covariance is not positive definite: pivot 3 is not positive` (`po_data_create`, and the posterior's matrix `A`).
+  Messages are not part of the contract ([versioning.md](docs/guide/versioning.md#error-messages)).
+
 ## [1.0.0] - 2026-11-21
 
 The C ABI is frozen from this release: it only grows ([docs/guide/versioning.md](docs/guide/versioning.md)).
