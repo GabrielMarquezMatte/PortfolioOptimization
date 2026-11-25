@@ -85,7 +85,9 @@ add_library(portopt_capi OBJECT
     src/capi/data_api.cpp
     src/capi/solve_api.cpp
     src/capi/result_api.cpp
-    src/capi/metrics_api.cpp)
+    src/capi/metrics_api.cpp
+src/capi/estimation/views_api.cpp
+src/capi/estimation/estimation_api.cpp)
 set_target_properties(portopt_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(portopt_capi PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
 target_compile_options(portopt_capi PRIVATE ${PO_WARNING_FLAGS})
@@ -176,6 +178,7 @@ if(PO_BUILD_TESTS)
         tests/unit/capi/data_test.cpp
         tests/unit/capi/solve_test.cpp
         tests/unit/capi/metrics_test.cpp
+        tests/unit/capi/estimation/estimation_test.cpp
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/linalg/qr_test.cpp
         tests/unit/qp/active_set_test.cpp

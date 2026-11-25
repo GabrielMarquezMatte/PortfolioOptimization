@@ -49,6 +49,7 @@ PO_API const char* po_last_error(void);
 typedef struct po_spec po_spec;
 typedef struct po_data po_data;
 typedef struct po_result po_result;
+typedef struct po_views po_views;
 
 /* Objectives. This version solves every objective: PO_OBJECTIVE_MIN_VARIANCE, PO_OBJECTIVE_MAX_RETURN,
    PO_OBJECTIVE_MAX_SHARPE, PO_OBJECTIVE_UTILITY, PO_OBJECTIVE_IMPORTANCE, PO_OBJECTIVE_KELLY,
@@ -357,6 +358,73 @@ PO_API po_status po_diversification_ratio(const po_data* d, const double* w, siz
    the weight count of d, otherwise PO_INVALID_ARGUMENT), the cash entry is 0 and the entries sum to 1. All
    NaN when the volatility is 0. Needs the covariance (not mu), otherwise PO_INVALID_ARGUMENT. */
 PO_API po_status po_risk_contributions(const po_data* d, const double* w, size_t n, double* out);
+
+/* Estimation utilities. Matrices are row-major; n is the asset count, t the number of periods and k the number
+   of views. The outputs are caller arrays, and their sizes come from the handles: n is the po_data asset
+   count, k the one given to po_views_create. A null handle is PO_INVALID_HANDLE, a null required pointer or
+   an input outside its domain is PO_INVALID_ARGUMENT (the reason is in po_last_error()). On a failure no
+   output is written.
+
+   The po_data given to these functions needs the covariance and must not have a risk-free rate
+   (po_data_set_risk_free): the rate plays no role here, and ignoring it would fail silently. Its returns
+   (po_data_set_returns) are not used. Sigma is the covariance po_data_create validated and symmetrized. */
+
+/* Sample moments of the t x n return panel (the layout of po_data_set_returns). Needs t >= 2, n >= 1, finite
+   values and t * n without overflow. out_mu[j] is the mean of column j; out_cov (n x n) is the covariance of
+   two passes (the mean, then the deviations) with divisor t - 1; the upper triangle is computed and mirrored,
+   so the output is exactly symmetric. Positive definiteness is not checked: with t <= n the covariance is
+   singular, a legitimate output that po_data_create refuses later if it is used as a covariance. */
+PO_API po_status po_sample_moments(size_t t, size_t n, const double* returns, double* out_mu, double* out_cov);
+
+/* Bayes-Stein (Jorion 1986) shrinkage of the mean. The mu of d is mu_hat and its covariance is the sample
+   covariance S with divisor t - 1 (the outputs of po_sample_moments); needs mu in d and t > n + 2. With 1 the
+   vector of ones: Sigma = S (t - 1) / (t - n - 2); mu_0 = (1' Sigma^-1 mu_hat) / (1' Sigma^-1 1);
+   w = (n + 2) / ((n + 2) + t (mu_hat - mu_0 1)' Sigma^-1 (mu_hat - mu_0 1)); mu_BS = (1 - w) mu_hat + w mu_0 1.
+   Sigma^-1 is never formed: the solves use the factor of S that d keeps. out_mu has n entries; out_grand_mean
+   (mu_0) and out_weight (w) are required.
+
+   The weight depends on the frequency of the data: multiplying mu_hat and S by 252 multiplies the quadratic
+   form by 252. Do the computation at the original frequency of the data (daily) and annualize only the
+   resulting mu afterwards. Changing the unit (multiplying the returns by a constant) does not change w. */
+PO_API po_status po_bayes_stein(const po_data* d, size_t t, double* out_mu, double* out_grand_mean,
+                                double* out_weight);
+
+/* Pi = delta Sigma w_mkt. n must be the asset count of d, w_mkt finite with |sum(w_mkt) - 1| <= 1e-8 and delta
+   finite and positive. The mu of d, if any, is not used. Pi is a return in excess of the risk-free rate: with
+   po_data_set_risk_free(rate) the optimization uses mu - rate, so pass Pi + rate (or the posterior mu + rate)
+   to the po_data_create of the optimization. */
+PO_API po_status po_bl_equilibrium(const po_data* d, const double* w_mkt, size_t n, double delta, double* out_pi);
+
+/* The k views of a Black-Litterman model: p is k x n, q has k entries. q is in the same unit as Pi, in excess
+   of the risk-free rate. Relative views (+1/-1) do not depend on that, because the rate cancels; absolute views
+   do. Needs n >= 1, k <= n, finite p and q and P of full row rank (redundant views are refused). k = 0 is the
+   empty set of views, with p and q allowed to be NULL: the posterior is then mu = Pi and
+   Sigma_post = (1 + tau) Sigma. After a failure *out is NULL. */
+PO_API po_status po_views_create(size_t k, size_t n, const double* p, const double* q, po_views** out);
+
+/* Copies Omega (k x k, the k given to po_views_create): finite, symmetric within 1e-10 relative to the larger
+   of the two diagonal entries, with a nonnegative diagonal. A failure keeps the previous Omega. Omega is
+   expected to be positive semidefinite; beyond the diagonal check and the Cholesky factor of A in
+   po_bl_posterior this is not checked, and the two helpers below always give a valid Omega. */
+PO_API po_status po_views_set_omega(po_views* v, const double* omega, size_t k);
+PO_API void po_views_free(po_views* v);
+
+/* out_omega is k x k, diagonal, zero off the diagonal; pass it to po_views_set_omega. He and Litterman:
+   omega_kk = tau p_k Sigma p_k'. Idzorek (Walters): omega_kk = ((1 - c_k) / c_k) tau p_k Sigma p_k', with
+   confidence of k entries and 0 < c_k <= 1; c_k = 1 gives omega_kk = 0, the full-confidence view. d and v need
+   the same n, and tau must be finite and positive. The Omega stored in v is not read. */
+PO_API po_status po_bl_omega_he_litterman(const po_data* d, const po_views* v, double tau, double* out_omega);
+PO_API po_status po_bl_omega_idzorek(const po_data* d, const po_views* v, double tau, const double* confidence,
+                                     double* out_omega);
+
+/* The Black-Litterman posterior. The mu of d is Pi (excess of the risk-free rate) and its covariance is Sigma;
+   needs mu in d, the same n in d and v, tau finite and positive and, with k >= 1, the Omega of
+   po_views_set_omega. With A = P (tau Sigma) P' + Omega and B = tau Sigma P': mu = Pi + B A^-1 (Q - P Pi) and
+   Sigma_post = Sigma + tau Sigma - B A^-1 B', the form without Omega^-1, which accepts Omega = 0. out_mu has n
+   entries and out_cov (n x n, exactly symmetric) may be NULL, in which case the posterior covariance is not
+   computed. The solve uses the Cholesky factor of A; if A is not positive definite the error names the pivot.
+   The mu is in excess of the risk-free rate: add the rate before the po_data_create of the optimization. */
+PO_API po_status po_bl_posterior(const po_data* d, const po_views* v, double tau, double* out_mu, double* out_cov);
 
 #ifdef __cplusplus
 }

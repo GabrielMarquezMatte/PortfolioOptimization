@@ -8,6 +8,7 @@
 #include "core/failure.hpp"
 #include "core/result.hpp"
 #include "core/spec.hpp"
+#include "estimation/views.hpp"
 
 struct po_spec
 {
@@ -22,6 +23,11 @@ struct po_data
 struct po_result
 {
     po::Result result;
+};
+
+struct po_views
+{
+    po::estimation::Views views;
 };
 
 namespace po::capi

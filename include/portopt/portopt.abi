@@ -12,6 +12,7 @@ function const char* po_last_error(void)
 typedef struct po_spec po_spec
 typedef struct po_data po_data
 typedef struct po_result po_result
+typedef struct po_views po_views
 define PO_OBJECTIVE_MIN_VARIANCE 0
 define PO_OBJECTIVE_MAX_RETURN 1
 define PO_OBJECTIVE_MAX_SHARPE 2
@@ -62,3 +63,12 @@ function po_status po_tracking_error(const po_data*, const double*, size_t, doub
 function po_status po_sharpe_ratio(const po_data*, const double*, size_t, double*)
 function po_status po_diversification_ratio(const po_data*, const double*, size_t, double*)
 function po_status po_risk_contributions(const po_data*, const double*, size_t, double*)
+function po_status po_sample_moments(size_t, size_t, const double*, double*, double*)
+function po_status po_bayes_stein(const po_data*, size_t, double*, double*, double*)
+function po_status po_bl_equilibrium(const po_data*, const double*, size_t, double, double*)
+function po_status po_views_create(size_t, size_t, const double*, const double*, po_views**)
+function po_status po_views_set_omega(po_views*, const double*, size_t)
+function void po_views_free(po_views*)
+function po_status po_bl_omega_he_litterman(const po_data*, const po_views*, double, double*)
+function po_status po_bl_omega_idzorek(const po_data*, const po_views*, double, const double*, double*)
+function po_status po_bl_posterior(const po_data*, const po_views*, double, double*, double*)
