@@ -34,6 +34,13 @@ class BlackLittermanPosterior(NamedTuple):
         return Data(self.mu + risk_free, self.cov, risk_free=risk_free)
 
 
+def checked_p(p: ArrayLike) -> Array:
+    array = as_doubles(p)
+    if array.ndim != 2:
+        raise ValueError(f"p must be 2-D (views by assets), got {array.ndim} dimensions")
+    return array
+
+
 @dataclass(frozen=True)
 class Views:
     p: Array
@@ -41,9 +48,7 @@ class Views:
     omega: Array | None = None
 
     def __post_init__(self) -> None:
-        p, q = as_doubles(self.p), as_doubles(self.q)
-        if p.ndim != 2:
-            raise ValueError(f"p must be 2-D (views by assets), got {p.ndim} dimensions")
+        p, q = checked_p(self.p), as_doubles(self.q)
         if q.ndim != 1 or q.size != p.shape[0]:
             raise ValueError(f"q must be 1-D with {p.shape[0]} entries, got shape {q.shape}")
         object.__setattr__(self, "p", p)
@@ -61,18 +66,17 @@ class Views:
         return omega
 
 
-def checked_p(p: ArrayLike) -> Array:
-    array = as_doubles(p)
-    if array.ndim != 2:
-        raise ValueError(f"p must be 2-D (views by assets), got {array.ndim} dimensions")
-    return array
-
-
 def required_cov(cov: ArrayLike) -> Array:
     array = checked_cov(cov)
     if array is None:
         raise ValueError("cov is required")
     return array
+
+
+def checked_width(p: Array, n: int) -> Array:
+    if p.shape[1] != n:
+        raise ValueError(f"p has {p.shape[1]} columns, expected {n} (the asset count of cov)")
+    return p
 
 
 def required_vector(values: ArrayLike, name: str) -> Array:
@@ -127,8 +131,9 @@ def bl_equilibrium(cov: ArrayLike, w_mkt: ArrayLike, delta: float) -> Array:
 
 
 def bl_omega_he_litterman(cov: ArrayLike, p: ArrayLike, tau: float) -> Array:
-    matrix = checked_p(p)
-    data = Data(cov=required_cov(cov))
+    sigma = required_cov(cov)
+    matrix = checked_width(checked_p(p), sigma.shape[0])
+    data = Data(cov=sigma)
     k = matrix.shape[0]
     with views_handle(matrix, np.zeros(k), None) as views:
         out = np.empty((k, k), dtype=np.float64)
@@ -137,10 +142,13 @@ def bl_omega_he_litterman(cov: ArrayLike, p: ArrayLike, tau: float) -> Array:
 
 
 def bl_omega_idzorek(cov: ArrayLike, p: ArrayLike, tau: float, confidence: ArrayLike) -> Array:
-    matrix = checked_p(p)
+    sigma = required_cov(cov)
+    matrix = checked_width(checked_p(p), sigma.shape[0])
     levels = required_vector(confidence, "confidence")
-    data = Data(cov=required_cov(cov))
+    data = Data(cov=sigma)
     k = matrix.shape[0]
+    if levels.size != k:
+        raise ValueError(f"confidence has {levels.size} entries, expected {k} (one per view)")
     with views_handle(matrix, np.zeros(k), None) as views:
         out = np.empty((k, k), dtype=np.float64)
         _native.check(
@@ -154,7 +162,9 @@ def bl_omega_idzorek(cov: ArrayLike, p: ArrayLike, tau: float, confidence: Array
 def bl_posterior(cov: ArrayLike, pi: ArrayLike, tau: float, views: Views) -> BlackLittermanPosterior:
     """Posterior mean (in excess of the rate) and covariance."""
     prior = required_vector(pi, "pi")
-    data = Data(prior, required_cov(cov))
+    sigma = required_cov(cov)
+    checked_width(views.p, sigma.shape[0])
+    data = Data(prior, sigma)
     mu, out = np.empty(prior.size, dtype=np.float64), np.empty((prior.size,) * 2, dtype=np.float64)
     with views_handle(views.p, views.q, views.omega) as handle:
         _native.check(

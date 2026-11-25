@@ -83,3 +83,29 @@ def test_redundant_views_raise() -> None:
     p = np.array([[1.0, -1.0, 0.0], [2.0, -2.0, 0.0]])
     with pytest.raises(ValueError, match="views are redundant"):
         bl_omega_he_litterman(COV, p, 0.05)
+
+
+def test_idzorek_rejects_a_short_confidence() -> None:
+    p = np.array([[1.0, -1.0, 0.0], [0.0, 1.0, 1.0]])
+    with pytest.raises(ValueError, match="confidence has 1 entries, expected 2"):
+        bl_omega_idzorek(COV, p, 0.05, [1.0])
+
+
+def test_p_width_must_match_cov() -> None:
+    p = np.array([[1.0, -1.0]])
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_omega_he_litterman(COV, p, 0.05)
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_omega_idzorek(COV, p, 0.05, [0.5])
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_posterior(COV, np.zeros(3), 0.05, Views(p, np.array([0.01]), np.array([[0.001]])))
+
+
+def test_pi_size_must_match_cov() -> None:
+    with pytest.raises(ValueError, match="same asset count"):
+        bl_posterior(COV, np.zeros(2), 0.05, Views(np.empty((0, 3)), np.empty(0)))
+
+
+def test_views_need_omega_when_not_empty() -> None:
+    with pytest.raises(ValueError, match="omega is required"):
+        Views(np.array([[1.0, -1.0, 0.0]]), np.array([0.02]))
