@@ -45,8 +45,10 @@ add_library(portopt_core STATIC
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
     src/estimation/bayes_stein.cpp
+    src/estimation/black_litterman.cpp
     src/estimation/inputs.cpp
     src/estimation/moments.cpp
+    src/estimation/views.cpp
     src/core/portable_math.cpp
     src/problems/constraints.cpp
     src/problems/homogeneous.cpp
@@ -181,7 +183,9 @@ if(PO_BUILD_TESTS)
         tests/unit/core/generators_test.cpp
         tests/unit/core/portable_math_test.cpp
         tests/unit/estimation/bayes_stein_test.cpp
+        tests/unit/estimation/black_litterman_test.cpp
         tests/unit/estimation/moments_test.cpp
+        tests/unit/estimation/views_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
         tests/unit/fuzz/ratio_fuzz_test.cpp
