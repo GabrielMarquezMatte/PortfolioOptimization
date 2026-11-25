@@ -37,6 +37,27 @@ def test_bayes_stein_matches_numpy() -> None:
     np.testing.assert_allclose(result.mu, (1 - w) * mu_hat + w * mu0 * ones, rtol=1e-12)
 
 
+def test_bayes_stein_rejects_a_negative_t() -> None:
+    with pytest.raises(ValueError, match="t must be non-negative, got -1"):
+        bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, -1)
+
+
+def test_bayes_stein_rejects_a_float_t() -> None:
+    with pytest.raises(TypeError):
+        bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, 50.0)  # type: ignore[arg-type]
+
+
+def test_views_hash_and_compare_by_identity() -> None:
+    views = Views(np.empty((0, 3)), np.empty(0))
+    assert hash(views) == hash(views)
+    assert views == views
+
+
+def test_omegas_without_views_are_empty() -> None:
+    assert bl_omega_he_litterman(COV, np.empty((0, 3)), 0.05).shape == (0, 0)
+    assert bl_omega_idzorek(COV, np.empty((0, 3)), 0.05, np.empty(0)).shape == (0, 0)
+
+
 def test_relative_view_matches_numpy() -> None:
     tau, delta = 0.05, 2.5
     pi = bl_equilibrium(COV, W_MKT, delta)

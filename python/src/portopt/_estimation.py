@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import operator
 from dataclasses import dataclass
 from typing import NamedTuple
 
@@ -41,7 +42,7 @@ def checked_p(p: ArrayLike) -> Array:
     return array
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Views:
     p: Array
     q: Array
@@ -109,6 +110,9 @@ def sample_moments(returns: ArrayLike) -> tuple[Array, Array]:
 
 def bayes_stein(mu_hat: ArrayLike, cov: ArrayLike, t: int) -> BayesStein:
     """Jorion shrinkage; cov is the sample covariance with divisor t - 1."""
+    t = operator.index(t)
+    if t < 0:
+        raise ValueError(f"t must be non-negative, got {t}")
     mu = required_vector(mu_hat, "mu_hat")
     data = Data(mu, required_cov(cov))
     out = np.empty(mu.size, dtype=np.float64)
