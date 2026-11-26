@@ -113,16 +113,30 @@ Descent prepared(const DescentProblem& problem)
     return descent;
 }
 
+// The diagonal of 2 J'J with the bits of gauss_newton: entry j is the sum over i of (2 J_ij) J_ij, from +0 in
+// increasing i.
+std::vector<double> gauss_newton_diagonal(std::span<const double> jacobian, std::size_t n)
+{
+    std::vector<double> diagonal(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            diagonal[j] += (2.0 * jacobian[i * n + j]) * jacobian[i * n + j];
+        }
+    }
+    return diagonal;
+}
+
 // proximal tr(2 J'J) / n: a weight in the units of the Gauss-Newton curvature, which J makes independent of
 // the scale of Sigma.
 double initial_proximal(const Iterate& iterate, double proximal)
 {
     std::size_t n = iterate.weights.size();
-    std::vector<double> curvature = gauss_newton(iterate.linearization.jacobian, n);
     double trace = 0.0;
-    for (std::size_t i = 0; i < n; ++i)
+    for (double entry : gauss_newton_diagonal(iterate.linearization.jacobian, n))
     {
-        trace += curvature[i * n + i];
+        trace += entry;
     }
     return proximal * trace / static_cast<double>(n);
 }
@@ -134,8 +148,8 @@ void add_volatility_term(const DescentProblem& problem, Iterate& iterate)
         return;
     }
     const VolatilityTerm& term = *problem.volatility;
-    iterate.volatility_gradient = covariance_times(problem.data, iterate.weights);
-    iterate.volatility = std::sqrt(dot(iterate.weights, iterate.volatility_gradient));
+    iterate.volatility_gradient = iterate.linearization.product;
+    iterate.volatility = std::sqrt(iterate.linearization.variance);
     for (double& entry : iterate.volatility_gradient)
     {
         entry /= iterate.volatility;

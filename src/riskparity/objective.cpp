@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace po::riskparity
 {
@@ -121,10 +122,10 @@ std::vector<double> covariance_times(const Data& data, std::span<const double> x
 namespace
 {
 
-Moments moments_of(const Data& data, std::span<const double> budget, std::span<const double> w)
+Moments moments_of(std::vector<double> product, std::span<const double> budget, std::span<const double> w)
 {
-    std::size_t n = data.asset_count();
-    Moments moments{covariance_times(data, w), 0.0, std::vector<double>(n), std::vector<double>(n)};
+    std::size_t n = w.size();
+    Moments moments{std::move(product), 0.0, std::vector<double>(n), std::vector<double>(n)};
     moments.variance = dot(w, moments.product);
     for (std::size_t i = 0; i < n; ++i)
     {
@@ -235,8 +236,14 @@ std::vector<double> hessian_of(const Data& data, std::span<const double> w, cons
 Linearization linearize(const Data& data, std::span<const double> budget, std::span<const double> w,
                         bool with_hessian)
 {
-    Moments moments = moments_of(data, budget, w);
-    Linearization linearization{0.0, {}, jacobian_of(data, w, moments), {}};
+    return linearize(data, budget, w, covariance_times(data, w), with_hessian);
+}
+
+Linearization linearize(const Data& data, std::span<const double> budget, std::span<const double> w,
+                        std::vector<double> product, bool with_hessian)
+{
+    Moments moments = moments_of(std::move(product), budget, w);
+    Linearization linearization{0.0, {}, moments.variance, {}, jacobian_of(data, w, moments), {}};
     for (double gap : moments.gap)
     {
         linearization.value += gap * gap;
@@ -246,6 +253,7 @@ Linearization linearize(const Data& data, std::span<const double> budget, std::s
     {
         linearization.hessian = hessian_of(data, w, moments, linearization.jacobian);
     }
+    linearization.product = std::move(moments.product);
     return linearization;
 }
 
@@ -376,7 +384,7 @@ std::vector<double> gauss_newton(std::span<const double> jacobian, std::size_t n
 Change value_change(const Data& data, std::span<const double> budget, std::span<const double> w,
                     std::span<const double> step)
 {
-    Moments moments = moments_of(data, budget, w);
+    Moments moments = moments_of(covariance_times(data, w), budget, w);
     std::vector<double> q = covariance_times(data, step);
     Change change{0.0, 2.0 * dot(moments.product, step) + dot(step, q)};
     double v = moments.variance;

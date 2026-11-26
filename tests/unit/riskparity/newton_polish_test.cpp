@@ -33,6 +33,7 @@ using po::riskparity::DescentOptions;
 using po::riskparity::DescentProblem;
 using po::riskparity::DescentResult;
 using po::riskparity::DescentStop;
+using po::riskparity::KktEvaluation;
 using po::riskparity::KktPoint;
 using po::riskparity::KktProblem;
 using po::riskparity::PolishResult;
@@ -94,6 +95,23 @@ double merit_of(const KktProblem& problem, const KktPoint& point)
     return largest(residual_of(problem, point, evaluate_kkt(problem, point)));
 }
 
+// Every number of two evaluations, bit for bit.
+void expect_same_evaluation(const KktEvaluation& first, const KktEvaluation& second)
+{
+    EXPECT_EQ(first.linearization.value, second.linearization.value);
+    EXPECT_EQ(first.linearization.product, second.linearization.product);
+    EXPECT_EQ(first.linearization.variance, second.linearization.variance);
+    EXPECT_EQ(first.linearization.gradient, second.linearization.gradient);
+    EXPECT_EQ(first.linearization.jacobian, second.linearization.jacobian);
+    EXPECT_EQ(first.linearization.hessian, second.linearization.hessian);
+    EXPECT_EQ(first.lagrangian_hessian, second.lagrangian_hessian);
+    EXPECT_EQ(first.rows, second.rows);
+    EXPECT_EQ(first.gaps, second.gaps);
+    EXPECT_EQ(first.gap_noise, second.gap_noise);
+    EXPECT_EQ(first.stationarity, second.stationarity);
+    EXPECT_EQ(first.stationarity_noise, second.stationarity_noise);
+}
+
 // The multipliers of two points agree to the rounding of the least-squares solve.
 void expect_same_multipliers(const KktPoint& first, const KktPoint& second)
 {
@@ -125,10 +143,11 @@ TEST(NewtonPolish, ReachesRoundingFloor)
         KktPoint start = near_kkt_point(spec, data);
         double start_merit = merit_of(problem, start);
         PolishResult polished = po::riskparity::newton_polish(problem, start);
-        ASSERT_TRUE(polished.improved);
+        ASSERT_LT(polished.residual, start_merit);
         EXPECT_GE(polished.steps, 1);
         EXPECT_LE(polished.steps, 2);
         EXPECT_EQ(polished.residual, merit_of(problem, polished.least_squares_point));
+        expect_same_evaluation(polished.evaluation, evaluate_kkt(problem, polished.least_squares_point));
         EXPECT_LT(polished.residual, 1e-6 * start_merit);
         EXPECT_LE(polished.residual, 1.0);
         po::testing::expect_risk_parity_kkt(spec, data, as_result(spec, polished.least_squares_point), kBand);
@@ -143,7 +162,7 @@ TEST(NewtonPolish, ReachesRoundingFloor)
         EXPECT_EQ(again.least_squares_point.weights, polished.least_squares_point.weights);
         expect_same_multipliers(again.least_squares_point, polished.least_squares_point);
         EXPECT_LE(again.residual, 1.0);
-        EXPECT_EQ(again.improved, again.residual < polished.residual);
+        expect_same_evaluation(again.evaluation, evaluate_kkt(problem, again.least_squares_point));
     }
 }
 
@@ -165,10 +184,8 @@ TEST(NewtonPolish, DoesNotDependOnTheEqualityMultipliersOfTheStart)
         {
             multiplier *= factor;
         }
-        double start_merit = merit_of(problem, start);
         PolishResult polished = po::riskparity::newton_polish(problem, start);
         EXPECT_LE(polished.residual, 1.0);
-        EXPECT_EQ(polished.improved, polished.residual < start_merit);
         EXPECT_EQ(polished.steps, reference.steps);
         expect_same_multipliers(polished.least_squares_point, reference.least_squares_point);
         for (std::size_t i = 0; i < n; ++i)
@@ -265,7 +282,7 @@ TEST(NewtonPolish, ReleasesABoundWhoseMultiplierHasTheWrongSign)
     start.bound_multipliers[k] = 1.0;
     ASSERT_GT(merit_of(shifted_problem, start), 1e3);
     PolishResult polished = po::riskparity::newton_polish(shifted_problem, start);
-    EXPECT_TRUE(polished.improved);
+    EXPECT_LT(polished.residual, merit_of(shifted_problem, start));
     EXPECT_GE(polished.steps, 1);
     EXPECT_EQ(polished.least_squares_point.bound_multipliers[k], 0.0);
     EXPECT_GT(polished.least_squares_point.weights[k], shifted.weight_lower[k]);
@@ -338,7 +355,7 @@ MultiplierErrors multiplier_errors(const po::testing::GeneratedRiskParity& gener
     PolishResult polished = po::riskparity::newton_polish(problem, point_of(spec, solved));
     EXPECT_EQ(polished.steps, 0);
     po::riskparity::MultiplierCorrection correction =
-        po::riskparity::corrected_multipliers(problem, polished.least_squares_point);
+        po::riskparity::corrected_multipliers(problem, polished.least_squares_point, polished.evaluation);
     EXPECT_TRUE(correction.accepted);
     EXPECT_EQ(correction.reported_point.weights, solved.weights);
     Result least_squares = as_result(spec, polished.least_squares_point);
@@ -403,7 +420,8 @@ TEST(NewtonPolish, RejectsACorrectionThatDoesNotContract)
     spec.target_volatility = smallest * (1.0 + 1e-4);
     KktProblem problem{spec, data, spec.risk_budget};
     KktPoint point = point_of(spec, far);
-    po::riskparity::MultiplierCorrection correction = po::riskparity::corrected_multipliers(problem, point);
+    po::riskparity::MultiplierCorrection correction =
+        po::riskparity::corrected_multipliers(problem, point, evaluate_kkt(problem, point));
     RecordProperty("contraction", ::testing::PrintToString(correction.second_change / correction.change));
     EXPECT_GT(correction.change, 0.0);
     EXPECT_GT(correction.second_change, 0.5 * correction.change);
@@ -429,7 +447,8 @@ TEST(NewtonPolish, RejectsACorrectionThatChangesTheSideOfABound)
     KktProblem problem{spec, generated.data, spec.risk_budget};
     PolishResult polished = po::riskparity::newton_polish(problem, point_of(spec, solved));
     ASSERT_EQ(polished.steps, 0);
-    ASSERT_TRUE(po::riskparity::corrected_multipliers(problem, polished.least_squares_point).accepted);
+    ASSERT_TRUE(
+        po::riskparity::corrected_multipliers(problem, polished.least_squares_point, polished.evaluation).accepted);
     KktPoint point = polished.least_squares_point;
     std::size_t k = 0;
     while (k < point.weights.size() && point.bound_multipliers[k] <= 0.0)
@@ -438,7 +457,8 @@ TEST(NewtonPolish, RejectsACorrectionThatChangesTheSideOfABound)
     }
     ASSERT_LT(k, point.weights.size());
     point.bound_multipliers[k] = -point.bound_multipliers[k];
-    po::riskparity::MultiplierCorrection correction = po::riskparity::corrected_multipliers(problem, point);
+    po::riskparity::MultiplierCorrection correction =
+        po::riskparity::corrected_multipliers(problem, point, evaluate_kkt(problem, point));
     RecordProperty("contraction", ::testing::PrintToString(correction.second_change / correction.change));
     EXPECT_LE(correction.second_change, 0.5 * correction.change);
     EXPECT_FALSE(correction.accepted);
@@ -456,8 +476,9 @@ TEST(Kkt, ResidualSeesAnErrorOfTheWeights)
     Spec spec = capped_spec(n);
     spec.target_return = 0.09;
     KktProblem problem{spec, data, spec.risk_budget};
-    PolishResult polished = po::riskparity::newton_polish(problem, near_kkt_point(spec, data));
-    ASSERT_TRUE(polished.improved);
+    KktPoint start = near_kkt_point(spec, data);
+    PolishResult polished = po::riskparity::newton_polish(problem, start);
+    ASSERT_LT(polished.residual, merit_of(problem, start));
     KktPoint moved = polished.least_squares_point;
     std::size_t first_free = n;
     std::size_t second_free = n;
@@ -489,6 +510,50 @@ TEST(Kkt, ResidualSeesAnErrorOfTheWeights)
     KktPoint not_a_number = polished.least_squares_point;
     not_a_number.weights[0] = std::nan("");
     EXPECT_TRUE(std::isnan(largest(residual_of(problem, not_a_number, evaluate_kkt(problem, not_a_number)))));
+}
+
+// is_kkt_point rejects a point by the parts of its residual that the weights alone decide before it makes the
+// Hessian; it decides as the full residual does, at a KKT point and at points that fail each part.
+TEST(Kkt, IsKktPointDecidesAsTheFullResidual)
+{
+    std::size_t n = 5;
+    Data data = sample_data(n, 7);
+    Spec spec = capped_spec(n);
+    spec.target_return = 0.09;
+    KktProblem problem{spec, data, spec.risk_budget};
+    KktPoint solution = po::riskparity::newton_polish(problem, near_kkt_point(spec, data)).least_squares_point;
+    std::vector<KktPoint> points(5, solution);
+    points[1].weights[0] += 1e-9;
+    points[2].weights[0] = spec.upper + 1e-9;
+    points[3].equality_multipliers[0] *= 1.0 + 1e-6;
+    points[4].weights[0] = std::nan("");
+    for (std::size_t p = 0; p < points.size(); ++p)
+    {
+        SCOPED_TRACE(p);
+        KktEvaluation evaluation = evaluate_kkt(problem, points[p]);
+        bool expected =
+            po::riskparity::passes_kkt_gate(evaluation, largest(residual_of(problem, points[p], evaluation)));
+        EXPECT_EQ(is_kkt_point(problem, points[p]), expected);
+        EXPECT_EQ(expected, p == 0);
+    }
+}
+
+// The evaluation of a point whose multipliers change at the same weights follows them with the bits of a new
+// evaluation, the volatility multiplier included, which enters the Hessian of the Lagrangian.
+TEST(Kkt, UpdateMultipliersGivesTheBitsOfANewEvaluation)
+{
+    std::size_t n = 5;
+    Data data = sample_data(n, 7);
+    Spec spec = capped_spec(n);
+    spec.target_volatility = 0.2;
+    KktProblem problem{spec, data, spec.risk_budget};
+    std::vector<double> weights(n, 1.0 / static_cast<double>(n));
+    KktPoint point{weights, {0.3, -0.7}, {0.0, 0.1, 0.0, -0.2, 0.0}};
+    KktEvaluation evaluation = evaluate_kkt(problem, point);
+    point.equality_multipliers = {-1.1, 2.5};
+    point.bound_multipliers = {0.4, 0.0, 0.0, -0.2, 0.3};
+    po::riskparity::update_multipliers(problem, point, evaluation);
+    expect_same_evaluation(evaluation, evaluate_kkt(problem, point));
 }
 
 // Two weights pinned by their bounds at (1 + t, -t), with beta = grad f, so that the stationarity and the

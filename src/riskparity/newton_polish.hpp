@@ -28,7 +28,9 @@ struct MultiplierCorrection
     bool accepted;
 };
 
-MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktPoint& point);
+// evaluation is evaluate_kkt(problem, point).
+MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktPoint& point,
+                                           KktEvaluation evaluation);
 
 struct PolishResult
 {
@@ -37,12 +39,12 @@ struct PolishResult
     // stationarity rows for the bounds. The KKT gate checks this point; the multipliers to report are those
     // of corrected_multipliers at it.
     KktPoint least_squares_point;
+    // evaluate_kkt(least_squares_point).
+    KktEvaluation evaluation;
     // largest(residual_of(least_squares_point)): the KKT residual in units of its noise.
     double residual;
     // Newton steps taken to reach least_squares_point.
     int steps;
-    // The residual of least_squares_point is below that of the start as it was given.
-    bool improved;
 };
 
 // Newton on the KKT system of the equalities and of the active bounds, with the exact Hessian of the

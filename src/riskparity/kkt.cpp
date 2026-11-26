@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <utility>
 
 #include "problems/constraints.hpp"
 #include "qp/goldfarb_idnani.hpp"
@@ -14,17 +15,17 @@ namespace
 
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 
-// p = Sigma w, vol = sqrt(w'p) and c_i = w_i p_i / w'p at one point.
+// p = Sigma w, vol = sqrt(w'p) and c_i = w_i p_i / w'p at one point, w'p compensated.
 struct Moments
 {
-    std::vector<double> product;
+    std::span<const double> product;
     double volatility;
     std::vector<double> contributions;
 };
 
-Moments moments_of(const Data& data, std::span<const double> w)
+Moments moments_of(std::span<const double> product, std::span<const double> w)
 {
-    Moments moments{covariance_times(data, w), 0.0, std::vector<double>(w.size())};
+    Moments moments{product, 0.0, std::vector<double>(w.size())};
     double variance = compensated_dot(w, moments.product);
     moments.volatility = std::sqrt(variance);
     for (std::size_t i = 0; i < w.size(); ++i)
@@ -88,7 +89,7 @@ void add_equalities(const KktProblem& problem, std::span<const double> w, const 
     if (problem.spec.target_volatility.has_value())
     {
         double target = *problem.spec.target_volatility;
-        std::vector<double> gradient = moments.product;
+        std::vector<double> gradient(moments.product.begin(), moments.product.end());
         for (double& entry : gradient)
         {
             entry /= moments.volatility;
@@ -219,14 +220,14 @@ double distance_to_named_bound(const Spec& spec, const KktPoint& point, std::siz
 
 // Either w_j is at the bound that beta_j names or beta_j is noise.
 double complementarity_of(const KktProblem& problem, const KktPoint& point, const KktEvaluation& evaluation,
-                          std::size_t j)
+                          std::size_t j, double weight_scale)
 {
     double beta = point.bound_multipliers[j];
     if (beta == 0.0)
     {
         return 0.0;
     }
-    double distance = distance_to_named_bound(problem.spec, point, j, weight_scale_of(point.weights));
+    double distance = distance_to_named_bound(problem.spec, point, j, weight_scale);
     double multiplier = in_noise_units(beta, evaluation.stationarity_noise[j]);
     if (std::isnan(distance) || std::isnan(multiplier))
     {
@@ -235,37 +236,72 @@ double complementarity_of(const KktProblem& problem, const KktPoint& point, cons
     return std::fmin(distance, multiplier);
 }
 
+double equality_residual(const KktEvaluation& evaluation)
+{
+    double residual = 0.0;
+    for (std::size_t k = 0; k < evaluation.gaps.size(); ++k)
+    {
+        residual = worst_of(residual, in_noise_units(evaluation.gaps[k], evaluation.gap_noise[k]));
+    }
+    return residual;
+}
+
+double bound_residual(const Spec& spec, std::span<const double> weights, double weight_scale)
+{
+    double residual = 0.0;
+    for (std::size_t j = 0; j < weights.size(); ++j)
+    {
+        residual = worst_of(residual, bound_violation(spec, weights, j, weight_scale));
+    }
+    return residual;
+}
+
+// The rows, the gaps and their noise, which the weights alone decide. Of the linearization only Sigma w is
+// set, for add_linearization.
+KktEvaluation equalities_at(const KktProblem& problem, std::span<const double> w)
+{
+    KktEvaluation evaluation;
+    evaluation.linearization.product = covariance_times(problem.data, w);
+    add_equalities(problem, w, moments_of(evaluation.linearization.product, w), evaluation);
+    return evaluation;
+}
+
+// The rest of evaluate_kkt after equalities_at: f with its Hessian, and what the multipliers decide.
+void add_linearization(const KktProblem& problem, const KktPoint& point, KktEvaluation& evaluation)
+{
+    std::vector<double> product = std::move(evaluation.linearization.product);
+    evaluation.linearization = linearize(problem.data, problem.budget, point.weights, std::move(product), true);
+    update_multipliers(problem, point, evaluation);
+}
+
 } // namespace
 
 KktEvaluation evaluate_kkt(const KktProblem& problem, const KktPoint& point)
 {
-    Moments moments = moments_of(problem.data, point.weights);
-    KktEvaluation evaluation;
-    evaluation.linearization = linearize(problem.data, problem.budget, point.weights, true);
-    add_equalities(problem, point.weights, moments, evaluation);
+    KktEvaluation evaluation = equalities_at(problem, point.weights);
+    add_linearization(problem, point, evaluation);
+    return evaluation;
+}
+
+void update_multipliers(const KktProblem& problem, const KktPoint& point, KktEvaluation& evaluation)
+{
+    Moments moments = moments_of(evaluation.linearization.product, point.weights);
     std::span<const double> objective_hessian = evaluation.linearization.hessian;
     evaluation.lagrangian_hessian = lagrangian_hessian(problem, point, moments, objective_hessian);
     add_stationarity(problem, point, moments, evaluation);
-    return evaluation;
 }
 
 KktResidual residual_of(const KktProblem& problem, const KktPoint& point, const KktEvaluation& evaluation)
 {
-    KktResidual residual{0.0, 0.0, 0.0, 0.0};
     double weight_scale = weight_scale_of(point.weights);
+    double bounds = bound_residual(problem.spec, point.weights, weight_scale);
+    KktResidual residual{0.0, equality_residual(evaluation), bounds, 0.0};
     for (std::size_t j = 0; j < point.weights.size(); ++j)
     {
         double stationarity = in_noise_units(evaluation.stationarity[j], evaluation.stationarity_noise[j]);
         residual.stationarity = worst_of(residual.stationarity, stationarity);
-        double violation = bound_violation(problem.spec, point.weights, j, weight_scale);
-        double complementarity = complementarity_of(problem, point, evaluation, j);
-        residual.bounds = worst_of(residual.bounds, violation);
+        double complementarity = complementarity_of(problem, point, evaluation, j, weight_scale);
         residual.complementarity = worst_of(residual.complementarity, complementarity);
-    }
-    for (std::size_t k = 0; k < evaluation.gaps.size(); ++k)
-    {
-        double gap = in_noise_units(evaluation.gaps[k], evaluation.gap_noise[k]);
-        residual.equalities = worst_of(residual.equalities, gap);
     }
     return residual;
 }
@@ -277,11 +313,25 @@ double largest(const KktResidual& residual)
     return worst_of(worst, residual.complementarity);
 }
 
+bool passes_kkt_gate(const KktEvaluation& evaluation, double residual, double factor)
+{
+    bool resolves_budget = evaluation.gap_noise.front() <= qp::kRelativeTolerance;
+    return resolves_budget && residual <= factor;
+}
+
+// largest is NaN or at least each of its parts, so a part that the weights alone decide and that is not within
+// the factor rejects the point before the Hessian is made.
 bool is_kkt_point(const KktProblem& problem, const KktPoint& point, double factor)
 {
-    KktEvaluation evaluation = evaluate_kkt(problem, point);
-    bool resolves_budget = evaluation.gap_noise.front() <= qp::kRelativeTolerance;
-    return resolves_budget && largest(residual_of(problem, point, evaluation)) <= factor;
+    KktEvaluation evaluation = equalities_at(problem, point.weights);
+    double bounds = bound_residual(problem.spec, point.weights, weight_scale_of(point.weights));
+    double weights_part = worst_of(equality_residual(evaluation), bounds);
+    if (!passes_kkt_gate(evaluation, weights_part, factor))
+    {
+        return false;
+    }
+    add_linearization(problem, point, evaluation);
+    return passes_kkt_gate(evaluation, largest(residual_of(problem, point, evaluation)), factor);
 }
 
 } // namespace po::riskparity

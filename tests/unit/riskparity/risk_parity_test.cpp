@@ -383,7 +383,8 @@ Polished polish_of(const Spec& spec, const Data& data, const Result& result, dou
         po::riskparity::newton_polish(problem, kkt_point_of(spec, result));
     EXPECT_EQ(polished.steps, 0);
     Polished settled{polished.least_squares_point,
-                     po::riskparity::corrected_multipliers(problem, polished.least_squares_point)};
+                     po::riskparity::corrected_multipliers(problem, polished.least_squares_point,
+                                                           polished.evaluation)};
     expect_near_multipliers(settled.correction.reported_point.equality_multipliers,
                             kkt_point_of(spec, result).equality_multipliers, tolerance);
     expect_near_multipliers(settled.correction.reported_point.bound_multipliers, result.bound_multipliers,

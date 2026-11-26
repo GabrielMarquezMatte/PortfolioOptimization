@@ -51,6 +51,10 @@ struct KktEvaluation
 
 KktEvaluation evaluate_kkt(const KktProblem& problem, const KktPoint& point);
 
+// From the evaluation of a point with the weights of point, that of point: only lagrangian_hessian and the
+// stationarity depend on the multipliers, and they come out with the bits evaluate_kkt gives them.
+void update_multipliers(const KktProblem& problem, const KktPoint& point, KktEvaluation& evaluation);
+
 // Each the largest ratio of a residual to its noise, so that a value of order 1 is a point that no rounding
 // of the weights distinguishes from a KKT point. bounds is the violation of a bound; complementarity, for a
 // nonzero beta_j, the smaller of |beta_j| and the distance of w_j to the bound that the sign of beta_j names.
@@ -78,5 +82,8 @@ inline constexpr double kKktNoiseFactor = 16.0;
 // at most the feasibility tolerance of the QP solver. factor replaces kKktNoiseFactor for a tighter stopping
 // rule inside an iteration.
 bool is_kkt_point(const KktProblem& problem, const KktPoint& point, double factor = kKktNoiseFactor);
+
+// is_kkt_point of a point from its evaluation and largest(residual_of(...)) of it.
+bool passes_kkt_gate(const KktEvaluation& evaluation, double residual, double factor = kKktNoiseFactor);
 
 } // namespace po::riskparity

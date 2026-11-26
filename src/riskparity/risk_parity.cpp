@@ -220,9 +220,10 @@ Result stationary_point(const KktProblem& problem, std::vector<double> start, in
         }
         PolishResult polished = newton_polish(problem, stage.point);
         iterations += polished.steps;
-        if (is_kkt_point(problem, polished.least_squares_point))
+        if (passes_kkt_gate(polished.evaluation, polished.residual))
         {
-            MultiplierCorrection correction = corrected_multipliers(problem, polished.least_squares_point);
+            MultiplierCorrection correction =
+                corrected_multipliers(problem, polished.least_squares_point, std::move(polished.evaluation));
             return kkt_point(problem, std::move(correction.reported_point), iterations);
         }
         start = std::move(stage.point.weights);

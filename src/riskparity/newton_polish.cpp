@@ -256,7 +256,7 @@ Candidate settled(const KktProblem& problem, Position position)
         }
         point.bound_multipliers[j] = evaluation.stationarity[j];
     }
-    evaluation = evaluate_kkt(problem, point);
+    update_multipliers(problem, point, evaluation);
     double residual = largest(residual_of(problem, point, evaluation));
     return Candidate{std::move(position), std::move(evaluation), residual};
 }
@@ -477,13 +477,13 @@ bool improves_on(double residual, double current)
 
 // The second solve, from the corrected multipliers at the same weights, measures how far the first is from
 // its limit. The weights do not move, so the gradients of the equalities and the unknowns are those of the
-// first solve.
-MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktPoint& point)
+// first solve, and the evaluation changes only with the multipliers.
+MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktPoint& point,
+                                           KktEvaluation evaluation)
 {
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
     MultiplierCorrection result{point, kNaN, kNaN, false};
     std::vector<Side> sides = sides_named_by(point.bound_multipliers);
-    KktEvaluation evaluation = evaluate_kkt(problem, point);
     Unknowns unknowns = unknowns_of(sides, evaluation);
     std::optional<NewtonCorrection> first = newton_correction(evaluation, unknowns);
     if (!first.has_value())
@@ -492,8 +492,8 @@ MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktP
     }
     result.change = norm_of(first->multipliers);
     KktPoint corrected = corrected_point(point, evaluation, unknowns, *first);
-    KktEvaluation again = evaluate_kkt(problem, corrected);
-    std::optional<NewtonCorrection> second = newton_correction(again, unknowns);
+    update_multipliers(problem, corrected, evaluation);
+    std::optional<NewtonCorrection> second = newton_correction(evaluation, unknowns);
     if (!second.has_value())
     {
         return result;
@@ -504,7 +504,7 @@ MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktP
     // leave 958 times the noise and multipliers ten times worse than least squares, while away from it every
     // correction measured left at most 0.38 (docs/guide/validation.md, "The Newton polish"). Near sigma_min
     // the factor does not separate good corrections from bad ones; it only refuses the worst.
-    bool stationary = residual_of(problem, corrected, again).stationarity <= kKktNoiseFactor;
+    bool stationary = residual_of(problem, corrected, evaluation).stationarity <= kKktNoiseFactor;
     if (!contracts || !stationary || !keeps_sides(corrected.bound_multipliers, sides))
     {
         return result;
@@ -516,22 +516,19 @@ MultiplierCorrection corrected_multipliers(const KktProblem& problem, const KktP
 
 PolishResult newton_polish(const KktProblem& problem, const KktPoint& start)
 {
-    double start_residual = largest(residual_of(problem, start, evaluate_kkt(problem, start)));
-    std::optional<Candidate> candidate(std::in_place, held_start(problem, start));
-    PolishResult result{candidate->position.point, candidate->residual, 0, false};
-    for (int step = 1; step <= kMaxSteps && !(result.residual <= kNoiseFloor); ++step)
+    Candidate best = held_start(problem, start);
+    int steps = 0;
+    for (int step = 1; step <= kMaxSteps && !(best.residual <= kNoiseFloor); ++step)
     {
-        candidate = newton_step(problem, *candidate);
-        if (!candidate.has_value() || !improves_on(candidate->residual, result.residual))
+        std::optional<Candidate> next = newton_step(problem, best);
+        if (!next.has_value() || !improves_on(next->residual, best.residual))
         {
             break;
         }
-        result.least_squares_point = candidate->position.point;
-        result.residual = candidate->residual;
-        result.steps = step;
+        best = std::move(*next);
+        steps = step;
     }
-    result.improved = improves_on(result.residual, start_residual);
-    return result;
+    return PolishResult{std::move(best.position.point), std::move(best.evaluation), best.residual, steps};
 }
 
 } // namespace po::riskparity
