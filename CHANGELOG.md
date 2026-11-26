@@ -9,6 +9,10 @@ From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+Estimation utilities beside the solve. The C ABI only grows: `PO_ABI_VERSION` stays 1.
+
 ### Added
 
 - Estimation utilities, side-effect-free functions that the solve never calls ([math.md](docs/guide/math.md#estimation-utilities),
