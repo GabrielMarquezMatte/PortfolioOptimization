@@ -140,11 +140,33 @@ PORTOPT_LIB=$PWD/build/gcc-release/libportopt.dll dotnet run -c Release --projec
   of guard, 17.6 µs of `solve()` against 0.13 µs of readers. The C layer is not worth optimizing.
 - The layer matters for one use, many solves of problems of about 10 assets, where the Python overhead is more than
   the solve itself. For one solve at n ≥ 100 it is not visible; for n = 1000 it is not measurable.
-- What would reduce the fixed cost, none of it done: building the `ctypes` output cells once instead of per call in
-  `read_scalar` (the 11 reads are 8.6 of the 15.8 µs), filling the `Result` in a single pass without the
-  frozen-dataclass `__init__`, and reusing the `Spec` and `Data` between solves (already possible: they are
-  immutable handles). A reader that returns the whole result in one call would need a new C function, a change of the
-  C interface that the numbers above do not justify.
+- What would reduce the fixed cost: building the `ctypes` output cells once instead of per call in `read_scalar`
+  (the 11 reads are 8.6 of the 15.8 µs), filling the `Result` in a single pass without the frozen-dataclass
+  `__init__`, and reusing the `Spec` and `Data` between solves (already possible: they are immutable handles). The
+  first is done since 2026-11-26 ([below](#update-of-2026-11-26)); the dataclass `__init__` is kept. A reader that
+  returns the whole result in one call would need a new C function, a change of the C interface that the numbers
+  above do not justify.
+
+### Update of 2026-11-26
+
+`read_result` takes the weight count from the `Data` (one call fewer), reads the weights and the bound multipliers
+into one buffer made for the call and the scalars through one output cell, and looks the status up in a table; the
+estimation helpers accept a prebuilt `Data`. Same machine, `gcc-release` library, `bench_overhead.py --repeats 7`,
+the old and the new `python/src` run twice one after the other over the same `libportopt.dll` (the two runs agree to
+3%; the second is tabled):
+
+| Measure (microseconds, median) | n = 10 | n = 100 | n = 1000 |
+| --- | ---: | ---: | ---: |
+| `read_result`, before | 15.5 | 15.5 | 16.0 |
+| `read_result`, after (10 `ctypes` calls, 1 buffer) | 8.8 | 9.0 | 9.6 |
+| `solve(spec, data)`, before | 21.9 | 196.2 | 142 253 |
+| `solve(spec, data)`, after | 15.1 | 188.2 | 143 860 |
+| `bl_equilibrium(cov, w_mkt, delta)` | 12.6 | 57.5 | 30 334 |
+| `bl_equilibrium(data, w_mkt, delta)`, the `Data` prebuilt | 5.4 | 10.0 | 670 |
+
+`solve()` now costs about 10 µs over `po_solve` instead of 17.6. With a prebuilt `Data` the equilibrium no longer
+pays the copy, validation and Cholesky of `po_data_create` (30 ms at n = 1000) on every call; the omegas, the
+posterior and `bayes_stein` take a `Data` the same way.
 
 Reproduce, in the `python/.venv` environment, with the library of the build to measure:
 

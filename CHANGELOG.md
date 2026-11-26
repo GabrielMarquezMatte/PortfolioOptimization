@@ -23,10 +23,30 @@ From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.
 
 ### Changed
 
+- The metric functions of the C API (`po_portfolio_return`, `po_portfolio_volatility`, `po_utility`,
+  `po_tracking_error`, `po_sharpe_ratio`, `po_diversification_ratio`, `po_risk_contributions`) reject a NaN or
+  infinite weight with `PO_INVALID_ARGUMENT`. They used to return `PO_OK`, and a volatility of 0 for the NaN weights
+  of a result with no point, because the clamp of a negative variance to 0 also turned NaN into 0.
+- Faster solves with the same bits (every benchmark case of n ≤ 100 and the n = 1000 cases checked are identical,
+  iterations included; [benchmarks.md](docs/performance/benchmarks.md#bit-identical-levers-of-2026-11-26)): the
+  QP's dense directions sum several basis columns per pass; the builders give the QP only the factor of its Hessian
+  (`TRACKING_ERROR` no longer forms R'R); the violation scan skips the homogenized box rows of `MAX_SHARPE` and
+  `MAX_DIVERSIFICATION` that a rounding bound proves within tolerance; `RISK_PARITY` reuses its KKT evaluations and
+  Sigma w; `po_sample_moments` sums the covariance by register tiles (11 times faster at n = 1000).
 - Python: `solve()` reads its result with fewer `ctypes` objects: the weight count comes from the `Data`
   (`po_result_weight_count` is the weight count of the solved data), the weights and the bound multipliers share one
   buffer made for the call, the scalars one output cell, and the status is a table lookup. The `Result` is the same:
   the same fields and types, read-only arrays, compared by identity.
+
+### Fixed
+
+- The QP no longer reports `INFEASIBLE` at a degenerate vertex whose candidate row depends on an ill-conditioned
+  active set, as at the end of an efficient-frontier sweep (`MIN_VARIANCE` with the target return at the largest the
+  bounds allow).
+- `MAX_RETURN` no longer ends `NOT_CONVERGED` when the volatility cap equals the volatility of a stretch of the path
+  where the weights are constant (a vertex or a face of equal means).
+- Python: `Result`, `BayesStein` and `BlackLittermanPosterior` compare and hash by identity, as `Views` does; their
+  generated equality compared the arrays and raised.
 
 ## [1.1.0] - 2026-11-25
 

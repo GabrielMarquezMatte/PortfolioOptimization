@@ -691,3 +691,37 @@ a 4.7 µs solve at n = 10, 16% of a 193 µs one at n = 100 and 0.02% of a 166 ms
   `min_variance` cases of the three sizes in the native one.
 - `ctest --preset gcc-release`: 336 tests passed; `pytest`: 59 passed; `mypy --strict` of `python/src`,
   `python/tests` and `python/benchmarks`: clean; `python tests/style/check_style.py .`: clean.
+
+## Bit-identical levers of 2026-11-26
+
+Six changes of risk 0 after a static review of the code (commits `80827a7` to `0796825`): each keeps the sequence of
+operations of every element it computes, so every solution keeps its bits. Same machine, `gcc-bench`, code at
+`456bfae` (A) against `0796825` (B), measured on 2026-11-26 with the desktop idle (3 to 4% CPU before the run): the
+quick suite run once each to warm up and discarded, then A, B, A, B; then a targeted filter of 3 repetitions, A, B,
+A, B; the n = 1000 cases once each with `portopt_profile --repeat 1`. The kernels whose code did not change
+(`cholesky`, `qr`, `gauss_newton`, `covariance_times`, `compensated_dot`) are 0.99 to 1.01 in every pair, the noise
+floor of the run.
+
+| Lever | What changed | Measure (B / A, the two pairs) |
+| --- | --- | --- |
+| Directions by column blocks (`80827a7`) | `compute_directions` sums 8 basis columns against the row at once, `directions_from_projection` adds 4 columns per pass; each column keeps its sum from +0 in increasing i | `max_return/leverage/100` 0.73 to 0.74, `utility/leverage/100` 0.73 to 0.74, `qp_iteration` 0.94 at 100 to 1000, the other QP solves at n = 100 0.92 to 0.94 |
+| Only the factor of the Hessian (`9f61bbd`) | With `hessian_factor` set the QP never read `hessian`; the builders no longer form it (`TRACKING_ERROR`'s R'R, an n² copy and scale elsewhere) | `tracking_error/*/100` 0.65 to 0.77, `/10` 0.89 to 0.92 |
+| Flat rows screened (`2ef8ce1`) | A row c 1 + (e - c) e_j is placed within its tolerance from 1'x and 1'\|x\| under a rigorous bound on the rounding of the estimate and of the exact dot; every homogenized box row of the benchmarks is screened | `max_sharpe/box/100` 0.66, `max_diversification/box/100` 0.66 |
+| Sample covariance by tiles (`d29f731`) | The panel is centered once and the upper triangle summed by 4 x 4 tiles of independent accumulators, each entry in row order | `sample_moments` (t = 2n, a standalone timer of the old and new file): 650 to 170 µs at n = 100, 24.0 to 3.7 ms at 300, 2.51 to 0.22 s at 1000 |
+| KKT evaluations reused (`b524628`) | The polish carries the evaluation of its last point; the gate of the augmented Lagrangian tests its cheap residuals first; the proximal start uses only the Gauss-Newton diagonal; the volatility term reuses Sigma w | `risk_parity/target_volatility/100` 0.72 to 0.73 (Gauss-Newton calls 39 to 24, covariance products 122 to 72), `target_return/100` 0.85, `box/100` 0.87 to 0.88, `budget` 1.00 |
+| Bindings (`0796825`) | Estimation helpers take a prebuilt `Data`; Python reads the result with fewer `ctypes` objects | [Python and C layers](python-vs-arch.md#update-of-2026-11-26) |
+
+The n = 1000 cases, one solve each (A then B), all bit-identical with the same iterations:
+
+| Case | A | B | B / A |
+| --- | ---: | ---: | ---: |
+| `max_return/leverage/1000` | 6.45 s | 3.75 s | 0.58 |
+| `tracking_error/long_only/1000` | 898 ms | 635 ms | 0.71 |
+| `max_sharpe/box/1000` | 343 ms | 149 ms | 0.43 |
+| `risk_parity/target_volatility/1000` | 7.05 s | 6.29 s | 0.89 |
+
+Verification: `compare-solutions --require-identical` of A against B, 70 of 70 bit-identical at n ≤ 100 and the four
+cases above at n = 1000; `ctest --preset gcc-release` 462 passed, `pytest` 118 passed, `dotnet test` 65 passed. The
+column blocks are not the class-B kernels of [What was left out](#what-was-left-out-and-why): those split one sum
+into several accumulators and change its rounding; these run the sums of several columns side by side, each in its
+old order.
