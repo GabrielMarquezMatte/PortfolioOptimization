@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.28)
 # Not a cache entry, so a version bump reaches build directories that already exist; -DPO_VERSION=x.y.z overrides it.
 if(NOT DEFINED PO_VERSION)
-    set(PO_VERSION 1.0.0)
+    set(PO_VERSION 1.1.0)
 endif()
 project(PortOpt VERSION ${PO_VERSION} LANGUAGES C CXX)
 

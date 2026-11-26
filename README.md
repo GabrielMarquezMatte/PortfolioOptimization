@@ -8,7 +8,7 @@ no dependency besides GoogleTest (for its tests).
 
 ## Status
 
-Version 1.0.0. Nine objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
+Version 1.1.0. Nine objectives are solved: minimum variance (`MIN_VARIANCE`), maximum return under a
 volatility cap (`MAX_RETURN`), the maximum Sharpe ratio (`MAX_SHARPE`), mean-variance utility (`UTILITY`), the same
 with an importance weight between risk and return (`IMPORTANCE`), the Kelly criterion (`KELLY`), tracking error
 against a benchmark (`TRACKING_ERROR`), the maximum diversification ratio (`MAX_DIVERSIFICATION`) and risk parity with
@@ -23,8 +23,10 @@ the budget, target-return, volatility and leverage constraints and of the bounds
 with NaN weights, multipliers and residual, for every objective. A `MAX_SHARPE` or
 `MAX_DIVERSIFICATION` problem whose supremum is not attained, such as `MAX_SHARPE` with unbounded short selling and a
 risk-free rate above the minimum-variance return, has status `UNBOUNDED` and NaN weights. Portfolio return, volatility,
-utility, tracking error and the Sharpe and diversification ratios of a weight vector are available too. Until 1.0 the C
-ABI may change between releases. See [CHANGELOG.md](CHANGELOG.md).
+utility, tracking error and the Sharpe and diversification ratios of a weight vector are available too, as are the
+[estimation utilities](docs/guide/math.md#estimation-utilities) (sample moments, Bayes-Stein and Black-Litterman),
+which the solve never calls. From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.md)). See
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
