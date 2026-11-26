@@ -117,15 +117,37 @@ inline std::vector<double> family_term(const po::qp::Problem& problem, const po:
     return term;
 }
 
+// G of problem: its hessian, or L L' from its factor when a builder gave G only by L.
+inline std::vector<double> hessian_of(const po::qp::Problem& problem)
+{
+    std::vector<double> hessian = problem.hessian;
+    if (!hessian.empty())
+    {
+        return hessian;
+    }
+    std::size_t n = problem.n;
+    std::span<const double> factor = problem.hessian_factor;
+    hessian.resize(n * n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            hessian[i * n + j] = dot(factor.subspan(i * n, n), factor.subspan(j * n, n));
+        }
+    }
+    return hessian;
+}
+
 // Stationarity G x + g - E'y - C'z - sum_j zeta_j (a - s_j), relative to the largest of its five terms, with no
 // floor: a problem at a small scale is held to the same relative accuracy as one at scale 1.
 inline double stationarity_residual(const po::qp::Problem& problem, const po::qp::Solution& solution)
 {
     std::size_t n = problem.n;
+    std::vector<double> hessian = hessian_of(problem);
     std::vector<double> curvature(n);
     for (std::size_t i = 0; i < n; ++i)
     {
-        curvature[i] = row_dot(problem.hessian, i, solution.x);
+        curvature[i] = row_dot(hessian, i, solution.x);
     }
     std::vector<double> equality =
         transposed_product(problem.equality_rows, solution.equality_multipliers, n);

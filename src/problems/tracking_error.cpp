@@ -24,30 +24,6 @@ std::vector<double> excess_returns(const Data& data)
     return excess;
 }
 
-std::vector<double> normal_matrix(const std::vector<double>& excess, std::size_t periods, std::size_t n)
-{
-    std::vector<double> normal(n * n, 0.0);
-    for (std::size_t t = 0; t < periods; ++t)
-    {
-        const double* row = excess.data() + t * n;
-        for (std::size_t i = 0; i < n; ++i)
-        {
-            for (std::size_t j = i; j < n; ++j)
-            {
-                normal[i * n + j] += row[i] * row[j];
-            }
-        }
-    }
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        for (std::size_t j = i + 1; j < n; ++j)
-        {
-            normal[j * n + i] = normal[i * n + j];
-        }
-    }
-    return normal;
-}
-
 std::vector<double> linear_term(const Data& data, const std::vector<double>& excess)
 {
     std::size_t n = data.asset_count();
@@ -70,18 +46,13 @@ Failure rank_failure()
                    "returns minus the risk-free rate do not have full column rank numerically"};
 }
 
-// G = 2 R~'R~ with the factor sqrt(2) R_qr', since R~'R~ = R_qr'R_qr.
-Translation assemble(const Spec& spec, const Data& data, std::vector<double> normal,
-                     std::vector<double> factor, const std::vector<double>& excess)
+// G = 2 R~'R~, given only by its factor sqrt(2) R_qr', since R~'R~ = R_qr'R_qr.
+Translation assemble(const Spec& spec, const Data& data, std::vector<double> factor,
+                     const std::vector<double>& excess)
 {
     Translation translation;
     qp::Problem& problem = translation.problem;
     problem.n = data.asset_count();
-    problem.hessian = std::move(normal);
-    for (double& entry : problem.hessian)
-    {
-        entry *= 2.0;
-    }
     problem.hessian_factor = std::move(factor);
     double factor_scale = std::sqrt(2.0);
     for (double& entry : problem.hessian_factor)
@@ -109,7 +80,7 @@ std::expected<Translation, Failure> tracking_error_problem(const Spec& spec, con
     {
         return std::unexpected(rank_failure());
     }
-    return assemble(spec, data, normal_matrix(excess, periods, n), linalg::lower_factor(qr), excess);
+    return assemble(spec, data, linalg::lower_factor(qr), excess);
 }
 
 std::expected<Result, Failure> solve_tracking_error(const Spec& spec, const Data& data)

@@ -14,15 +14,15 @@ namespace
 constexpr double kDefaultRiskAversion = 5.0;
 constexpr double kDefaultImportance = 0.5;
 
+// A scale of exactly 1 (MAX_RETURN's Q(t)) leaves every entry as it is: the pass is skipped.
 void add_curvature(const Data& data, double quadratic, qp::Problem& problem)
 {
-    problem.hessian.assign(data.covariance().begin(), data.covariance().end());
-    for (double& entry : problem.hessian)
-    {
-        entry *= quadratic;
-    }
     double factor_scale = std::sqrt(quadratic);
     problem.hessian_factor.assign(data.covariance_factor().begin(), data.covariance_factor().end());
+    if (factor_scale == 1.0)
+    {
+        return;
+    }
     for (double& entry : problem.hessian_factor)
     {
         entry *= factor_scale;
@@ -67,8 +67,8 @@ MeanVariance mean_variance_of(const Spec& spec, const Data& data)
 }
 
 // G = quadratic Sigma and g = -linear (mu - rf 1), so that 0.5 w'Gw + g'w is the objective f up to a constant and
-// the QP multipliers are the user's. The factor of G is sqrt(quadratic) L from the factor L of Sigma, so that
-// positive definiteness stays the one decision of Data::create.
+// the QP multipliers are the user's. G is given only by its factor sqrt(quadratic) L from the factor L of Sigma, so
+// that positive definiteness stays the one decision of Data::create.
 Translation mean_variance_problem(const Spec& spec, const Data& data, MeanVariance scales)
 {
     Translation translation;

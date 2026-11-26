@@ -16,10 +16,11 @@ namespace po::testing
 // 0.5 x'Gx + g'x.
 inline double qp_objective(const po::qp::Problem& problem, std::span<const double> x)
 {
+    std::vector<double> hessian = hessian_of(problem);
     double value = 0.0;
     for (std::size_t i = 0; i < problem.n; ++i)
     {
-        value += (0.5 * row_dot(problem.hessian, i, x) + problem.linear[i]) * x[i];
+        value += (0.5 * row_dot(hessian, i, x) + problem.linear[i]) * x[i];
     }
     return value;
 }
@@ -28,11 +29,12 @@ inline double qp_objective(const po::qp::Problem& problem, std::span<const doubl
 // relative to its terms, not to its own rounding.
 inline double qp_objective_scale(const po::qp::Problem& problem, std::span<const double> x)
 {
+    std::vector<double> hessian = hessian_of(problem);
     double curvature = 0.0;
     double linear = 0.0;
     for (std::size_t i = 0; i < problem.n; ++i)
     {
-        curvature += 0.5 * row_dot(problem.hessian, i, x) * x[i];
+        curvature += 0.5 * row_dot(hessian, i, x) * x[i];
         linear += problem.linear[i] * x[i];
     }
     return std::fabs(curvature) + std::fabs(linear);

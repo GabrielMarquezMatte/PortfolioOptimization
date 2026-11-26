@@ -714,13 +714,21 @@ Solution solve_factored(const Problem& problem, std::span<const double> factor, 
 void validate_sizes(const Problem& problem)
 {
     std::size_t n = problem.n;
-    if (problem.hessian.size() != n * n || problem.linear.size() != n)
+    if (problem.linear.size() != n)
     {
-        throw std::invalid_argument("qp: the hessian must be n x n and the linear term must have n entries");
+        throw std::invalid_argument("qp: the linear term must have n entries");
+    }
+    if (problem.hessian_factor.empty() && problem.hessian.size() != n * n)
+    {
+        throw std::invalid_argument("qp: without a factor the hessian must be n x n");
     }
     if (!problem.hessian_factor.empty() && problem.hessian_factor.size() != n * n)
     {
         throw std::invalid_argument("qp: the hessian factor must be empty or n x n");
+    }
+    if (!problem.hessian_factor.empty() && !problem.hessian.empty() && problem.hessian.size() != n * n)
+    {
+        throw std::invalid_argument("qp: the hessian must be empty or n x n");
     }
     if (problem.equality_rows.size() != problem.equality_rhs.size() * n)
     {

@@ -86,15 +86,10 @@ void add_bound_rows(const Spec& spec, Homogeneous& homogeneous)
     }
 }
 
-// G = 2 Sigma with the factor sqrt(2) L of Data, so that positive definiteness stays the one decision of
-// Data::create.
+// G = 2 Sigma, given only by its factor sqrt(2) L from the factor L of Data, so that positive definiteness stays
+// the one decision of Data::create.
 void add_curvature(const Data& data, qp::Problem& problem)
 {
-    problem.hessian.assign(data.covariance().begin(), data.covariance().end());
-    for (double& entry : problem.hessian)
-    {
-        entry *= 2.0;
-    }
     problem.hessian_factor.assign(data.covariance_factor().begin(), data.covariance_factor().end());
     for (double& entry : problem.hessian_factor)
     {

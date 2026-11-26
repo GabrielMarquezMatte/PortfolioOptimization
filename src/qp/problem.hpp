@@ -16,8 +16,8 @@ struct GrossExposure
 
 // min 0.5 x'Gx + g'x  subject to  E x = e (rows of E),  C x >= c (rows of C) and, when gross_exposure is set,
 // its family. hessian_factor, when not empty, is the lower Cholesky factor L of G = L L' (n x n, row-major): the
-// solver uses it as given and neither factors G nor decides again whether G is positive definite. Empty means the
-// solver factors G.
+// solver uses it as given, neither factors G nor decides again whether G is positive definite, and never reads
+// hessian, which may then be empty (or G, n x n). Empty means the solver factors hessian, which must be G, n x n.
 struct Problem
 {
     std::size_t n = 0;

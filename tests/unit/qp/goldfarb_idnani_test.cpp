@@ -396,6 +396,34 @@ TEST(GoldfarbIdnani, ProvidedFactorIsNotRefactored)
     EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
 }
 
+TEST(GoldfarbIdnani, FactorStandsInForAnEmptyHessian)
+{
+    for (std::uint64_t seed = 1; seed <= 10; ++seed)
+    {
+        SCOPED_TRACE(seed);
+        Problem problem = random_budget_problem(seed);
+        problem.hessian_factor = po::linalg::cholesky(problem.hessian, problem.n).value();
+        Solution full = po::qp::solve(problem);
+        problem.hessian.clear();
+        Solution factor_only = po::qp::solve(problem);
+        po::testing::expect_kkt(problem, factor_only);
+        EXPECT_EQ(factor_only.x, full.x);
+        EXPECT_EQ(factor_only.equality_multipliers, full.equality_multipliers);
+        EXPECT_EQ(factor_only.inequality_multipliers, full.inequality_multipliers);
+    }
+}
+
+TEST(GoldfarbIdnani, RejectsAnEmptyHessianWithoutFactor)
+{
+    Problem problem = random_budget_problem(3);
+    std::vector<double> factor = po::linalg::cholesky(problem.hessian, problem.n).value();
+    problem.hessian.clear();
+    EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
+    problem.hessian_factor = factor;
+    problem.hessian.assign(problem.n, 1.0);
+    EXPECT_THROW(po::qp::solve(problem), std::invalid_argument);
+}
+
 // G = Sigma over n - 1 assets and a nearly riskless one of variance 1e-10, and g = -t mu~ with nearly equal means
 // at a daily scale, under the budget and long-only bounds: Q(t) of MAX_RETURN far along its path.
 Problem riskless_asset_problem(std::size_t n, std::uint64_t seed, double t)
