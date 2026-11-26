@@ -22,6 +22,7 @@ namespace
 
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kNotANumber = std::numeric_limits<double>::quiet_NaN();
+constexpr double kFaceRoundingFactor = 4.0;
 
 // The generated rows (a - s)'x >= b of the gross exposure family, with their sign vectors s (n entries per row
 // each): those of the active set, and while a candidate is added also the candidate and the rows its steps drop.
@@ -61,7 +62,8 @@ enum class DependentCandidates
     PassOverHeldOnFace
 };
 
-// G x + g = N u holds for the active normals N and multipliers u of set.active.
+// G x + g = N u holds for the active normals N and multipliers u of set.active. passed_over holds the candidates
+// passed over since the last step (pass_over), which the scan does not pick again until a step changes the face.
 struct State
 {
     std::vector<double> x;
@@ -70,6 +72,7 @@ struct State
     int iterations = 0;
     int iteration_limit = 0;
     DependentCandidates dependent = DependentCandidates::DualStep;
+    std::vector<std::size_t> passed_over;
 };
 
 struct Step
@@ -260,7 +263,8 @@ Violation most_violated_explicit(const Constraints& constraints, const State& st
     {
         double value = scanned_slack(constraints, state, index, finite_point);
         bool within_tolerance = value >= -tolerance(constraints, index, x_scale);
-        if (within_tolerance || value >= worst.slack || is_active(state, index))
+        if (within_tolerance || value >= worst.slack || is_active(state, index) ||
+            std::ranges::find(state.passed_over, index) != state.passed_over.end())
         {
             continue;
         }
@@ -447,6 +451,25 @@ double slack_on_active_face(const Constraints& constraints, const State& state, 
     return value;
 }
 
+// The face slack b'r - b_c of a candidate on the face of the active rows is known only to the rounding of those
+// rows: row k holds at a vertex to about eps max(|b_k|, ||n_k|| |x|max), the rounding of its data and of its slack,
+// and the face slack carries it |r_k| times. Where the face is ill-conditioned (a candidate nearly dependent on
+// one active row, |r| of order 1e5 or more) the sum exceeds the tolerance of the candidate, and a candidate that
+// holds at the vertex reads as violated. kFaceRoundingFactor stands for the few units of rounding of each slack:
+// at feasible degenerate vertices the face slack stayed below 0.6 eps sum, and violated candidates above 8e3.
+double face_rounding(const Constraints& constraints, const State& state)
+{
+    double x_scale = max_abs(state.x);
+    double sum = 0.0;
+    for (std::size_t k = 0; k < state.set.active.size(); ++k)
+    {
+        std::size_t index = state.set.active[k].index;
+        double scale = std::max(std::fabs(rhs_of(constraints, index)), row_norm_of(constraints, index) * x_scale);
+        sum += std::fabs(state.set.dual_direction[k]) * scale;
+    }
+    return kFaceRoundingFactor * std::numeric_limits<double>::epsilon() * sum;
+}
+
 // The active rows hold at x only to the rounding of every step from the unconstrained start, which does not shrink
 // with x: from a start far larger than the final x it can exceed the tolerance there. A candidate dependent on them
 // (the other bound of a fixed weight, a row of the family that negates the budget) is then violated by that
@@ -460,16 +483,19 @@ bool holds_on_active_face(const Constraints& constraints, const State& state, co
         return false;
     }
     double face_slack = slack_on_active_face(constraints, state, candidate);
+    double face_limit = limit + face_rounding(constraints, state);
     if (candidate.index < constraints.equality_count)
     {
-        return std::fabs(face_slack) <= limit;
+        return std::fabs(face_slack) <= face_limit;
     }
-    return face_slack >= -limit;
+    return face_slack >= -face_limit;
 }
 
-// The candidate is not added. The refinement moves x onto the active rows, where it holds, so that it is not picked
-// again at once, and counts as an iteration, so that picking it again after x moves cannot loop forever.
-Progress pass_over(const Constraints& constraints, State& state)
+// The candidate is not added. The refinement moves x onto the active rows, and the candidate is not picked again
+// until a step changes them: its slack less the part the active residuals explain does not move with x, so on a
+// face where the rounding exceeds its tolerance (face_rounding) no refinement brings it within. Each pass counts as
+// an iteration, so that passing over the candidates of one face cannot loop forever.
+Progress pass_over(const Constraints& constraints, State& state, const ActiveConstraint& candidate)
 {
     if (state.iterations == state.iteration_limit)
     {
@@ -477,6 +503,7 @@ Progress pass_over(const Constraints& constraints, State& state)
     }
     ++state.iterations;
     refine_active(constraints, state);
+    state.passed_over.push_back(candidate.index);
     return Progress::Added;
 }
 
@@ -494,7 +521,7 @@ Progress add_constraint(const Constraints& constraints, State& state, ActiveCons
         }
         if (!moves_primal && holds_on_active_face(constraints, state, candidate, limit))
         {
-            return pass_over(constraints, state);
+            return pass_over(constraints, state, candidate);
         }
         double primal_length = kInfinity;
         if (moves_primal)
@@ -512,6 +539,7 @@ Progress add_constraint(const Constraints& constraints, State& state, ActiveCons
         }
         ++state.iterations;
         take_step(state, candidate, step.length, moves_primal);
+        state.passed_over.clear();
         if (step.adds)
         {
             append_active(state.set, candidate);
