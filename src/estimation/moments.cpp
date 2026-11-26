@@ -1,5 +1,7 @@
 #include "estimation/moments.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -67,16 +69,84 @@ std::vector<double> column_means(std::span<const double> returns, std::size_t t,
     return mu;
 }
 
-double covariance_entry(std::span<const double> returns, std::span<const double> mu, std::size_t t, std::size_t i,
-                        std::size_t j)
+constexpr std::size_t kTile = 4;
+
+using Tile = std::array<double, kTile * kTile>;
+
+// The returns less their means, with zero columns up to a multiple of kTile so that every tile is full.
+struct CenteredPanel
+{
+    std::vector<double> values;
+    std::size_t width;
+};
+
+CenteredPanel centered(std::span<const double> returns, std::span<const double> mu, std::size_t t)
 {
     std::size_t n = mu.size();
-    double sum = 0.0;
+    std::size_t width = (n + kTile - 1) / kTile * kTile;
+    CenteredPanel panel{std::vector<double>(t * width, 0.0), width};
     for (std::size_t row = 0; row < t; ++row)
     {
-        sum += (returns[row * n + i] - mu[i]) * (returns[row * n + j] - mu[j]);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            panel.values[row * width + i] = returns[row * n + i] - mu[i];
+        }
     }
-    return sum / static_cast<double>(t - 1);
+    return panel;
+}
+
+// Every entry of the tile adds its products in row order, from 0.0, as the scalar sum of one entry would.
+Tile tile_sums(const CenteredPanel& panel, std::size_t t, std::size_t first_row, std::size_t first_column)
+{
+    Tile sums{};
+    for (std::size_t row = 0; row < t; ++row)
+    {
+        std::size_t base = row * panel.width;
+        for (std::size_t r = 0; r < kTile; ++r)
+        {
+            for (std::size_t s = 0; s < kTile; ++s)
+            {
+                sums[r * kTile + s] += panel.values[base + first_row + r] * panel.values[base + first_column + s];
+            }
+        }
+    }
+    return sums;
+}
+
+void store_tile(std::span<double> covariance, std::size_t n, const Tile& tile, std::size_t first_row,
+                std::size_t first_column)
+{
+    for (std::size_t r = 0; r < kTile && first_row + r < n; ++r)
+    {
+        std::size_t i = first_row + r;
+        for (std::size_t j = std::max(i, first_column); j < first_column + kTile && j < n; ++j)
+        {
+            double entry = tile[r * kTile + (j - first_column)];
+            covariance[i * n + j] = entry;
+            covariance[j * n + i] = entry;
+        }
+    }
+}
+
+std::vector<double> sample_covariance(std::span<const double> returns, std::span<const double> mu, std::size_t t)
+{
+    std::size_t n = mu.size();
+    CenteredPanel panel = centered(returns, mu, t);
+    double divisor = static_cast<double>(t - 1);
+    std::vector<double> covariance(n * n);
+    for (std::size_t first_row = 0; first_row < n; first_row += kTile)
+    {
+        for (std::size_t first_column = first_row; first_column < n; first_column += kTile)
+        {
+            Tile tile = tile_sums(panel, t, first_row, first_column);
+            for (double& entry : tile)
+            {
+                entry /= divisor;
+            }
+            store_tile(covariance, n, tile, first_row, first_column);
+        }
+    }
+    return covariance;
 }
 
 } // namespace
@@ -89,16 +159,8 @@ std::expected<Moments, Failure> sample_moments(std::span<const double> returns, 
     {
         return std::unexpected(std::move(*failure));
     }
-    Moments moments{column_means(returns, t, n), std::vector<double>(n * n)};
-    for (std::size_t i = 0; i < n; ++i)
-    {
-        for (std::size_t j = i; j < n; ++j)
-        {
-            double entry = covariance_entry(returns, moments.mu, t, i, j);
-            moments.covariance[i * n + j] = entry;
-            moments.covariance[j * n + i] = entry;
-        }
-    }
+    Moments moments{column_means(returns, t, n), {}};
+    moments.covariance = sample_covariance(returns, moments.mu, t);
     return moments;
 }
 

@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <limits>
 #include <random>
@@ -174,6 +175,40 @@ TEST(Data, SymmetrizesWithinTolerance)
     EXPECT_EQ(data.covariance()[0 * n + 2], 0.5 * (lower + upper));
     EXPECT_EQ(data.covariance()[2 * n + 0], 0.5 * (lower + upper));
     EXPECT_EQ(data.covariance()[1 * n + 1], covariance[1 * n + 1]);
+}
+
+TEST(Data, SymmetrizesEveryPairBitForBit)
+{
+    constexpr std::size_t n = 7;
+    std::vector<double> covariance = po::testing::random_covariance(n, 5);
+    std::vector<double> noise = po::testing::random_vector(n * n, 9, -1e-14, 1e-14);
+    for (std::size_t k = 0; k < n * n; ++k)
+    {
+        covariance[k] += noise[k] * covariance[0];
+    }
+    std::vector<double> expected(n * n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = 0; j < n; ++j)
+        {
+            expected[i * n + j] = 0.5 * (covariance[i * n + j] + covariance[j * n + i]);
+        }
+    }
+    Data data = Data::create(n, {}, covariance).value();
+    ASSERT_EQ(data.covariance().size(), expected.size());
+    EXPECT_EQ(std::memcmp(data.covariance().data(), expected.data(), expected.size() * sizeof(double)), 0);
+}
+
+TEST(Data, RejectsTheFirstAsymmetricPairInRowOrder)
+{
+    constexpr std::size_t n = 5;
+    std::vector<double> covariance = po::testing::random_covariance(n, 8);
+    covariance[3 * n + 4] += 1e-6;
+    covariance[1 * n + 3] += 1e-6;
+    covariance[4 * n + 2] += 1e-6;
+    expect_invalid(Data::create(n, {}, covariance), "covariance is not symmetric at (1, 3)");
+    covariance[4 * n + 0] = std::numeric_limits<double>::infinity();
+    expect_invalid(Data::create(n, {}, covariance), "covariance is not finite at (4, 0)");
 }
 
 TEST(Data, SetReturnsCopiesAndValidates)

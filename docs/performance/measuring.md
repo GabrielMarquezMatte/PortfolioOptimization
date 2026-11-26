@@ -101,7 +101,8 @@ with `--benchmark_enable_random_interleaving=true`: the C and C++ rows differ by
 
 `BM_Kernel/<kernel>/<n>` for n in 10, 100, 300, 1000: `cholesky`, `solve_lower`, `qr` (a 2n x n matrix, the shape of the
 `tracking_error` series), `qp_iteration` (a long-only QP over the covariance, solved by `qp::solve`: the time of one
-solve and of one iteration), `compensated_dot`, `covariance_times`, `gauss_newton`, `empty_active_set`. `solve_lower`
+solve and of one iteration), `compensated_dot`, `covariance_times`, `gauss_newton`, `empty_active_set`, `sample_moments` (mean and covariance of a 2n x n return panel, not in the quick
+suite). `solve_lower`
 copies its right-hand side into the work vector on every iteration, because it solves in place.
 
 ## Quick suite (about 35 to 45 s)

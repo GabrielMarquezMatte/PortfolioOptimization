@@ -1,5 +1,6 @@
 #include "core/data.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -67,9 +68,10 @@ std::optional<Failure> check_finite(std::span<const double> covariance, std::siz
     return std::nullopt;
 }
 
+// Runs after check_finite: both magnitudes are finite and carry no sign, so std::max picks the value std::fmax would.
 bool symmetric_pair(std::span<const double> covariance, std::size_t n, std::size_t i, std::size_t j)
 {
-    double scale = std::fmax(std::fabs(covariance[i * n + i]), std::fabs(covariance[j * n + j]));
+    double scale = std::max(std::fabs(covariance[i * n + i]), std::fabs(covariance[j * n + j]));
     double gap = std::fabs(covariance[i * n + j] - covariance[j * n + i]);
     return gap <= kSymmetryTolerance * scale;
 }
@@ -114,9 +116,11 @@ std::vector<double> symmetrized(std::span<const double> covariance, std::size_t 
     }
     for (std::size_t i = 0; i < n; ++i)
     {
-        for (std::size_t j = 0; j < n; ++j)
+        for (std::size_t j = i; j < n; ++j)
         {
-            symmetric[i * n + j] = 0.5 * (covariance[i * n + j] + covariance[j * n + i]);
+            double entry = 0.5 * (covariance[i * n + j] + covariance[j * n + i]);
+            symmetric[i * n + j] = entry;
+            symmetric[j * n + i] = entry;
         }
     }
     return symmetric;

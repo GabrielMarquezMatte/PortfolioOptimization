@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 
+#include "estimation/moments.hpp"
 #include "instances.hpp"
 #include "linalg/cholesky.hpp"
 #include "linalg/qr.hpp"
@@ -173,6 +174,24 @@ void empty_active_set(benchmark::State& state)
     }
 }
 
+// Mean and covariance of 2n observations, the panel shape of the TRACKING_ERROR series.
+void sample_moments(benchmark::State& state)
+{
+    std::size_t n = size_of(state);
+    std::size_t t = 2 * n;
+    std::vector<double> returns = po::bench::returns_of(t, n);
+    if (!po::estimation::sample_moments(returns, t, n).has_value())
+    {
+        state.SkipWithError("the return panel is rejected");
+        return;
+    }
+    for (auto _ : state)
+    {
+        auto moments = po::estimation::sample_moments(returns, t, n);
+        benchmark::DoNotOptimize(moments);
+    }
+}
+
 void kernel_sizes(benchmark::internal::Benchmark* kernel)
 {
     for (int n : {10, 100, 300, 1000})
@@ -190,5 +209,6 @@ BENCHMARK(compensated_dot)->Name("BM_Kernel/compensated_dot")->Apply(kernel_size
 BENCHMARK(covariance_times)->Name("BM_Kernel/covariance_times")->Apply(kernel_sizes);
 BENCHMARK(gauss_newton)->Name("BM_Kernel/gauss_newton")->Apply(kernel_sizes);
 BENCHMARK(empty_active_set)->Name("BM_Kernel/empty_active_set")->Apply(kernel_sizes);
+BENCHMARK(sample_moments)->Name("BM_Kernel/sample_moments")->Apply(kernel_sizes);
 
 } // namespace

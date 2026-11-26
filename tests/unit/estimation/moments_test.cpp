@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -50,6 +51,48 @@ TEST(Moments, CovarianceIsExactlySymmetric)
         {
             EXPECT_EQ(moments->covariance[i * n + j], moments->covariance[j * n + i]);
         }
+    }
+}
+
+// The covariance as one scalar sum per entry, mirrored, the form the tiled kernel must reproduce bit for bit.
+std::vector<double> covariance_by_entry(const std::vector<double>& returns, const std::vector<double>& mu,
+                                        std::size_t t)
+{
+    std::size_t n = mu.size();
+    std::vector<double> covariance(n * n);
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = i; j < n; ++j)
+        {
+            double sum = 0.0;
+            for (std::size_t row = 0; row < t; ++row)
+            {
+                sum += (returns[row * n + i] - mu[i]) * (returns[row * n + j] - mu[j]);
+            }
+            covariance[i * n + j] = sum / static_cast<double>(t - 1);
+            covariance[j * n + i] = covariance[i * n + j];
+        }
+    }
+    return covariance;
+}
+
+TEST(Moments, CovarianceIsBitIdenticalToTheSumOfEachEntry)
+{
+    struct Shape
+    {
+        std::size_t t;
+        std::size_t n;
+    };
+    for (Shape shape : {Shape{2, 1}, Shape{3, 2}, Shape{7, 5}, Shape{13, 4}, Shape{50, 9}, Shape{101, 17},
+                        Shape{64, 8}, Shape{37, 3}})
+    {
+        SCOPED_TRACE(::testing::Message() << shape.t << " x " << shape.n);
+        std::vector<double> returns = po::testing::random_vector(shape.t * shape.n, shape.t + shape.n, -0.05, 0.05);
+        auto moments = sample_moments(returns, shape.t, shape.n);
+        ASSERT_TRUE(moments.has_value());
+        std::vector<double> expected = covariance_by_entry(returns, moments->mu, shape.t);
+        ASSERT_EQ(moments->covariance.size(), expected.size());
+        EXPECT_EQ(std::memcmp(moments->covariance.data(), expected.data(), expected.size() * sizeof(double)), 0);
     }
 }
 
