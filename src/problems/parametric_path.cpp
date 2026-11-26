@@ -1394,6 +1394,12 @@ qp::Solution slope_solution(const PathPoint& point, const Slope& shifted)
     return solution;
 }
 
+bool fixed_by_face(const Path& path, const PathPoint& point)
+{
+    FaceRows rows = face_rows(path.translation.problem, point, common_signs(point));
+    return rows.rhs.size() >= rows.free.size();
+}
+
 // A face with as many rows as free weights has no direction.
 std::optional<Crossing> tangent_crossing(const Path& path, const PathPoint& point, FaceSolve solve)
 {

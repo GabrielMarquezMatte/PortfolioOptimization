@@ -22,6 +22,8 @@ constexpr int kMaxBisections = 200;
 constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
 constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
+// The rounding of a computed volatility |L'w|, as a multiple of n eps of it.
+constexpr double kVolatilityNoise = 16.0;
 
 Result stopped(const Data& data, const Path& path, qp::Status status)
 {
@@ -84,8 +86,19 @@ Result at_tangent(const Data& data, const Path& path, const Crossing& crossing)
     return answer(data, path, crossing.solution, crossing.t, -path.cap / crossing.t);
 }
 
+// vol(lower) < s <= vol(upper) with the two within the rounding of a volatility: vol = s to it at either end. The
+// weights cannot tell: far along the path their rounding, t |v| n eps, covers points of different volatility.
+bool volatility_at_cap(const Path& path, const Bracket& bracket)
+{
+    double n = static_cast<double>(bracket.upper.solution.x.size());
+    return bracket.upper.volatility - bracket.lower.volatility <= kVolatilityNoise * n * kEpsilon * path.cap;
+}
+
 // t_a and t_b are adjacent doubles, with a breakpoint between them or Q(t) lost in its rounding: the crossing on the
-// face of either end that certifies, the lower first (the upper first when the lower is t = 0), or a breakdown.
+// face of either end that certifies, the lower first (the upper first when the lower is t = 0). Where neither does,
+// vol = s at both ends to its rounding and w(t) is constant on the face of the first (fixed by its rows, or
+// N b = -v: no face line to cross on), the first end is the crossing, with the multipliers of at_exit there.
+// Otherwise a breakdown.
 Result from_either_end(const Data& data, const Path& path, const Bracket& bracket)
 {
     const PathPoint* first = &bracket.lower;
@@ -101,6 +114,12 @@ Result from_either_end(const Data& data, const Path& path, const Bracket& bracke
         {
             return at_tangent(data, path, *crossing);
         }
+    }
+    Slope slope = multiplier_slope(path, *first);
+    if (volatility_at_cap(path, bracket) &&
+        (fixed_by_face(path, *first) || limit_holds(path, *first, slope)))
+    {
+        return at_exit(data, path, *first, slope, first->t);
     }
     return broke_down(data, path);
 }

@@ -118,6 +118,10 @@ bool weights_moved(const PathPoint& earlier, const PathPoint& later);
 // rows have rank n, so they fix w) or weights that have not moved.
 bool weights_constant(const Path& path, const PathPoint& earlier, const PathPoint& later);
 
+// The rows of the face of point fix w: over the weights it leaves free, as many independent rows as weights (the
+// zeros D of the family among the fixed weights, which the active normals alone do not count).
+bool fixed_by_face(const Path& path, const PathPoint& point);
+
 // N b_v = -v over the active normals of point, for the v of its shift, by least squares. The solver keeps the
 // active normals linearly independent, so N has full column rank.
 Slope multiplier_slope(const Path& path, const PathPoint& point);

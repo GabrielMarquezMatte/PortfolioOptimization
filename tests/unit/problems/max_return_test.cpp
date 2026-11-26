@@ -556,6 +556,53 @@ Spec leveraged(double leverage)
     return spec;
 }
 
+// A cap equal to the volatility where w(t) stays put: the computed volatility there jitters by an ulp around the cap,
+// so the bisection ends on two adjacent t of that stretch, and neither has a face line to cross the cap on. The
+// volatility multiplier lies between the left derivative of the optimum, reached one ulp below, and the right one.
+void expect_constant_stretch(const Spec& bounds, const Data& data, double cap, std::span<const double> expected)
+{
+    Result below = solve_checked(max_return(bounds, std::nextafter(cap, 0.0)), data);
+    Result result = solve_checked(max_return(bounds, cap), data);
+    Result above = solve_checked(max_return(bounds, std::nextafter(cap, 1.0)), data);
+    ASSERT_EQ(result.status, SolveStatus::Optimal);
+    expect_near_relative(result.weights, expected, 1e-12);
+    EXPECT_NEAR(volatility(data, result.weights), cap, kVolatilityTolerance * cap);
+    EXPECT_GE(result.volatility_multiplier, below.volatility_multiplier);
+    EXPECT_LE(result.volatility_multiplier, above.volatility_multiplier);
+}
+
+// Asset 2 reaches its upper bound, where assets 0 and 1 have equal means: w(t) stays at the minimum variance of the
+// other half, (0.5 * 0.07, 0.5 * 0.02) / 0.09, on that face.
+TEST(MaxReturn, CapAtFlatFace)
+{
+    Data data = Data::create(3, std::vector<double>{0.08, 0.08, 0.12},
+                             std::vector<double>{0.02, 0.0, 0.0, 0.0, 0.07, 0.0, 0.0, 0.0, 0.08})
+                    .value();
+    std::vector<double> expected = {0.035 / 0.09, 0.01 / 0.09, 0.5};
+    expect_constant_stretch(capped_long_only(0.5), data, 0.15456030825826172, expected);
+}
+
+// The vertex (0, 0.5, 0.5) of the leverage and the upper bounds, with and without cash.
+TEST(MaxReturn, CapAtLeverageVertex)
+{
+    for (bool cash : {false, true})
+    {
+        SCOPED_TRACE(cash);
+        Data data = Data::create(3, std::vector<double>{0.05, 0.08, 0.12},
+                                 std::vector<double>{0.04, 0.0, 0.0, 0.0, 0.0625, 0.0, 0.0, 0.0, 0.09})
+                        .value();
+        std::vector<double> expected = {0.0, 0.5, 0.5};
+        if (cash)
+        {
+            data.set_risk_free(kRiskFree);
+            expected.push_back(0.0);
+        }
+        Spec bounds = leveraged(1.0);
+        bounds.upper = 0.5;
+        expect_constant_stretch(bounds, data, std::sqrt(0.25 * 0.0625 + 0.25 * 0.09), expected);
+    }
+}
+
 std::size_t best_asset(const Data& data)
 {
     return static_cast<std::size_t>(std::ranges::max_element(data.mu()) - data.mu().begin());
