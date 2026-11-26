@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <span>
 #include <utility>
@@ -210,23 +211,83 @@ inline void refine_toward_active(ActiveSet& set, std::span<double> residual, std
     }
 }
 
+inline constexpr std::size_t axpy_columns = 4;
+inline constexpr std::size_t dot_columns = 8;
+
+// primal_direction += projection_c J_c for the axpy_columns columns from first, each entry adding them in
+// increasing c: the order and the bits of one axpy per column.
+inline void add_column_block(ActiveSet& set, std::size_t first)
+{
+    std::size_t n = set.n;
+    std::span<const double> block = std::span<const double>(set.basis).subspan(first * n, axpy_columns * n);
+    std::array<double, axpy_columns> scales{};
+    std::copy_n(set.projection.begin() + static_cast<std::ptrdiff_t>(first), axpy_columns, scales.begin());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        double entry = set.primal_direction[i];
+        for (std::size_t k = 0; k < axpy_columns; ++k)
+        {
+            entry += scales[k] * block[k * n + i];
+        }
+        set.primal_direction[i] = entry;
+    }
+}
+
+inline void add_column(ActiveSet& set, std::size_t column)
+{
+    std::span<const double> direction = basis_column(set, column);
+    for (std::size_t i = 0; i < set.n; ++i)
+    {
+        set.primal_direction[i] += set.projection[column] * direction[i];
+    }
+}
+
 inline void directions_from_projection(ActiveSet& set)
 {
     std::ranges::fill(set.primal_direction, 0.0);
-    for (std::size_t column = set.active.size(); column < set.n; ++column)
+    std::size_t column = set.active.size();
+    for (; column + axpy_columns <= set.n; column += axpy_columns)
     {
-        std::span<const double> direction = basis_column(set, column);
-        for (std::size_t i = 0; i < set.n; ++i)
-        {
-            set.primal_direction[i] += set.projection[column] * direction[i];
-        }
+        add_column_block(set, column);
+    }
+    for (; column < set.n; ++column)
+    {
+        add_column(set, column);
     }
     back_substitute(set);
 }
 
+// dot(J_c, row) for the dot_columns columns from first, each its own sum from +0 with i increasing, the order
+// and the bits of dot().
+inline std::array<double, dot_columns> dot_column_block(const ActiveSet& set, std::size_t first,
+                                                        std::span<const double> row)
+{
+    std::size_t n = set.n;
+    std::span<const double> block = std::span<const double>(set.basis).subspan(first * n, dot_columns * n);
+    std::array<double, dot_columns> sums{};
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        double entry = row[i];
+        for (std::size_t k = 0; k < dot_columns; ++k)
+        {
+            sums[k] += block[k * n + i] * entry;
+        }
+    }
+    return sums;
+}
+
 inline void compute_directions(ActiveSet& set, std::span<const double> row, double sign)
 {
-    for (std::size_t column = 0; column < set.n; ++column)
+    std::size_t column = 0;
+    for (; column + dot_columns <= set.n; column += dot_columns)
+    {
+        std::array<double, dot_columns> sums = dot_column_block(set, column, row);
+        for (std::size_t k = 0; k < dot_columns; ++k)
+        {
+            set.projection[column + k] = sign * sums[k];
+        }
+    }
+    for (; column < set.n; ++column)
     {
         set.projection[column] = sign * dot(basis_column(set, column), row);
     }

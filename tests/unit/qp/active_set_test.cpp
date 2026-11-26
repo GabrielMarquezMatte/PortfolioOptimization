@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -137,6 +138,67 @@ TEST(ActiveSet, UnitRowDirectionsAreBitIdenticalToTheDenseRow)
                     expect_unit_directions_match(set, column, -1.0, -1.0);
                     expect_unit_directions_match(set, column, entries[column], 1.0);
                 }
+            }
+        }
+    }
+}
+
+// The directions as they were computed before the columns were blocked: one dot() per projection, one axpy
+// per free column.
+void reference_compute_directions(po::qp::ActiveSet& set, std::span<const double> row, double sign)
+{
+    for (std::size_t column = 0; column < set.n; ++column)
+    {
+        set.projection[column] = sign * po::qp::dot(po::qp::basis_column(set, column), row);
+    }
+    std::ranges::fill(set.primal_direction, 0.0);
+    for (std::size_t column = set.active.size(); column < set.n; ++column)
+    {
+        std::span<const double> direction = po::qp::basis_column(set, column);
+        for (std::size_t i = 0; i < set.n; ++i)
+        {
+            set.primal_direction[i] += set.projection[column] * direction[i];
+        }
+    }
+    po::qp::back_substitute(set);
+}
+
+// A dense row with +0 and -0 among its entries.
+std::vector<double> dense_row(std::size_t n, std::uint64_t seed)
+{
+    std::vector<double> row = po::testing::random_vector(n, seed, -2.0, 2.0);
+    for (std::size_t i = 1; i < n; i += 5)
+    {
+        row[i] = 0.0;
+    }
+    for (std::size_t i = 3; i < n; i += 5)
+    {
+        row[i] = -0.0;
+    }
+    return row;
+}
+
+TEST(ActiveSet, BlockedDirectionsAreBitIdenticalToOneColumnAtATime)
+{
+    for (std::size_t n : {1, 2, 3, 4, 5, 7, 8, 9, 12, 16, 17, 64, 100})
+    {
+        std::vector<double> covariance = po::testing::random_covariance(n, 61 + n, 1e6);
+        std::optional<std::vector<double>> factor = po::linalg::cholesky(covariance, n);
+        ASSERT_TRUE(factor.has_value());
+        for (std::size_t q : {std::size_t{0}, std::size_t{1}, n / 2, n - 1})
+        {
+            SCOPED_TRACE(testing::Message() << "n = " << n << ", q = " << q);
+            po::qp::ActiveSet start = rotated_set(*factor, n, q, 67 + n + q);
+            std::vector<double> row = dense_row(n, 71 + n + q);
+            for (double sign : {1.0, -1.0})
+            {
+                po::qp::ActiveSet blocked = start;
+                po::qp::ActiveSet reference = start;
+                po::qp::compute_directions(blocked, row, sign);
+                reference_compute_directions(reference, row, sign);
+                EXPECT_TRUE(same_bits(blocked.projection, reference.projection));
+                EXPECT_TRUE(same_bits(blocked.primal_direction, reference.primal_direction));
+                EXPECT_TRUE(same_bits(blocked.dual_direction, reference.dual_direction));
             }
         }
     }
