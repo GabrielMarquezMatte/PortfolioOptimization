@@ -99,6 +99,6 @@ jobs:
           library="${{ matrix.library }}"
           cp "$library" "natives/portopt-native-${{ matrix.rid }}.${library##*.}"
           natives="$(cd natives && (pwd -W 2>/dev/null || pwd))"
-          dotnet pack csharp/src/PortOpt -c Release -p:Version=0.0.0-ci -p:PortOptNativeAssets="$natives" \
+          dotnet pack csharp/src/PortOpt -c Release -p:Version=999.0.0-ci -p:PortOptNativeAssets="$natives" \
             -p:PortOptNativeRids=${{ matrix.rid }} -o packages
-          bash csharp/scripts/check_package.sh packages 0.0.0-ci
+          bash csharp/scripts/check_package.sh packages 999.0.0-ci
