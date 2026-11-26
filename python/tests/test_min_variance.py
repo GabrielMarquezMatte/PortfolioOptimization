@@ -1,10 +1,15 @@
+import ctypes
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import portopt as po
-from portopt import _native
+from portopt import _native, _result
+from portopt._native import lib
 
 COV = np.array([[0.04, 0.006, 0.002], [0.006, 0.09, 0.012], [0.002, 0.012, 0.16]])
 MU = np.array([0.05, 0.08, 0.11])
@@ -126,3 +131,46 @@ def test_metrics_match_numpy() -> None:
     w = np.array([0.3, 0.2, 0.1, 0.4])
     assert data.portfolio_return(w) == pytest.approx(w[:3] @ MU + w[3] * 0.02, abs=1e-14)
     assert data.volatility(w) == pytest.approx(np.sqrt(w[:3] @ COV @ w[:3]), abs=1e-14)
+
+
+def native_vector(function: Callable[..., int], pointer: int, count: int) -> NDArray[np.float64]:
+    out = (ctypes.c_double * count)()
+    _native.check(function(pointer, out, count))
+    return np.array(out)
+
+
+def test_result_is_what_the_native_readers_return() -> None:
+    data = po.Data(MU, COV, risk_free=0.02)
+    spec = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, 0.7), target_return=0.06)
+    with _native.create_handle(lib.po_solve, lib.po_result_free, spec.pointer, data.pointer) as handle:
+        pointer = handle.pointer
+        result = _result.read_result(pointer, data.weight_count)
+        assert _native.read_scalar(ctypes.c_size_t, lib.po_result_weight_count, pointer) == data.weight_count
+        assert result.status is po.SolveStatus(_native.read_scalar(ctypes.c_int32, lib.po_result_status, pointer))
+        assert result.iterations == _native.read_scalar(ctypes.c_int32, lib.po_result_iterations, pointer)
+        assert np.array_equal(result.weights, native_vector(lib.po_result_weights, pointer, 4))
+        assert np.array_equal(result.bound_multipliers, native_vector(lib.po_result_bound_multipliers, pointer, 4))
+        multipliers = [_native.read_scalar(ctypes.c_double, lib.po_result_multiplier, pointer, c) for c in range(4)]
+        named = [result.budget_multiplier, result.target_return_multiplier, result.volatility_multiplier,
+                 result.leverage_multiplier]
+        np.testing.assert_array_equal(named, multipliers)
+        assert result.residual == _native.read_scalar(ctypes.c_double, lib.po_result_residual, pointer)
+    assert type(result.status) is po.SolveStatus and type(result.iterations) is int
+    for value in (*named, result.residual):
+        assert type(value) is float
+    for vector in (result.weights, result.bound_multipliers):
+        assert vector.dtype == np.float64 and vector.shape == (4,) and not vector.flags.writeable
+        with pytest.raises(ValueError):
+            vector[0] = 1.0
+
+
+def test_solves_in_threads_are_independent() -> None:
+    data = po.Data(MU, COV, risk_free=0.02)
+    specs = [po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, 1.0), target_return=r) for r in (0.05, 0.07, 0.09)]
+    expected = [po.solve(spec, data) for spec in specs]
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(lambda index: po.solve(specs[index % 3], data), range(300)))
+    for index, result in enumerate(results):
+        reference = expected[index % 3]
+        assert np.array_equal(result.weights, reference.weights)
+        assert np.array_equal(result.bound_multipliers, reference.bound_multipliers, equal_nan=True)

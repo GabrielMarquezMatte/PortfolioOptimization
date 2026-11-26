@@ -4,7 +4,10 @@ namespace PortOpt;
 
 /// <summary>
 /// The estimation utilities: sample moments, the Bayes-Stein shrinkage and the Black-Litterman model. Pure functions on
-/// arrays (row-major <c>double[,]</c> matrices); each call builds its native data and frees it before it returns.
+/// arrays (row-major <c>double[,]</c> matrices); each call builds its native data and frees it before it returns. Every
+/// function that takes a covariance also has an overload on a <see cref="MarketData"/>, which reuses the data instead
+/// of copying, validating and factoring the covariance on every call (the factor costs n^3 / 3); that data must have no
+/// risk-free rate, and its return series are not used.
 /// </summary>
 public static class Estimation
 {
@@ -38,10 +41,27 @@ public static class Estimation
     /// <returns>The shrunk mean, the grand mean and the weight.</returns>
     /// <exception cref="ArgumentException">The sizes do not agree.</exception>
     /// <exception cref="PortOptException">t is not above n + 2, or the covariance is rejected.</exception>
-    public static unsafe BayesSteinEstimate BayesStein(double[] muHat, double[,] covariance, int periods)
+    public static BayesSteinEstimate BayesStein(double[] muHat, double[,] covariance, int periods)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(periods);
         using var data = new MarketData(new MarketInputs { Mu = muHat, Covariance = covariance });
+        return BayesStein(data, periods);
+    }
+
+    /// <summary>
+    /// The Bayes-Stein shrinkage of the mean of <paramref name="data"/>, whose covariance is the sample covariance with
+    /// divisor t - 1: <see cref="BayesStein(double[], double[,], int)"/> on the mean and the covariance of the data.
+    /// </summary>
+    /// <param name="data">The sample mean and covariance, with no risk-free rate; it is not disposed.</param>
+    /// <param name="periods">The number of periods t, more than n + 2.</param>
+    /// <returns>The shrunk mean, the grand mean and the weight.</returns>
+    /// <exception cref="ObjectDisposedException">The data is disposed.</exception>
+    /// <exception cref="PortOptException">t is not above n + 2, or the data has no mean or has a risk-free
+    /// rate.</exception>
+    public static unsafe BayesSteinEstimate BayesStein(MarketData data, int periods)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentOutOfRangeException.ThrowIfNegative(periods);
         var mu = new double[data.AssetCount];
         fixed (double* output = mu)
         {
@@ -57,10 +77,26 @@ public static class Estimation
     /// <returns>Pi (n entries).</returns>
     /// <exception cref="ArgumentException">The sizes do not agree.</exception>
     /// <exception cref="PortOptException">Weights that do not sum to 1, or a delta outside its domain.</exception>
-    public static unsafe double[] Equilibrium(double[,] covariance, double[] marketWeights, double delta)
+    public static double[] Equilibrium(double[,] covariance, double[] marketWeights, double delta)
     {
         ArgumentNullException.ThrowIfNull(marketWeights);
         using var data = new MarketData(new MarketInputs { Covariance = covariance });
+        return Equilibrium(data, marketWeights, delta);
+    }
+
+    /// <summary>The equilibrium returns Pi = delta Sigma w, Sigma the covariance of <paramref name="data"/>.</summary>
+    /// <param name="data">Sigma, with no risk-free rate; its mean, if any, is not used, and it is not disposed.</param>
+    /// <param name="marketWeights">The market weights (n entries, summing to 1).</param>
+    /// <param name="delta">The risk aversion, positive.</param>
+    /// <returns>Pi (n entries).</returns>
+    /// <exception cref="ArgumentException">The sizes do not agree.</exception>
+    /// <exception cref="ObjectDisposedException">The data is disposed.</exception>
+    /// <exception cref="PortOptException">Weights that do not sum to 1, a delta outside its domain, or data with no
+    /// covariance or with a risk-free rate.</exception>
+    public static unsafe double[] Equilibrium(MarketData data, double[] marketWeights, double delta)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(marketWeights);
         if (marketWeights.Length != data.AssetCount)
         {
             throw new ArgumentException(
@@ -82,9 +118,24 @@ public static class Estimation
     /// <returns>Omega, k x k.</returns>
     /// <exception cref="ArgumentException">The sizes do not agree.</exception>
     /// <exception cref="PortOptException">Redundant views, or a tau outside its domain.</exception>
-    public static unsafe double[,] OmegaHeLitterman(double[,] covariance, double[,] p, double tau)
+    public static double[,] OmegaHeLitterman(double[,] covariance, double[,] p, double tau)
     {
         using var data = new MarketData(new MarketInputs { Covariance = covariance });
+        return OmegaHeLitterman(data, p, tau);
+    }
+
+    /// <summary>The He and Litterman Omega, with Sigma the covariance of <paramref name="data"/>.</summary>
+    /// <param name="data">Sigma, with no risk-free rate; its mean, if any, is not used, and it is not disposed.</param>
+    /// <param name="p">The pick matrix, k x n.</param>
+    /// <param name="tau">The scale of the prior covariance, positive.</param>
+    /// <returns>Omega, k x k.</returns>
+    /// <exception cref="ArgumentException">The sizes do not agree.</exception>
+    /// <exception cref="ObjectDisposedException">The data is disposed.</exception>
+    /// <exception cref="PortOptException">Redundant views, a tau outside its domain, or data with no covariance or with
+    /// a risk-free rate.</exception>
+    public static unsafe double[,] OmegaHeLitterman(MarketData data, double[,] p, double tau)
+    {
+        ArgumentNullException.ThrowIfNull(data);
         using var views = CreateViews(p, data.AssetCount, null);
         var omega = new double[p.GetLength(0), p.GetLength(0)];
         fixed (double* output = omega)
@@ -102,10 +153,27 @@ public static class Estimation
     /// <returns>Omega, k x k.</returns>
     /// <exception cref="ArgumentException">The sizes do not agree.</exception>
     /// <exception cref="PortOptException">Redundant views, or a value outside its domain.</exception>
-    public static unsafe double[,] OmegaIdzorek(double[,] covariance, double[,] p, double tau, double[] confidence)
+    public static double[,] OmegaIdzorek(double[,] covariance, double[,] p, double tau, double[] confidence)
     {
         ArgumentNullException.ThrowIfNull(confidence);
         using var data = new MarketData(new MarketInputs { Covariance = covariance });
+        return OmegaIdzorek(data, p, tau, confidence);
+    }
+
+    /// <summary>The Idzorek Omega, with Sigma the covariance of <paramref name="data"/>.</summary>
+    /// <param name="data">Sigma, with no risk-free rate; its mean, if any, is not used, and it is not disposed.</param>
+    /// <param name="p">The pick matrix, k x n.</param>
+    /// <param name="tau">The scale of the prior covariance, positive.</param>
+    /// <param name="confidence">The confidence of each view (k entries), above 0 and at most 1.</param>
+    /// <returns>Omega, k x k.</returns>
+    /// <exception cref="ArgumentException">The sizes do not agree.</exception>
+    /// <exception cref="ObjectDisposedException">The data is disposed.</exception>
+    /// <exception cref="PortOptException">Redundant views, a value outside its domain, or data with no covariance or
+    /// with a risk-free rate.</exception>
+    public static unsafe double[,] OmegaIdzorek(MarketData data, double[,] p, double tau, double[] confidence)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(confidence);
         using var views = CreateViews(p, data.AssetCount, null);
         var k = p.GetLength(0);
         if (confidence.Length != k)
@@ -132,10 +200,29 @@ public static class Estimation
     /// <returns>The posterior mean and covariance.</returns>
     /// <exception cref="ArgumentException">The sizes do not agree.</exception>
     /// <exception cref="PortOptException">Redundant views, an Omega that makes the solve fail, or a tau outside its domain.</exception>
-    public static unsafe BlackLittermanPosterior Posterior(double[,] covariance, double[] pi, double tau, Views views)
+    public static BlackLittermanPosterior Posterior(double[,] covariance, double[] pi, double tau, Views views)
     {
         ArgumentNullException.ThrowIfNull(views);
         using var data = new MarketData(new MarketInputs { Mu = pi, Covariance = covariance });
+        return Posterior(data, tau, views);
+    }
+
+    /// <summary>
+    /// The Black-Litterman posterior with Pi the mean of <paramref name="data"/> and Sigma its covariance:
+    /// <see cref="Posterior(double[,], double[], double, Views)"/> on them.
+    /// </summary>
+    /// <param name="data">Pi (in excess of the rate) and Sigma, with no risk-free rate; it is not disposed.</param>
+    /// <param name="tau">The scale of the prior covariance, positive.</param>
+    /// <param name="views">The views; with none, the posterior is Pi and (1 + tau) Sigma.</param>
+    /// <returns>The posterior mean and covariance.</returns>
+    /// <exception cref="ArgumentException">The sizes do not agree.</exception>
+    /// <exception cref="ObjectDisposedException">The data is disposed.</exception>
+    /// <exception cref="PortOptException">Redundant views, an Omega that makes the solve fail, a tau outside its domain,
+    /// or data with no mean, no covariance or a risk-free rate.</exception>
+    public static unsafe BlackLittermanPosterior Posterior(MarketData data, double tau, Views views)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(views);
         Shapes.CheckViews(views, data.AssetCount);
         using var handle = CreateViews(views.P, data.AssetCount, views.Q);
         if (views.Omega is { Length: > 0 } omega)

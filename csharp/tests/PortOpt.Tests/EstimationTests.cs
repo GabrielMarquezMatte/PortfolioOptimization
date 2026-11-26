@@ -149,6 +149,66 @@ public sealed class EstimationTests
         Assert.Throws<ArgumentException>(() => Estimation.Posterior(Covariance, [0.01, 0.02], Tau, new Views(RelativeP, [0.02], omega)));
     }
 
+    [Fact]
+    public void BayesStein_on_MarketData_is_the_bits_of_the_arrays()
+    {
+        var covariance = (double[,])Covariance.Clone();
+        for (var i = 0; i < 9; i++)
+        {
+            covariance[i / 3, i % 3] /= 100;
+        }
+        double[] muHat = [0.001, 0.002, 0.0005];
+        var expected = Estimation.BayesStein(muHat, covariance, 50);
+        using var data = new MarketData(new MarketInputs { Mu = muHat, Covariance = covariance });
+        var estimate = Estimation.BayesStein(data, 50);
+        Assert.Equal(expected.Mu, estimate.Mu);
+        Assert.Equal(expected.GrandMean, estimate.GrandMean);
+        Assert.Equal(expected.Weight, estimate.Weight);
+        Assert.Throws<ArgumentOutOfRangeException>(() => Estimation.BayesStein(data, -1));
+    }
+
+    [Fact]
+    public void One_MarketData_gives_the_bits_of_the_covariance()
+    {
+        double[] q = [0.02, 0.05];
+        // The equilibrium and the Omegas do not read the mean, so one data with mean Pi serves the whole model.
+        using var data = new MarketData(new MarketInputs { Mu = Pi, Covariance = Covariance });
+        Assert.Equal(Estimation.Equilibrium(Covariance, MarketWeights, 2.5), Estimation.Equilibrium(data, MarketWeights, 2.5));
+        var omega = Estimation.OmegaHeLitterman(Covariance, TwoViewsP, Tau);
+        Assert.Equal(omega, Estimation.OmegaHeLitterman(data, TwoViewsP, Tau));
+        Assert.Equal(
+            Estimation.OmegaIdzorek(Covariance, TwoViewsP, Tau, [0.5, 1.0]),
+            Estimation.OmegaIdzorek(data, TwoViewsP, Tau, [0.5, 1.0]));
+        var views = new Views(TwoViewsP, q, omega);
+        var expected = Estimation.Posterior(Covariance, Pi, Tau, views);
+        var posterior = Estimation.Posterior(data, Tau, views);
+        Assert.Equal(expected.Mu, posterior.Mu);
+        Assert.Equal(expected.Covariance, posterior.Covariance);
+        Assert.Equal(3, data.AssetCount);
+    }
+
+    [Fact]
+    public void MarketData_overloads_check_the_data()
+    {
+        double[,] omega = { { 0.0 } };
+        using var covarianceOnly = new MarketData(new MarketInputs { Covariance = Covariance });
+        Assert.Throws<ArgumentException>(() => Estimation.Equilibrium(covarianceOnly, [0.5, 0.5], 2.5));
+        Assert.Throws<ArgumentException>(() => Estimation.OmegaHeLitterman(covarianceOnly, new double[1, 4], Tau));
+        Assert.Throws<ArgumentException>(() => Estimation.OmegaIdzorek(covarianceOnly, RelativeP, Tau, [0.5, 0.5]));
+        Assert.Throws<ArgumentException>(() => Estimation.Posterior(covarianceOnly, Tau, new Views(new double[1, 2], [0.02], omega)));
+        var noMean = Assert.Throws<PortOptException>(() => Estimation.Posterior(covarianceOnly, Tau, new Views(RelativeP, [0.02], omega)));
+        Assert.Equal(Status.InvalidArgument, noMean.Status);
+        Assert.Throws<PortOptException>(() => Estimation.BayesStein(covarianceOnly, 50));
+        using var withRate = new MarketData(new MarketInputs { Mu = Pi, Covariance = Covariance, RiskFree = 0.02 });
+        Assert.Throws<PortOptException>(() => Estimation.Equilibrium(withRate, MarketWeights, 2.5));
+        Assert.Throws<PortOptException>(() => Estimation.Posterior(withRate, Tau, new Views(RelativeP, [0.02], omega)));
+        Assert.Throws<ArgumentNullException>(() => Estimation.Equilibrium((MarketData)null!, MarketWeights, 2.5));
+        var disposed = new MarketData(new MarketInputs { Covariance = Covariance });
+        disposed.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => Estimation.Equilibrium(disposed, MarketWeights, 2.5));
+        Assert.Throws<ObjectDisposedException>(() => Estimation.OmegaHeLitterman(disposed, RelativeP, Tau));
+    }
+
     private static void Close(double[] expected, double[] actual)
     {
         Assert.Equal(expected.Length, actual.Length);

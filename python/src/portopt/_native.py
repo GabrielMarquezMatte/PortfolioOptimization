@@ -195,7 +195,8 @@ class Handle:
 
 def create_handle(create: Callable[..., int], free: Callable[[int], None], *args: Any) -> Handle:
     out = ctypes.c_void_p()
-    check(create(*args, ctypes.byref(out)))
+    # A POINTER(T) argument takes a T and passes its address: no byref object per call.
+    check(create(*args, out))
     if out.value is None:
         raise PortOptError(PO_INTERNAL_ERROR, "the native create call returned a null handle")
     return Handle(out.value, free)
@@ -203,5 +204,5 @@ def create_handle(create: Callable[..., int], free: Callable[[int], None], *args
 
 def read_scalar(ctype: Any, function: Callable[..., int], *args: Any) -> Any:
     out = ctype()
-    check(function(*args, ctypes.byref(out)))
+    check(function(*args, out))
     return out.value

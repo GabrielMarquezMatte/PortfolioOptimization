@@ -3,6 +3,7 @@ import pytest
 
 from portopt import (
     BlackLittermanPosterior,
+    Data,
     Views,
     bayes_stein,
     bl_equilibrium,
@@ -44,7 +45,7 @@ def test_bayes_stein_rejects_a_negative_t() -> None:
 
 def test_bayes_stein_rejects_a_float_t() -> None:
     with pytest.raises(TypeError):
-        bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, 50.0)  # type: ignore[arg-type]
+        bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, 50.0)  # type: ignore[call-overload]
 
 
 def test_views_hash_and_compare_by_identity() -> None:
@@ -152,3 +153,70 @@ def test_pi_size_must_match_cov() -> None:
 def test_views_need_omega_when_not_empty() -> None:
     with pytest.raises(ValueError, match="omega is required"):
         Views(np.array([[1.0, -1.0, 0.0]]), np.array([0.02]))
+
+
+def test_bayes_stein_of_a_data_is_the_bits_of_the_arrays() -> None:
+    mu_hat, cov = np.array([0.001, 0.002, 0.0005]), COV / 100
+    expected = bayes_stein(mu_hat, cov, 50)
+    data = Data(mu_hat, cov)
+    for result in (bayes_stein(data, 50), bayes_stein(data, t=50)):
+        assert np.array_equal(result.mu, expected.mu)
+        assert result.grand_mean == expected.grand_mean and result.weight == expected.weight
+
+
+def test_bayes_stein_of_a_data_checks_t() -> None:
+    data = Data(np.array([0.001, 0.002, 0.0005]), COV / 100)
+    with pytest.raises(ValueError, match="t must be non-negative, got -1"):
+        bayes_stein(data, -1)
+    with pytest.raises(TypeError):
+        bayes_stein(data, 50.0)  # type: ignore[call-overload]
+    with pytest.raises(TypeError):
+        bayes_stein(data, COV, 50)  # type: ignore[call-overload]
+
+
+def test_bayes_stein_needs_the_mu_of_the_data() -> None:
+    with pytest.raises(ValueError):
+        bayes_stein(Data(cov=COV / 100), 50)
+
+
+def test_one_data_gives_the_bits_of_the_covariance() -> None:
+    p, q, tau = np.array([[1.0, -1.0, 0.0], [0.0, 1.0, 1.0]]), np.array([0.02, 0.05]), 0.05
+    pi = bl_equilibrium(COV, W_MKT, 2.5)
+    # The mu of the Data is not read by the equilibrium and the Omegas, so one Data serves the whole model.
+    data = Data(pi, COV)
+    assert np.array_equal(bl_equilibrium(data, W_MKT, 2.5), pi)
+    assert np.array_equal(bl_equilibrium(Data(cov=COV), W_MKT, 2.5), pi)
+    omega = bl_omega_he_litterman(COV, p, tau)
+    assert np.array_equal(bl_omega_he_litterman(data, p, tau), omega)
+    assert np.array_equal(bl_omega_idzorek(data, p, tau, [0.5, 1.0]), bl_omega_idzorek(COV, p, tau, [0.5, 1.0]))
+    views = Views(p, q, omega)
+    expected = bl_posterior(COV, pi, tau, views)
+    for result in (bl_posterior(data, tau, views), bl_posterior(data, tau=tau, views=views)):
+        assert np.array_equal(result.mu, expected.mu)
+        assert np.array_equal(result.cov, expected.cov)
+
+
+def test_a_data_is_checked_like_the_covariance() -> None:
+    data = Data(np.zeros(3), COV)
+    p = np.array([[1.0, -1.0]])
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_omega_he_litterman(data, p, 0.05)
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_omega_idzorek(data, p, 0.05, [0.5])
+    with pytest.raises(ValueError, match="p has 2 columns, expected 3"):
+        bl_posterior(data, 0.05, Views(p, np.array([0.01]), np.array([[0.001]])))
+    with pytest.raises(ValueError):
+        bl_equilibrium(data, [0.5, 0.5], 2.5)
+
+
+def test_the_posterior_needs_the_mu_of_the_data() -> None:
+    with pytest.raises(ValueError):
+        bl_posterior(Data(cov=COV), 0.05, Views(np.empty((0, 3)), np.empty(0)))
+
+
+def test_a_data_with_a_rate_is_refused() -> None:
+    data = Data(np.zeros(3), COV, risk_free=0.02)
+    with pytest.raises(ValueError):
+        bl_equilibrium(data, W_MKT, 2.5)
+    with pytest.raises(ValueError):
+        bl_posterior(data, 0.05, Views(np.empty((0, 3)), np.empty(0)))

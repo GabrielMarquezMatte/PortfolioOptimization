@@ -45,7 +45,8 @@ var result = Optimizer.Solve(new Spec { Objective = Objective.MaxSharpe, Bounds 
 `Pi`, `Q` and the posterior mean are in excess of the risk-free rate; `ToMarketInputs` adds it back (without a rate the
 mean is unchanged and there is no cash). `Estimation.BayesStein(muHat, covariance, periods)` shrinks a mean (compute it
 on the daily data and annualize afterwards: its weight depends on the frequency), and `OmegaIdzorek` is the other
-`Omega`.
+`Omega`. Each function also has an overload on a `MarketData` (with no risk-free rate) in place of the covariance, and
+of the mean where it reads one, so that a covariance used by several calls is validated and factored once.
 
 - `Spec` is an immutable record: the objective and the settings it takes (`TargetReturn`, `RiskAversion`,
   `Importance`, `MaxVolatility`, `Leverage`, `TargetVolatility`, `RiskBudget`, `Bounds` or `WeightBounds`).

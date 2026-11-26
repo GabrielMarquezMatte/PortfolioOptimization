@@ -9,6 +9,25 @@ From 1.0 the C ABI only grows ([docs/guide/versioning.md](docs/guide/versioning.
 
 ## [Unreleased]
 
+### Added
+
+- The estimation helpers of Python and .NET take prebuilt market data, as the C++ wrapper does, so that the covariance
+  is copied, validated and factored once instead of on every call (`po_data_create` is 33 ms at n = 1000, and the
+  equilibrium, the Omegas and the posterior never use the factor). Python: `bl_equilibrium`, `bl_omega_he_litterman`
+  and `bl_omega_idzorek` accept a `Data` where they accept `cov`, and `bayes_stein(data, t)` and
+  `bl_posterior(data, tau, views)` take a `Data` in place of the mean and the covariance. .NET: overloads of
+  `Estimation.BayesStein(data, periods)`, `Equilibrium(data, marketWeights, delta)`, `OmegaHeLitterman(data, p, tau)`,
+  `OmegaIdzorek(data, p, tau, confidence)` and `Posterior(data, tau, views)` on a `MarketData`, which they do not
+  dispose. The data must have no risk-free rate; the mean, where the helper reads one, is that of the data. The array
+  forms are unchanged and give the same bits.
+
+### Changed
+
+- Python: `solve()` reads its result with fewer `ctypes` objects: the weight count comes from the `Data`
+  (`po_result_weight_count` is the weight count of the solved data), the weights and the bound multipliers share one
+  buffer made for the call, the scalars one output cell, and the status is a table lookup. The `Result` is the same:
+  the same fields and types, read-only arrays, compared by identity.
+
 ## [1.1.0] - 2026-11-25
 
 Estimation utilities beside the solve. The C ABI only grows: `PO_ABI_VERSION` stays 1.

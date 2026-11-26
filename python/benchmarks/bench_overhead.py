@@ -96,11 +96,22 @@ def native_rows(spec: po.Spec, data: po.Data, mu: NDArray[np.float64], cov: NDAr
 def python_rows(spec: po.Spec, data: po.Data, mu: NDArray[np.float64], cov: NDArray[np.float64]) -> list[Row]:
     result = _native.create_handle(lib.po_solve, lib.po_result_free, spec.pointer, data.pointer)
     batch = batch_of(mu.size)
+    count = data.weight_count
     return [
         Row("Spec(...) and its free", lambda: po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, math.inf)), 500),
         Row("Data(mu, cov) and its free", lambda: po.Data(mu, cov), batch),
-        Row("read_result (11 ctypes calls, 2 numpy arrays)", lambda: _result.read_result(result.pointer), 200),
+        Row("read_result (10 ctypes calls, 1 buffer)", lambda: _result.read_result(result.pointer, count), 200),
         Row("solve(spec, data)", lambda: po.solve(spec, data), batch),
+    ]
+
+
+def estimation_rows(data: po.Data, cov: NDArray[np.float64]) -> list[Row]:
+    """The equilibrium from the covariance (a Data built, validated and factored per call) and from a prebuilt Data."""
+    batch = batch_of(cov.shape[0])
+    w_mkt = np.full(cov.shape[0], 1.0 / cov.shape[0])
+    return [
+        Row("bl_equilibrium(cov, w_mkt, delta)", lambda: po.bl_equilibrium(cov, w_mkt, 2.5), batch),
+        Row("bl_equilibrium(data, w_mkt, delta)", lambda: po.bl_equilibrium(data, w_mkt, 2.5), batch),
     ]
 
 
@@ -115,7 +126,7 @@ def measure(n: int, repeats: int) -> dict[str, float]:
     spec = po.Spec(po.Objective.MIN_VARIANCE, bounds=(0.0, math.inf))
     data = po.Data(mu, cov)
     check_case(spec, data)
-    rows = native_rows(spec, data, mu, cov) + python_rows(spec, data, mu, cov)
+    rows = native_rows(spec, data, mu, cov) + python_rows(spec, data, mu, cov) + estimation_rows(data, cov)
     return {row.name: median_us(row, repeats) for row in rows}
 
 

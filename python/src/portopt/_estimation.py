@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 import operator
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Any, NamedTuple, overload
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -128,25 +128,62 @@ def sample_moments(returns: ArrayLike) -> tuple[Array, Array]:
     return mu, cov
 
 
-def bayes_stein(mu_hat: ArrayLike, cov: ArrayLike, t: int) -> BayesStein:
-    """Jorion shrinkage; cov is the sample covariance with divisor t - 1."""
+@overload
+def bayes_stein(data: Data, /, t: int) -> BayesStein: ...
+
+
+@overload
+def bayes_stein(mu_hat: ArrayLike, cov: ArrayLike, t: int) -> BayesStein: ...
+
+
+def bayes_stein(*args: Any, **kwargs: Any) -> BayesStein:
+    """Jorion shrinkage; cov is the sample covariance with divisor t - 1.
+
+    ``bayes_stein(mu_hat, cov, t)`` builds the market data of the call; ``bayes_stein(data, t)`` takes a prebuilt
+    `Data` in place of both arrays (its mu is mu_hat, its covariance the sample covariance; no risk-free rate), so
+    that the covariance is validated and factored once for every helper that uses it.
+    """
+    if args and isinstance(args[0], Data):
+        return shrunk_mean(*args, **kwargs)
+    return shrunk_mean_of_arrays(*args, **kwargs)
+
+
+def checked_periods(t: int) -> int:
     t = operator.index(t)
     if t < 0:
         raise ValueError(f"t must be non-negative, got {t}")
+    return t
+
+
+def shrunk_mean_of_arrays(mu_hat: ArrayLike, cov: ArrayLike, t: int) -> BayesStein:
+    periods = checked_periods(t)
     mu = required_vector(mu_hat, "mu_hat")
-    data = Data(mu, required_cov(cov))
-    out = np.empty(mu.size, dtype=np.float64)
+    return shrunk_mean(Data(mu, required_cov(cov)), periods)
+
+
+def shrunk_mean(data: Data, /, t: int) -> BayesStein:
+    periods = checked_periods(t)
+    out = np.empty(data.asset_count, dtype=np.float64)
     mean, weight = ctypes.c_double(), ctypes.c_double()
-    _native.check(
-        lib.po_bayes_stein(data.pointer, t, doubles_pointer(out), ctypes.byref(mean), ctypes.byref(weight))
-    )
+    _native.check(lib.po_bayes_stein(data.pointer, periods, doubles_pointer(out), mean, weight))
     return BayesStein(out, mean.value, weight.value)
 
 
-def bl_equilibrium(cov: ArrayLike, w_mkt: ArrayLike, delta: float) -> Array:
-    """The implied excess returns Pi = delta Sigma w_mkt."""
+def covariance_data(cov: ArrayLike | Data) -> Data:
+    """A prebuilt Data as it is, or the Data of the covariance alone."""
+    if isinstance(cov, Data):
+        return cov
+    return Data(cov=required_cov(cov))
+
+
+def bl_equilibrium(cov: ArrayLike | Data, w_mkt: ArrayLike, delta: float) -> Array:
+    """The implied excess returns Pi = delta Sigma w_mkt.
+
+    cov is Sigma, or a prebuilt `Data` whose covariance is Sigma (its mu, if any, is not used; no risk-free rate):
+    the Data is then reused instead of being built, validated and factored on every call.
+    """
     weights = required_vector(w_mkt, "w_mkt")
-    data = Data(cov=required_cov(cov))
+    data = covariance_data(cov)
     out = np.empty(weights.size, dtype=np.float64)
     _native.check(
         lib.po_bl_equilibrium(data.pointer, doubles_pointer(weights), weights.size, float(delta), doubles_pointer(out))
@@ -154,10 +191,17 @@ def bl_equilibrium(cov: ArrayLike, w_mkt: ArrayLike, delta: float) -> Array:
     return out
 
 
-def bl_omega_he_litterman(cov: ArrayLike, p: ArrayLike, tau: float) -> Array:
+def omega_inputs(cov: ArrayLike | Data, p: ArrayLike) -> tuple[Data, Array]:
+    if isinstance(cov, Data):
+        return cov, checked_width(checked_p(p), cov.asset_count)
     sigma = required_cov(cov)
     matrix = checked_width(checked_p(p), sigma.shape[0])
-    data = Data(cov=sigma)
+    return Data(cov=sigma), matrix
+
+
+def bl_omega_he_litterman(cov: ArrayLike | Data, p: ArrayLike, tau: float) -> Array:
+    """He and Litterman's diagonal Omega; cov is Sigma or a prebuilt `Data` of it, as in `bl_equilibrium`."""
+    data, matrix = omega_inputs(cov, p)
     k = matrix.shape[0]
     with views_handle(matrix, np.zeros(k), None) as views:
         out = np.empty((k, k), dtype=np.float64)
@@ -165,11 +209,10 @@ def bl_omega_he_litterman(cov: ArrayLike, p: ArrayLike, tau: float) -> Array:
     return out
 
 
-def bl_omega_idzorek(cov: ArrayLike, p: ArrayLike, tau: float, confidence: ArrayLike) -> Array:
-    sigma = required_cov(cov)
-    matrix = checked_width(checked_p(p), sigma.shape[0])
+def bl_omega_idzorek(cov: ArrayLike | Data, p: ArrayLike, tau: float, confidence: ArrayLike) -> Array:
+    """Idzorek's diagonal Omega; cov is Sigma or a prebuilt `Data` of it, as in `bl_equilibrium`."""
+    data, matrix = omega_inputs(cov, p)
     levels = required_vector(confidence, "confidence")
-    data = Data(cov=sigma)
     k = matrix.shape[0]
     if levels.size != k:
         raise ValueError(f"confidence has {levels.size} entries, expected {k} (one per view)")
@@ -183,13 +226,35 @@ def bl_omega_idzorek(cov: ArrayLike, p: ArrayLike, tau: float, confidence: Array
     return out
 
 
-def bl_posterior(cov: ArrayLike, pi: ArrayLike, tau: float, views: Views) -> BlackLittermanPosterior:
-    """Posterior mean (in excess of the rate) and covariance."""
+@overload
+def bl_posterior(data: Data, /, tau: float, views: Views) -> BlackLittermanPosterior: ...
+
+
+@overload
+def bl_posterior(cov: ArrayLike, pi: ArrayLike, tau: float, views: Views) -> BlackLittermanPosterior: ...
+
+
+def bl_posterior(*args: Any, **kwargs: Any) -> BlackLittermanPosterior:
+    """Posterior mean (in excess of the rate) and covariance.
+
+    ``bl_posterior(cov, pi, tau, views)`` builds the market data of the call; ``bl_posterior(data, tau, views)``
+    takes a prebuilt `Data` in place of both arrays (its mu is Pi, its covariance Sigma; no risk-free rate).
+    """
+    if args and isinstance(args[0], Data):
+        return posterior(*args, **kwargs)
+    return posterior_of_arrays(*args, **kwargs)
+
+
+def posterior_of_arrays(cov: ArrayLike, pi: ArrayLike, tau: float, views: Views) -> BlackLittermanPosterior:
     prior = required_vector(pi, "pi")
     sigma = required_cov(cov)
     checked_width(views.p, sigma.shape[0])
-    data = Data(prior, sigma)
-    mu, out = np.empty(prior.size, dtype=np.float64), np.empty((prior.size,) * 2, dtype=np.float64)
+    return posterior(Data(prior, sigma), tau, views)
+
+
+def posterior(data: Data, /, tau: float, views: Views) -> BlackLittermanPosterior:
+    n = checked_width(views.p, data.asset_count).shape[1]
+    mu, out = np.empty(n, dtype=np.float64), np.empty((n, n), dtype=np.float64)
     with views_handle(views.p, views.q, views.omega) as handle:
         _native.check(
             lib.po_bl_posterior(data.pointer, handle.pointer, float(tau), doubles_pointer(mu), doubles_pointer(out))

@@ -41,10 +41,15 @@ PortOpt.Bounds.Upper.get -> double
 PortOpt.Bounds.Upper.init -> void
 PortOpt.Estimation
 static PortOpt.Estimation.BayesStein(double[]! muHat, double[,]! covariance, int periods) -> PortOpt.BayesSteinEstimate!
+static PortOpt.Estimation.BayesStein(PortOpt.MarketData! data, int periods) -> PortOpt.BayesSteinEstimate!
 static PortOpt.Estimation.Equilibrium(double[,]! covariance, double[]! marketWeights, double delta) -> double[]!
+static PortOpt.Estimation.Equilibrium(PortOpt.MarketData! data, double[]! marketWeights, double delta) -> double[]!
 static PortOpt.Estimation.OmegaHeLitterman(double[,]! covariance, double[,]! p, double tau) -> double[,]!
+static PortOpt.Estimation.OmegaHeLitterman(PortOpt.MarketData! data, double[,]! p, double tau) -> double[,]!
 static PortOpt.Estimation.OmegaIdzorek(double[,]! covariance, double[,]! p, double tau, double[]! confidence) -> double[,]!
+static PortOpt.Estimation.OmegaIdzorek(PortOpt.MarketData! data, double[,]! p, double tau, double[]! confidence) -> double[,]!
 static PortOpt.Estimation.Posterior(double[,]! covariance, double[]! pi, double tau, PortOpt.Views! views) -> PortOpt.BlackLittermanPosterior!
+static PortOpt.Estimation.Posterior(PortOpt.MarketData! data, double tau, PortOpt.Views! views) -> PortOpt.BlackLittermanPosterior!
 static PortOpt.Estimation.SampleMoments(double[,]! returns) -> PortOpt.Moments!
 PortOpt.MarketData
 PortOpt.MarketData.AssetCount.get -> int

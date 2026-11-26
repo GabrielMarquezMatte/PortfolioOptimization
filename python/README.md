@@ -44,7 +44,10 @@ print(result.status.name, result.weights)                               # OPTIMA
 `Pi`, `q` and the posterior mean are in excess of the risk-free rate, which is why `to_data` adds it back; without
 `risk_free` the mean is left as it is and there is no cash. `bayes_stein(mu_hat, cov, t)` shrinks a mean, and
 `bl_omega_idzorek` is the other `Omega`. Compute `bayes_stein` on the original (daily) data and annualize its `mu`
-afterwards: its weight depends on the frequency.
+afterwards: its weight depends on the frequency. Each helper also takes a prebuilt `Data` in place of its arrays
+(`bl_equilibrium(data, w_mkt, delta)`, `bl_omega_*(data, ...)`, `bayes_stein(data, t)`,
+`bl_posterior(data, tau, views)`), so that a covariance used by several calls is validated and factored once; that
+`Data` has no `risk_free`.
 
 The distribution is `pyportopt`; the module is `portopt`. Python 3.11 or newer, with `numpy`. Until 1.0 the API may
 change between minor versions. Documentation, the C and C++ interfaces and the changelog:
