@@ -13,6 +13,7 @@
 
 #include "linalg/cholesky.hpp"
 #include "qp/active_set.hpp"
+#include "qp/flat_row.hpp"
 
 namespace po::qp
 {
@@ -45,6 +46,10 @@ struct Constraints
     std::vector<double> row_norms;
     // The column of the only nonzero entry of each explicit row (a bound), or n for a row with more than one.
     std::vector<std::size_t> unit_columns;
+    // The inequality rows of more than one nonzero entry that are flat (FlatRow); empty for every other row. The
+    // scan reads them by holds_by_bound before their dot.
+    std::vector<std::optional<FlatRow>> flat_rows;
+    bool has_flat_rows = false;
     const GrossExposure* family = nullptr;
     GeneratedRows generated;
     // Buffers kept between candidates so that the family does not allocate in the loop: the sign vector and the
@@ -206,11 +211,17 @@ Constraints gather_constraints(const Problem& problem)
     constraints.explicit_count = constraints.rhs.size();
     constraints.row_norms.resize(constraints.rhs.size());
     constraints.unit_columns.resize(constraints.rhs.size());
+    constraints.flat_rows.resize(constraints.rhs.size());
     for (std::size_t index = 0; index < constraints.rhs.size(); ++index)
     {
         std::span<const double> normal = row(constraints, index);
         constraints.row_norms[index] = std::sqrt(dot(normal, normal));
         constraints.unit_columns[index] = unit_column_of(normal);
+        if (index >= constraints.equality_count && !is_unit(constraints, index))
+        {
+            constraints.flat_rows[index] = flat_row_of(normal);
+            constraints.has_flat_rows = constraints.has_flat_rows || constraints.flat_rows[index].has_value();
+        }
     }
     if (problem.gross_exposure.has_value())
     {
@@ -254,15 +265,33 @@ struct Violation
     double slack = 0.0;
 };
 
+// A flat row proved within its tolerance by holds_by_bound is one the scan skips: its dot is not computed.
+bool holds_by_flat_bound(const Constraints& constraints, const State& state, std::size_t index,
+                         const PointSums& sums, double limit)
+{
+    const std::optional<FlatRow>& flat = constraints.flat_rows[index];
+    return flat.has_value() && holds_by_bound(*flat, sums, state.x, constraints.rhs[index], limit);
+}
+
 Violation most_violated_explicit(const Constraints& constraints, const State& state)
 {
     Violation worst;
     double x_scale = max_abs(state.x);
     bool finite_point = std::ranges::all_of(state.x, [](double value) { return std::isfinite(value); });
+    PointSums sums;
+    if (constraints.has_flat_rows)
+    {
+        sums = point_sums(state.x);
+    }
     for (std::size_t index = constraints.equality_count; index < constraints.explicit_count; ++index)
     {
+        double limit = tolerance(constraints, index, x_scale);
+        if (holds_by_flat_bound(constraints, state, index, sums, limit))
+        {
+            continue;
+        }
         double value = scanned_slack(constraints, state, index, finite_point);
-        bool within_tolerance = value >= -tolerance(constraints, index, x_scale);
+        bool within_tolerance = value >= -limit;
         if (within_tolerance || value >= worst.slack || is_active(state, index) ||
             std::ranges::find(state.passed_over, index) != state.passed_over.end())
         {

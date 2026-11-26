@@ -182,6 +182,7 @@ if(PO_BUILD_TESTS)
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/linalg/qr_test.cpp
         tests/unit/qp/active_set_test.cpp
+        tests/unit/qp/flat_row_test.cpp
         tests/unit/qp/goldfarb_idnani_test.cpp
         tests/unit/core/data_test.cpp
         tests/unit/core/generators_test.cpp
