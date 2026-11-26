@@ -53,6 +53,28 @@ def test_views_hash_and_compare_by_identity() -> None:
     assert views == views
 
 
+def test_bayes_stein_hashes_and_compares_by_identity() -> None:
+    first = bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, 50)
+    second = bayes_stein(np.array([0.001, 0.002, 0.0005]), COV / 100, 50)
+    assert first == first
+    assert first != second
+    assert not first == second
+    assert {first, second} == {first, second}
+    mu, grand_mean, weight = first
+    assert mu is first[0] and grand_mean == first.grand_mean and weight == first.weight
+
+
+def test_posterior_hashes_and_compares_by_identity() -> None:
+    first = BlackLittermanPosterior(np.array([0.01, 0.02, 0.03]), COV)
+    second = BlackLittermanPosterior(np.array([0.01, 0.02, 0.03]), COV)
+    assert first == first
+    assert first != second
+    assert not first == second
+    assert {first, second} == {first, second}
+    mu, cov = first
+    assert mu is first[0] and cov is first.cov
+
+
 def test_omegas_without_views_are_empty() -> None:
     assert bl_omega_he_litterman(COV, np.empty((0, 3)), 0.05).shape == (0, 0)
     assert bl_omega_idzorek(COV, np.empty((0, 3)), 0.05, np.empty(0)).shape == (0, 0)

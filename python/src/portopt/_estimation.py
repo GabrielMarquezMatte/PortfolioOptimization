@@ -23,10 +23,30 @@ class BayesStein(NamedTuple):
     grand_mean: float
     weight: float
 
+    # Identity, as Views: tuple equality compares the arrays elementwise and raises, and an array is unhashable.
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return object.__hash__(self)
+
 
 class BlackLittermanPosterior(NamedTuple):
     mu: Array
     cov: Array
+
+    # Identity, as Views: tuple equality compares the arrays elementwise and raises, and an array is unhashable.
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return self is not other
+
+    def __hash__(self) -> int:
+        return object.__hash__(self)
 
     def to_data(self, risk_free: float | None = None) -> Data:
         """The posterior as market data; mu is in excess of the rate, so the rate is added back."""

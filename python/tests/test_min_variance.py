@@ -24,6 +24,15 @@ def test_unconstrained_matches_closed_form() -> None:
     assert not result.bound_multipliers.flags.writeable
 
 
+def test_result_hashes_and_compares_by_identity() -> None:
+    data = po.Data(MU, COV)
+    first, second = min_variance(data), min_variance(data)
+    assert first == first
+    assert first != second
+    assert not first == second
+    assert {first, second} == {first, second}
+
+
 def test_long_only_weights_nonnegative_and_sum_to_one() -> None:
     result = min_variance(po.Data(MU, COV), bounds=(0.0, 1.0), target_return=0.1)
     assert result.status == po.SolveStatus.OPTIMAL

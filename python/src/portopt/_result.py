@@ -28,7 +28,7 @@ class SolveStatus(enum.IntEnum):
     NOT_CONVERGED = 3
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Result:
     status: SolveStatus
     weights: NDArray[np.float64]
