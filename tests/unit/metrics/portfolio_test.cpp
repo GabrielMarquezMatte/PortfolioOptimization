@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "fuzz/risk_parity/risk_parity_reference.hpp"
@@ -198,6 +199,24 @@ TEST(Metrics, SharpeAndDiversification)
     std::vector<double> all_cash = {0.0, 0.0, 1.0};
     EXPECT_TRUE(std::isnan(po::metrics::sharpe_ratio(data, all_cash)));
     EXPECT_TRUE(std::isnan(po::metrics::diversification_ratio(data, all_cash)));
+}
+
+TEST(Metrics, NonFiniteWeightsGiveNaN)
+{
+    po::Data data = two_assets();
+    double nan = std::numeric_limits<double>::quiet_NaN();
+    double inf = std::numeric_limits<double>::infinity();
+    for (const std::vector<double>& weights : {std::vector<double>{nan, nan}, std::vector<double>{inf, 0.0}})
+    {
+        EXPECT_TRUE(std::isnan(po::metrics::portfolio_volatility(data, weights)));
+        EXPECT_TRUE(std::isnan(po::metrics::utility(data, weights, 2.0)));
+        EXPECT_TRUE(std::isnan(po::metrics::sharpe_ratio(data, weights)));
+        EXPECT_TRUE(std::isnan(po::metrics::diversification_ratio(data, weights)));
+        for (double contribution : po::metrics::risk_contributions(data, weights))
+        {
+            EXPECT_TRUE(std::isnan(contribution));
+        }
+    }
 }
 
 po::Spec sharpe_spec()

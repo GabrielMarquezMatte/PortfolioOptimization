@@ -329,7 +329,8 @@ PO_API void po_result_free(po_result* r);
 
 /* Portfolio metrics for weights w (n must be the weight count of d; cash last). The return is
    sum_i w_i mu_i + w_cash * rate and needs mu; the volatility is sqrt(w' Sigma w) over the risky weights only
-   and needs the covariance. A missing input is PO_INVALID_ARGUMENT. */
+   and needs the covariance. A missing input is PO_INVALID_ARGUMENT. These and the metrics below reject a
+   non-finite weight (NaN, as a result with no point reports, or +-inf) with PO_INVALID_ARGUMENT. */
 PO_API po_status po_portfolio_return(const po_data* d, const double* w, size_t n, double* out);
 PO_API po_status po_portfolio_volatility(const po_data* d, const double* w, size_t n, double* out);
 

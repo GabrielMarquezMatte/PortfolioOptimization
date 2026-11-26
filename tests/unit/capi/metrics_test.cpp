@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <portopt/portopt.h>
+#include <utility>
 #include <vector>
 
 #include "capi_scope.hpp"
@@ -208,6 +209,40 @@ TEST(CapiMetrics, RatiosCheckWeightsAndNulls)
     EXPECT_EQ(po_diversification_ratio(data.get(), weights, 1, &value), PO_INVALID_ARGUMENT);
     EXPECT_STREQ(po_last_error(), "n must be 2, got 1");
     EXPECT_EQ(value, 1.0);
+}
+
+TEST(CapiMetrics, NonFiniteWeightsAreInvalid)
+{
+    DataPtr data = data_with_returns();
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+    constexpr double kInf = std::numeric_limits<double>::infinity();
+    const double nan_weights[2] = {kNaN, kNaN};
+    const double inf_weight[2] = {kInf, 0.0};
+    const double negative_inf_weight[2] = {0.5, -kInf};
+    double value = 1.0;
+    double out[2] = {7.0, 7.0};
+    const std::pair<const double*, const char*> cases[3] = {{nan_weights, "w is not finite at 0"},
+                                                            {inf_weight, "w is not finite at 0"},
+                                                            {negative_inf_weight, "w is not finite at 1"}};
+    for (const auto& [weights, expected] : cases)
+    {
+        EXPECT_EQ(po_portfolio_return(data.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_portfolio_volatility(data.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_utility(data.get(), weights, 2, 2.0, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_tracking_error(data.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_sharpe_ratio(data.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_diversification_ratio(data.get(), weights, 2, &value), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+        EXPECT_EQ(po_risk_contributions(data.get(), weights, 2, out), PO_INVALID_ARGUMENT);
+        EXPECT_STREQ(po_last_error(), expected);
+    }
+    EXPECT_EQ(value, 1.0);
+    EXPECT_EQ(out[0], 7.0);
 }
 
 TEST(CapiMetrics, NullArguments)

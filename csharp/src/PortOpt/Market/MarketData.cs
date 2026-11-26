@@ -51,7 +51,7 @@ public sealed class MarketData : IDisposable
 
     /// <summary>mu' w, plus the rate times the cash weight.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
-    /// <exception cref="PortOptException">A wrong weight count, or no expected returns.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or no expected returns.</exception>
     public unsafe double PortfolioReturn(ReadOnlySpan<double> weights)
     {
         return Metric(weights, NativeMethods.po_portfolio_return);
@@ -59,7 +59,7 @@ public sealed class MarketData : IDisposable
 
     /// <summary>sqrt(w' Sigma w) over the risky weights.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
-    /// <exception cref="PortOptException">A wrong weight count, or no covariance.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or no covariance.</exception>
     public unsafe double Volatility(ReadOnlySpan<double> weights)
     {
         return Metric(weights, NativeMethods.po_portfolio_volatility);
@@ -68,7 +68,8 @@ public sealed class MarketData : IDisposable
     /// <summary>The portfolio return less (delta / 2) w' Sigma w.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
     /// <param name="riskAversion">delta, positive and finite.</param>
-    /// <exception cref="PortOptException">A wrong weight count, a missing input or delta outside its domain.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight, a missing input or delta outside
+    /// its domain.</exception>
     public unsafe double Utility(ReadOnlySpan<double> weights, double riskAversion)
     {
         ObjectDisposedException.ThrowIf(_handle.IsClosed, this);
@@ -81,7 +82,7 @@ public sealed class MarketData : IDisposable
 
     /// <summary>The root mean square of the gap between the portfolio and the benchmark over the periods.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
-    /// <exception cref="PortOptException">A wrong weight count, or no return series.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or no return series.</exception>
     public unsafe double TrackingError(ReadOnlySpan<double> weights)
     {
         return Metric(weights, NativeMethods.po_tracking_error);
@@ -89,7 +90,7 @@ public sealed class MarketData : IDisposable
 
     /// <summary>(return - rate) / volatility; NaN when the volatility is 0.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
-    /// <exception cref="PortOptException">A wrong weight count, or a missing input.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or a missing input.</exception>
     public unsafe double SharpeRatio(ReadOnlySpan<double> weights)
     {
         return Metric(weights, NativeMethods.po_sharpe_ratio);
@@ -97,7 +98,7 @@ public sealed class MarketData : IDisposable
 
     /// <summary>sigma' w / volatility, sigma the asset volatilities; NaN when the volatility is 0.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
-    /// <exception cref="PortOptException">A wrong weight count, or no covariance.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or no covariance.</exception>
     public unsafe double DiversificationRatio(ReadOnlySpan<double> weights)
     {
         return Metric(weights, NativeMethods.po_diversification_ratio);
@@ -106,7 +107,7 @@ public sealed class MarketData : IDisposable
     /// <summary>c_i = w_i (Sigma w)_i / w' Sigma w, 0 for the cash entry; all NaN when the volatility is 0.</summary>
     /// <param name="weights">One weight per <see cref="WeightCount"/>.</param>
     /// <returns>One contribution per weight.</returns>
-    /// <exception cref="PortOptException">A wrong weight count, or no covariance.</exception>
+    /// <exception cref="PortOptException">A wrong weight count, a non-finite weight or no covariance.</exception>
     public unsafe double[] RiskContributions(ReadOnlySpan<double> weights)
     {
         ObjectDisposedException.ThrowIf(_handle.IsClosed, this);

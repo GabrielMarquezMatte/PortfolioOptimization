@@ -28,6 +28,12 @@ po_status check_weights(const po::Data& data, const double* w, std::size_t n)
         return set_error(PO_INVALID_ARGUMENT, "n must be " + std::to_string(data.weight_count()) + ", got " +
                                                   std::to_string(n));
     }
+    std::span<const double> weights(w, n);
+    auto bad = std::ranges::find_if(weights, [](double value) { return !std::isfinite(value); });
+    if (bad != weights.end())
+    {
+        return set_error(PO_INVALID_ARGUMENT, "w is not finite at " + std::to_string(bad - weights.begin()));
+    }
     return PO_OK;
 }
 
