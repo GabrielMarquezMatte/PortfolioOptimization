@@ -12,8 +12,6 @@ namespace po
 namespace
 {
 
-constexpr double kSymmetryTolerance = 1e-10;
-
 Failure invalid(std::string message)
 {
     return Failure{FailureKind::InvalidArgument, std::move(message)};
@@ -190,10 +188,11 @@ std::expected<Data, Failure> Data::create(std::size_t n, std::span<const double>
     std::vector<double> factor;
     if (!symmetric.empty())
     {
-        std::optional<std::vector<double>> computed = linalg::cholesky(symmetric, n);
+        std::expected<std::vector<double>, std::size_t> computed = linalg::cholesky_or_pivot(symmetric, n);
         if (!computed.has_value())
         {
-            return std::unexpected(invalid("covariance is not positive definite"));
+            return std::unexpected(invalid("covariance is not positive definite: pivot " +
+                                           std::to_string(computed.error()) + " is not positive"));
         }
         factor = std::move(*computed);
     }

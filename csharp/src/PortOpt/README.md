@@ -22,6 +22,31 @@ Console.WriteLine($"{result.Status}: {string.Join(", ", result.Weights)}");
 Console.WriteLine($"Sharpe {data.SharpeRatio(result.Weights)}");
 ```
 
+Estimation: the same flow from a return panel to a solve, with one relative view (asset 0 beats asset 1 by 1%).
+
+```csharp
+double[,] returns = LoadDailyReturns();                                    // periods by assets, daily
+var covariance = Estimation.SampleMoments(returns).Covariance;
+for (var i = 0; i < 3; i++)
+{
+    for (var j = 0; j < 3; j++)
+    {
+        covariance[i, j] *= 252;                                           // annualize after the estimation
+    }
+}
+var pi = Estimation.Equilibrium(covariance, [0.5, 0.3, 0.2], delta: 2.5);  // in excess of the rate
+double[,] p = { { 1.0, -1.0, 0.0 } };
+var omega = Estimation.OmegaHeLitterman(covariance, p, tau: 0.05);
+var posterior = Estimation.Posterior(covariance, pi, 0.05, new Views(p, [0.01], omega));
+using var data = new MarketData(posterior.ToMarketInputs(riskFree: 0.02)); // adds the rate back, sets the cash
+var result = Optimizer.Solve(new Spec { Objective = Objective.MaxSharpe, Bounds = new Bounds(0, 1) }, data);
+```
+
+`Pi`, `Q` and the posterior mean are in excess of the risk-free rate; `ToMarketInputs` adds it back (without a rate the
+mean is unchanged and there is no cash). `Estimation.BayesStein(muHat, covariance, periods)` shrinks a mean (compute it
+on the daily data and annualize afterwards: its weight depends on the frequency), and `OmegaIdzorek` is the other
+`Omega`.
+
 - `Spec` is an immutable record: the objective and the settings it takes (`TargetReturn`, `RiskAversion`,
   `Importance`, `MaxVolatility`, `Leverage`, `TargetVolatility`, `RiskBudget`, `Bounds` or `WeightBounds`).
 - `MarketData` holds a native handle: dispose it (`using`). With a risk-free rate the cash weight comes last.

@@ -156,6 +156,113 @@ TEST(Wrapper, MetricsAndRiskContributions)
     EXPECT_FALSE(data.tracking_error(weights).has_value());
 }
 
+// A t x kAssets panel of deterministic, correlated, well-conditioned returns.
+std::vector<double> sample_panel(std::size_t periods)
+{
+    std::vector<double> panel(periods * kAssets);
+    for (std::size_t row = 0; row < periods; ++row)
+    {
+        const double common = 0.01 * static_cast<double>((row * 7) % 11) - 0.05;
+        for (std::size_t col = 0; col < kAssets; ++col)
+        {
+            const double own = 0.02 * static_cast<double>((row * (3 + 2 * col) + col) % 13) - 0.12;
+            panel[row * kAssets + col] = 0.001 * static_cast<double>(col + 1) + common + own;
+        }
+    }
+    return panel;
+}
+
+TEST(Wrapper, EstimationRoundTrip)
+{
+    constexpr std::size_t periods = 60;
+    const po::Expected<po::Moments> moments = po::sample_moments(sample_panel(periods), kAssets);
+    ASSERT_TRUE(moments.has_value()) << moments.error().message;
+    ASSERT_EQ(moments->mu.size(), kAssets);
+    ASSERT_EQ(moments->cov.size(), kAssets * kAssets);
+    const po::Expected<po::Data> sample = po::Data::create(kAssets, moments->mu, moments->cov);
+    ASSERT_TRUE(sample.has_value()) << sample.error().message;
+
+    const po::Expected<po::BayesSteinEstimate> shrunk = po::bayes_stein(*sample, periods);
+    ASSERT_TRUE(shrunk.has_value()) << shrunk.error().message;
+    EXPECT_EQ(shrunk->mu.size(), kAssets);
+    EXPECT_GT(shrunk->weight, 0.0);
+    EXPECT_LE(shrunk->weight, 1.0);
+
+    const std::vector<double> market(kAssets, 1.0 / 3.0);
+    const po::Expected<std::vector<double>> pi = po::bl_equilibrium(*sample, market, 2.5);
+    ASSERT_TRUE(pi.has_value()) << pi.error().message;
+    const po::Expected<po::Data> prior = po::Data::create(kAssets, *pi, moments->cov);
+    ASSERT_TRUE(prior.has_value()) << prior.error().message;
+
+    po::Expected<po::Views> views = po::Views::create(kAssets, std::vector<double>{1.0, -1.0, 0.0}, std::vector<double>{0.02});
+    ASSERT_TRUE(views.has_value()) << views.error().message;
+    const po::Expected<std::vector<double>> omega = po::bl_omega_he_litterman(*prior, *views, 0.05);
+    ASSERT_TRUE(omega.has_value()) << omega.error().message;
+    ASSERT_EQ(omega->size(), 1U);
+    const po::Expected<std::vector<double>> idzorek =
+        po::bl_omega_idzorek(*prior, *views, 0.05, std::vector<double>{0.5});
+    ASSERT_TRUE(idzorek.has_value()) << idzorek.error().message;
+    EXPECT_NEAR((*idzorek)[0], (*omega)[0], 1e-15);
+    ASSERT_TRUE(views->set_omega(*omega).has_value());
+
+    const po::Expected<po::Posterior> posterior = po::bl_posterior(*prior, *views, 0.05);
+    ASSERT_TRUE(posterior.has_value()) << posterior.error().message;
+    ASSERT_EQ(posterior->mu.size(), kAssets);
+    ASSERT_EQ(posterior->cov.size(), kAssets * kAssets);
+
+    const po::Expected<po::Data> optimized = po::Data::create(kAssets, posterior->mu, posterior->cov);
+    ASSERT_TRUE(optimized.has_value()) << optimized.error().message;
+    const po::Expected<po::Result> result =
+        po::solve(po::Spec{.objective = po::Objective::max_sharpe, .bounds = po::Bounds{0.0, 1.0}}, *optimized);
+    ASSERT_TRUE(result.has_value()) << result.error().message;
+    EXPECT_EQ(result->status, po::SolveStatus::optimal);
+    double total = 0.0;
+    for (const double weight : result->weights)
+    {
+        total += weight;
+    }
+    EXPECT_NEAR(total, 1.0, 1e-9);
+}
+
+TEST(Wrapper, EmptyViewsHaveEmptyOmegas)
+{
+    const po::Expected<po::Data> prior = po::Data::create(kAssets, std::vector<double>{0.01, 0.02, 0.03}, std::vector<double>{0.04, 0.0, 0.0, 0.0, 0.04, 0.0, 0.0, 0.0, 0.04});
+    ASSERT_TRUE(prior.has_value()) << prior.error().message;
+    const po::Expected<po::Views> views = po::Views::create(kAssets, std::vector<double>{}, std::vector<double>{});
+    ASSERT_TRUE(views.has_value()) << views.error().message;
+    const po::Expected<std::vector<double>> omega = po::bl_omega_he_litterman(*prior, *views, 0.05);
+    ASSERT_TRUE(omega.has_value()) << omega.error().message;
+    EXPECT_TRUE(omega->empty());
+    const po::Expected<std::vector<double>> idzorek = po::bl_omega_idzorek(*prior, *views, 0.05, std::vector<double>{});
+    ASSERT_TRUE(idzorek.has_value()) << idzorek.error().message;
+    EXPECT_TRUE(idzorek->empty());
+    po::Expected<po::Views> mutable_views = po::Views::create(kAssets, std::vector<double>{}, std::vector<double>{});
+    ASSERT_TRUE(mutable_views.has_value());
+    EXPECT_TRUE(mutable_views->set_omega({}).has_value());
+}
+
+TEST(Wrapper, ViewsSizeMismatch)
+{
+    const po::Expected<po::Views> views =
+        po::Views::create(kAssets, std::vector<double>{1.0, -1.0}, std::vector<double>{0.02});
+    ASSERT_FALSE(views.has_value());
+    EXPECT_EQ(views.error().status, po::Status::invalid_argument);
+    EXPECT_EQ(views.error().message, "p has 2 entries, expected 1 x 3 = 3");
+
+    const po::Expected<po::Moments> moments = po::sample_moments(std::vector<double>(7, 0.01), kAssets);
+    ASSERT_FALSE(moments.has_value());
+    EXPECT_EQ(moments.error().message, "returns has 7 entries, not a multiple of 3 assets");
+
+    po::Expected<po::Views> ok = po::Views::create(kAssets, std::vector<double>{1.0, -1.0, 0.0}, std::vector<double>{0.02});
+    ASSERT_TRUE(ok.has_value()) << ok.error().message;
+    const po::Expected<void> omega = ok->set_omega(std::vector<double>(4, 0.0));
+    ASSERT_FALSE(omega.has_value());
+    EXPECT_EQ(omega.error().message, "omega has 4 entries, expected 1 x 1 = 1");
+    const po::Expected<std::vector<double>> weights = po::bl_equilibrium(sample_data(), std::vector<double>{0.5, 0.5}, 2.5);
+    ASSERT_FALSE(weights.has_value());
+    EXPECT_EQ(weights.error().status, po::Status::invalid_argument);
+}
+
 TEST(Wrapper, AbiMismatchIsUnsupported)
 {
     const po::Expected<void> check = po::detail::check_abi_version(1, 0);

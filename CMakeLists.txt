@@ -44,6 +44,12 @@ add_library(portopt_core STATIC
     src/linalg/qr.cpp
     src/qp/goldfarb_idnani.cpp
     src/core/data.cpp
+    src/estimation/bayes_stein.cpp
+    src/estimation/black_litterman.cpp
+    src/estimation/inputs.cpp
+    src/estimation/moments.cpp
+    src/estimation/posterior.cpp
+    src/estimation/views.cpp
     src/core/portable_math.cpp
     src/problems/constraints.cpp
     src/problems/homogeneous.cpp
@@ -79,7 +85,9 @@ add_library(portopt_capi OBJECT
     src/capi/data_api.cpp
     src/capi/solve_api.cpp
     src/capi/result_api.cpp
-    src/capi/metrics_api.cpp)
+    src/capi/metrics_api.cpp
+src/capi/estimation/views_api.cpp
+src/capi/estimation/estimation_api.cpp)
 set_target_properties(portopt_capi PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(portopt_capi PRIVATE PO_BUILDING PO_VERSION_STRING="${PROJECT_VERSION}")
 target_compile_options(portopt_capi PRIVATE ${PO_WARNING_FLAGS})
@@ -170,6 +178,7 @@ if(PO_BUILD_TESTS)
         tests/unit/capi/data_test.cpp
         tests/unit/capi/solve_test.cpp
         tests/unit/capi/metrics_test.cpp
+        tests/unit/capi/estimation/estimation_test.cpp
         tests/unit/linalg/cholesky_test.cpp
         tests/unit/linalg/qr_test.cpp
         tests/unit/qp/active_set_test.cpp
@@ -177,6 +186,11 @@ if(PO_BUILD_TESTS)
         tests/unit/core/data_test.cpp
         tests/unit/core/generators_test.cpp
         tests/unit/core/portable_math_test.cpp
+        tests/unit/estimation/bayes_stein_test.cpp
+        tests/unit/estimation/black_litterman_test.cpp
+        tests/unit/estimation/determinism_test.cpp
+        tests/unit/estimation/moments_test.cpp
+        tests/unit/estimation/views_test.cpp
         tests/unit/fuzz/leverage_fuzz_test.cpp
         tests/unit/fuzz/max_return_fuzz_test.cpp
         tests/unit/fuzz/ratio_fuzz_test.cpp

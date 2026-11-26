@@ -70,6 +70,8 @@ them again. The counts that a test asserts are those of this document.
 | KKT residuals of `MAX_RETURN` with `cond(Sigma) = 1e7` (`MaxReturn.ConditioningSweep`) | 1e-8 |
 | `TRACKING_ERROR` objective with `cond(R) = 1e8` against an independent least squares, relative | 1e-10 |
 | Closed forms (unconstrained weights and multiplier, equal-mean target) | 1e-12 |
+| Symmetry of `Sigma` and `Omega`, relative to the larger diagonal entry | 1e-10 |
+| Sum of the market weights, `abs(1'w_mkt - 1)` | 1e-8 |
 | Frontier variance and capital market line volatility, relative | 1e-10 |
 | Volatility multiplier of `MAX_RETURN` against a finite difference, relative | 1e-5 |
 | `vol(w) = s` of a solved `MAX_RETURN`, relative | 1e-12 |
@@ -150,6 +152,40 @@ With the former Cholesky of `R~'R~`, `cond(R)` above about 1e7 was rejected and 
 up to 1e-3 of the objective; with the QR, 300 random series with `cond(R)` up to 1e8 are all solved, with a largest
 relative objective excess of 2.0e-10 against a least-squares reference (the pivots and the excess of this
 paragraph are from the earlier instances).
+
+The rejected pivot is reported: `linalg::cholesky_or_pivot` returns the zero-based index of the first one, and the
+message reads `covariance is not positive definite: pivot <j> is not positive` (`po_data_create`; the posterior's
+`A` follows the same pattern). Which pivot fails is the decision above, not a new one.
+
+## Domain rules of the estimation utilities
+
+Every utility checks its inputs and answers `PO_INVALID_ARGUMENT` with the reason in `po_last_error()` (a null handle is
+`PO_INVALID_HANDLE`, a null required pointer `PO_INVALID_ARGUMENT`). On a failure no output is written: the results
+are computed in temporaries and copied at the end. Nothing is corrected silently: market weights that do not sum to 1
+are not renormalized and `w_hat` is not truncated.
+
+| Rule | Where | Tolerance or message |
+|---|---|---|
+| The `po_data` has a covariance, and a `mu` where the function reads one (`po_bayes_stein`, `po_bl_posterior`) | the utilities taking a `po_data` | `"data has no covariance"`, `"data has no mu"` |
+| The `po_data` has no risk-free rate | the same | `"data must not have a risk-free rate"` |
+| Panel: `t >= 2`, `n >= 1`, `t * n` without overflow, every entry finite | `po_sample_moments` | `"returns need at least two observations"`, `"returns is not finite at (i, j)"` |
+| `t > n + 2` | `po_bayes_stein` | `"bayes-stein needs t > n + 2; got t = ... for n = ..."` |
+| `n` equals the asset count, `w_mkt` finite, `abs(1'w_mkt - 1) <= 1e-8`, `delta` finite and `> 0` | `po_bl_equilibrium` | `"w_mkt must sum to 1 within 1e-8"` (absolute, not relative) |
+| `n >= 1`, `k <= n`, `p` and `q` finite | `po_views_create` | `"k must not exceed n"` |
+| `P` has full row rank | `po_views_create` | `"views are redundant: P does not have full row rank"` |
+| `Omega`: `k x k`, finite, symmetric, diagonal `>= 0`; a failure keeps the previous `Omega` | `po_views_set_omega` | symmetry within `1e-10` relative to the larger of the two diagonal entries (the tolerance of `Sigma`); `"omega has a negative diagonal entry at i"` |
+| `tau` finite and `> 0`; same `n` in the data and the views | the Black-Litterman functions | `"tau must be positive and finite"`, `"views have <a> assets; data has <b>"` |
+| `0 < c_k <= 1` | `po_bl_omega_idzorek` | `"confidence must be in (0, 1] at i"` |
+| `Omega` set, when `k >= 1` | `po_bl_posterior` | `"omega is not set"` |
+| `A = P tau Sigma P' + Omega` positive definite | `po_bl_posterior` | `"... is not positive definite: pivot <j> is not positive"` |
+
+`1e-10` (symmetry) and `1e-8` (the sum of the market weights) are the two tolerances of the module. `Omega` is expected
+to be positive semidefinite but is not checked beyond its diagonal and the Cholesky factor of `A`: checking needs
+eigenvalues, and the two helpers always return a valid `Omega`. `po_sample_moments` does not check that `S` is positive
+definite (with `t <= n` it is singular, a legitimate output); `po_data_create` refuses it when it is used as a
+covariance. `P` is decided on full rank by the Householder QR of `P'` (`n x k`) with the rank rule of
+[`TRACKING_ERROR`](#positive-definiteness), `linalg::has_full_column_rank`; and `k = 0` is accepted with `p` and `q`
+NULL.
 
 ## Numerical decisions of MAX_RETURN
 

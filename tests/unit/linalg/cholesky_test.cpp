@@ -169,3 +169,25 @@ TEST(Cholesky, RightLookingIsBitIdenticalToTheLeftLooking)
 }
 
 } // namespace
+
+TEST(Cholesky, ReportsTheFirstRejectedPivot)
+{
+    std::vector<double> third{4, 2, 0, 0, 2, 2, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1};
+    auto result = po::linalg::cholesky_or_pivot(third, 4);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), 2U);
+    std::vector<double> second{4, 2, 0, 0, 2, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    result = po::linalg::cholesky_or_pivot(second, 4);
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), 1U);
+}
+
+TEST(Cholesky, PivotFormMatchesTheOptionalFormBitForBit)
+{
+    std::vector<double> a = po::testing::random_covariance(7, 5);
+    auto pivot_form = po::linalg::cholesky_or_pivot(a, 7);
+    auto optional_form = po::linalg::cholesky(a, 7);
+    ASSERT_TRUE(pivot_form.has_value());
+    ASSERT_TRUE(optional_form.has_value());
+    EXPECT_EQ(std::memcmp(pivot_form->data(), optional_form->data(), 49 * sizeof(double)), 0);
+}

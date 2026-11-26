@@ -46,3 +46,17 @@ internal sealed class ResultHandle : SafeHandleZeroOrMinusOneIsInvalid
         return true;
     }
 }
+
+internal sealed class ViewsHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public ViewsHandle()
+        : base(true)
+    {
+    }
+
+    protected override bool ReleaseHandle()
+    {
+        NativeMethods.po_views_free(handle);
+        return true;
+    }
+}

@@ -2,7 +2,8 @@
 
 The equations PortOpt solves, as the code writes them. This version covers `MIN_VARIANCE`, `UTILITY`,
 `IMPORTANCE`, `KELLY`, `TRACKING_ERROR`, `MAX_RETURN`, `MAX_SHARPE`, `MAX_DIVERSIFICATION` and `RISK_PARITY`: every
-objective is solved. The sources are listed at the end, with what was and was not verified.
+objective is solved. [Estimation utilities](#estimation-utilities) (sample moments, Bayes-Stein, Black-Litterman)
+sit beside the solve and are not part of it. The sources are listed at the end, with what was and was not verified.
 
 ## Notation
 
@@ -565,6 +566,83 @@ is
 For MIN_VARIANCE without a box or cash, `lambda_budget = 2 / A`: it is the derivative of the optimal variance with respect to the
 budget `b`: the optimal variance is `b^2 / A`, whose derivative at `b = 1` is 2 / A.
 
+## Estimation utilities
+
+Side-effect-free functions that read arrays, a `po_data` or a `po_views` and write only their outputs
+(`include/portopt/portopt.h`, "Estimation utilities"; `src/estimation/`). They estimate the inputs of an
+optimization; `solve` never calls them. Matrices are row-major, `n` is the number of assets, `t` the number of
+periods and `k` the number of views. In `po_bayes_stein`, `po_bl_equilibrium`, `po_bl_omega_he_litterman`,
+`po_bl_omega_idzorek` and `po_bl_posterior` the covariance comes from a `po_data`
+(so it is already validated, symmetrized and factored), and that `po_data` must not carry a
+risk-free rate (`"data must not have a risk-free rate"`): the rate has no role in these formulas, and ignoring it would
+be a silent failure.
+
+**Sample moments** (`po_sample_moments`). For a `t x n` panel `R` (`t >= 2`, finite):
+
+    mu_hat_j = (1/t) sum_s R_sj
+    S_ij     = (1/(t - 1)) sum_s (R_si - mu_hat_i)(R_sj - mu_hat_j)
+
+in two passes (the mean, then the deviations). The upper triangle is computed and mirrored, so `S` is exactly
+symmetric. `S` is not checked for positive definiteness: with `t <= n` it is singular, and `po_data_create` refuses it
+if it is later used as a covariance.
+
+**Bayes-Stein** (`po_bayes_stein`; Jorion, 1986). The `mu` of the data is `mu_hat` and its covariance is the sample `S`
+with divisor `t - 1`. It needs `t > n + 2`. With `1` the vector of ones:
+
+    Sigma = S (t - 1) / (t - n - 2)
+    mu_0  = (1' Sigma^-1 mu_hat) / (1' Sigma^-1 1)
+    w_hat = (n + 2) / ((n + 2) + t (mu_hat - mu_0 1)' Sigma^-1 (mu_hat - mu_0 1))
+    mu_BS = (1 - w_hat) mu_hat + w_hat mu_0 1
+
+`Sigma^-1` is never formed: the solves use the Cholesky factor of `S` that the data holds, with
+`Sigma^-1 x = S^-1 x (t - n - 2) / (t - 1)`. The outputs are `mu_BS`, `mu_0` (the grand mean) and `w_hat`.
+
+**`w_hat` depends on the frequency of the data.** Multiplying `mu_hat` and `S` by 252 multiplies the quadratic form by
+252 and so changes `w_hat`. Compute it on the original (daily) data and annualize the resulting `mu_BS` afterwards.
+Changing the unit of the returns (multiplying them by a constant) does not change `w_hat`.
+
+**Equilibrium** (`po_bl_equilibrium`; Black and Litterman, 1992). With market weights `w_mkt` and risk aversion
+`delta > 0`:
+
+    Pi = delta Sigma w_mkt
+
+`w_mkt` must be finite and sum to 1 within `1e-8`; it is not renormalized. The `mu` of the data is not read.
+
+**Excess of the risk-free rate.** `Pi`, the view returns `Q` and the posterior `mu` are returns in excess of `rf`.
+With cash (`po_data_set_risk_free(rate)`) the core uses `mu - rate`, so the `mu` passed to the optimization's
+`po_data_create` is the posterior plus the rate. Relative views (+1/-1) do not depend on this, because the rate
+cancels; absolute views do. The Python `BlackLittermanPosterior.to_data(risk_free)` and the C#
+`BlackLittermanPosterior.ToMarketInputs(riskFree)` add the rate (and set the cash), with the posterior covariance; in C
+and C++ it is a scalar added to the vector.
+
+**Views.** `po_views` holds `P` (`k x n`), `Q` (`k`) and `Omega` (`k x k`). `P` must have full row rank (`k <= n`),
+decided by a Householder QR of `P'` (`linalg::has_full_column_rank`); otherwise the views are redundant. `k = 0` is
+accepted and gives `mu = Pi` and `Sigma_post = (1 + tau) Sigma`. `Omega` is given by `po_views_set_omega` or computed
+by one of two helpers, each of which returns a diagonal `k x k` matrix and reads no `Omega` already stored (`tau` is finite and
+positive):
+
+    He and Litterman (1999):  omega_kk = tau p_k Sigma p_k'
+    Idzorek (2005), in the closed form of Walters (2014):
+                              omega_kk = ((1 - c_k) / c_k) tau p_k Sigma p_k'
+
+with `p_k` the k-th row of `P` and `confidence` `c_k` in `(0, 1]`; `c_k = 1` gives `omega_kk = 0`, a view held with full
+confidence.
+
+**Posterior** (`po_bl_posterior`; Black and Litterman, 1992). The `mu` of the data is `Pi` and its covariance is
+`Sigma`. With `A = P (tau Sigma) P' + Omega` and `B = tau Sigma P'` (`n x k`):
+
+    mu         = Pi + B A^-1 (Q - P Pi)
+    Sigma_post = Sigma + tau Sigma - B A^-1 B'
+
+This is the form without `Omega^-1`, which accepts `Omega = 0`. `A` is solved through its Cholesky factor, never
+inverted; `B A^-1 B'` is computed as `X'X` with `X = L^-1 B'`, upper triangle only and mirrored, so `Sigma_post` is
+exactly symmetric. If `A` is not positive definite the message names the pivot
+(`"P tau Sigma P' + omega is not positive definite: pivot <j> is not positive"`). `out_cov` may be NULL, and then the
+covariance is not computed.
+
+Every function uses `+ - * /` and `sqrt` only, in a fixed order of summation, so the results are the same bits on every
+platform, as the solves are.
+
 ## Sources
 
 Verified means the text was read for the claim it supports; the others are marked.
@@ -592,4 +670,13 @@ Verified means the text was read for the claim it supports; the others are marke
 - Higham, *Accuracy and Stability of Numerical Algorithms*: the rigorous backward error of Cholesky is stated with
   `|R'| |R|` and not `|Sigma|`, which is why the noise model of the `MAX_SHARPE` guard is a first-order bound and not a
   proof. Not verified in the book.
+- Black and Litterman (1992), "Global portfolio optimization", Financial Analysts Journal 48(5): the equilibrium
+  return and the posterior. Not read; the formulas are those of the secondary sources below.
+- He and Litterman (1999), "The intuition behind Black-Litterman model portfolios", Goldman Sachs Investment Management
+  Research: `Omega = diag(tau P Sigma P')`. Not read; cited at second hand.
+- Idzorek (2005), "A step-by-step guide to the Black-Litterman model": the confidence levels of the views. Not read.
+- Walters (2014), "The Black-Litterman model in detail": the closed form of Idzorek's `Omega` and the
+  form of the posterior. Not read.
+- Jorion (1986), "Bayes-Stein estimation for portfolio analysis", JFQA 21(3): the shrinkage of the mean with the
+  grand mean of the minimum-variance portfolio. Not read.
 - Goldfarb and Idnani (1983): the termination argument with removals was not verified in the paper.

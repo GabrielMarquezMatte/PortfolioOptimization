@@ -1,4 +1,35 @@
 #nullable enable
+PortOpt.BayesSteinEstimate
+PortOpt.BayesSteinEstimate.<Clone>$() -> PortOpt.BayesSteinEstimate!
+PortOpt.BayesSteinEstimate.BayesSteinEstimate(double[]! Mu, double GrandMean, double Weight) -> void
+PortOpt.BayesSteinEstimate.Deconstruct(out double[]! Mu, out double GrandMean, out double Weight) -> void
+PortOpt.BayesSteinEstimate.Equals(PortOpt.BayesSteinEstimate? other) -> bool
+override PortOpt.BayesSteinEstimate.Equals(object? obj) -> bool
+override PortOpt.BayesSteinEstimate.GetHashCode() -> int
+PortOpt.BayesSteinEstimate.GrandMean.get -> double
+PortOpt.BayesSteinEstimate.GrandMean.init -> void
+PortOpt.BayesSteinEstimate.Mu.get -> double[]!
+PortOpt.BayesSteinEstimate.Mu.init -> void
+override PortOpt.BayesSteinEstimate.ToString() -> string!
+PortOpt.BayesSteinEstimate.Weight.get -> double
+PortOpt.BayesSteinEstimate.Weight.init -> void
+static PortOpt.BayesSteinEstimate.operator !=(PortOpt.BayesSteinEstimate? left, PortOpt.BayesSteinEstimate? right) -> bool
+static PortOpt.BayesSteinEstimate.operator ==(PortOpt.BayesSteinEstimate? left, PortOpt.BayesSteinEstimate? right) -> bool
+PortOpt.BlackLittermanPosterior
+PortOpt.BlackLittermanPosterior.<Clone>$() -> PortOpt.BlackLittermanPosterior!
+PortOpt.BlackLittermanPosterior.BlackLittermanPosterior(double[]! Mu, double[,]! Covariance) -> void
+PortOpt.BlackLittermanPosterior.Covariance.get -> double[,]!
+PortOpt.BlackLittermanPosterior.Covariance.init -> void
+PortOpt.BlackLittermanPosterior.Deconstruct(out double[]! Mu, out double[,]! Covariance) -> void
+PortOpt.BlackLittermanPosterior.Equals(PortOpt.BlackLittermanPosterior? other) -> bool
+override PortOpt.BlackLittermanPosterior.Equals(object? obj) -> bool
+override PortOpt.BlackLittermanPosterior.GetHashCode() -> int
+PortOpt.BlackLittermanPosterior.Mu.get -> double[]!
+PortOpt.BlackLittermanPosterior.Mu.init -> void
+PortOpt.BlackLittermanPosterior.ToMarketInputs(double? riskFree = null) -> PortOpt.MarketInputs!
+override PortOpt.BlackLittermanPosterior.ToString() -> string!
+static PortOpt.BlackLittermanPosterior.operator !=(PortOpt.BlackLittermanPosterior? left, PortOpt.BlackLittermanPosterior? right) -> bool
+static PortOpt.BlackLittermanPosterior.operator ==(PortOpt.BlackLittermanPosterior? left, PortOpt.BlackLittermanPosterior? right) -> bool
 PortOpt.Bounds
 PortOpt.Bounds.Bounds() -> void
 PortOpt.Bounds.Bounds(double Lower, double Upper) -> void
@@ -8,6 +39,13 @@ PortOpt.Bounds.Lower.get -> double
 PortOpt.Bounds.Lower.init -> void
 PortOpt.Bounds.Upper.get -> double
 PortOpt.Bounds.Upper.init -> void
+PortOpt.Estimation
+static PortOpt.Estimation.BayesStein(double[]! muHat, double[,]! covariance, int periods) -> PortOpt.BayesSteinEstimate!
+static PortOpt.Estimation.Equilibrium(double[,]! covariance, double[]! marketWeights, double delta) -> double[]!
+static PortOpt.Estimation.OmegaHeLitterman(double[,]! covariance, double[,]! p, double tau) -> double[,]!
+static PortOpt.Estimation.OmegaIdzorek(double[,]! covariance, double[,]! p, double tau, double[]! confidence) -> double[,]!
+static PortOpt.Estimation.Posterior(double[,]! covariance, double[]! pi, double tau, PortOpt.Views! views) -> PortOpt.BlackLittermanPosterior!
+static PortOpt.Estimation.SampleMoments(double[,]! returns) -> PortOpt.Moments!
 PortOpt.MarketData
 PortOpt.MarketData.AssetCount.get -> int
 PortOpt.MarketData.Dispose() -> void
@@ -32,6 +70,20 @@ PortOpt.MarketInputs.Returns.get -> double[,]?
 PortOpt.MarketInputs.Returns.init -> void
 PortOpt.MarketInputs.RiskFree.get -> double?
 PortOpt.MarketInputs.RiskFree.init -> void
+PortOpt.Moments
+PortOpt.Moments.<Clone>$() -> PortOpt.Moments!
+PortOpt.Moments.Covariance.get -> double[,]!
+PortOpt.Moments.Covariance.init -> void
+PortOpt.Moments.Deconstruct(out double[]! Mu, out double[,]! Covariance) -> void
+PortOpt.Moments.Equals(PortOpt.Moments? other) -> bool
+override PortOpt.Moments.Equals(object? obj) -> bool
+override PortOpt.Moments.GetHashCode() -> int
+PortOpt.Moments.Moments(double[]! Mu, double[,]! Covariance) -> void
+PortOpt.Moments.Mu.get -> double[]!
+PortOpt.Moments.Mu.init -> void
+override PortOpt.Moments.ToString() -> string!
+static PortOpt.Moments.operator !=(PortOpt.Moments? left, PortOpt.Moments? right) -> bool
+static PortOpt.Moments.operator ==(PortOpt.Moments? left, PortOpt.Moments? right) -> bool
 PortOpt.NativeAbi
 PortOpt.Objective
 PortOpt.Objective.Importance = 4 -> PortOpt.Objective
@@ -97,6 +149,22 @@ PortOpt.Status.InvalidHandle = 2 -> PortOpt.Status
 PortOpt.Status.Ok = 0 -> PortOpt.Status
 PortOpt.Status.OutOfMemory = 4 -> PortOpt.Status
 PortOpt.Status.Unsupported = 3 -> PortOpt.Status
+PortOpt.Views
+PortOpt.Views.<Clone>$() -> PortOpt.Views!
+PortOpt.Views.Deconstruct(out double[,]! P, out double[]! Q, out double[,]? Omega) -> void
+PortOpt.Views.Equals(PortOpt.Views? other) -> bool
+override PortOpt.Views.Equals(object? obj) -> bool
+override PortOpt.Views.GetHashCode() -> int
+PortOpt.Views.Omega.get -> double[,]?
+PortOpt.Views.Omega.init -> void
+PortOpt.Views.P.get -> double[,]!
+PortOpt.Views.P.init -> void
+PortOpt.Views.Q.get -> double[]!
+PortOpt.Views.Q.init -> void
+override PortOpt.Views.ToString() -> string!
+PortOpt.Views.Views(double[,]! P, double[]! Q, double[,]? Omega) -> void
+static PortOpt.Views.operator !=(PortOpt.Views? left, PortOpt.Views? right) -> bool
+static PortOpt.Views.operator ==(PortOpt.Views? left, PortOpt.Views? right) -> bool
 PortOpt.WeightBounds
 PortOpt.WeightBounds.<Clone>$() -> PortOpt.WeightBounds!
 PortOpt.WeightBounds.Equals(PortOpt.WeightBounds? other) -> bool
